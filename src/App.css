@@ -1,38 +1,250 @@
+/* === Global Styles === */
+body {
+  font-family: 'Segoe UI', Roboto, sans-serif;
+  background-color: #f5f7fa;
+  color: #2b2b2b;
+  margin: 0;
+  padding: 2rem;
+}
+
 .App {
+  max-width: 700px;
+  margin: auto;
+}
+
+/* === Headings === */
+h2 {
+  font-size: 2rem;
+  color: #333;
+  text-align: left;
+  margin-bottom: 2rem;
+}
+
+/* === Question Layout === */
+.question-block {
+  margin-bottom: 3.5rem; /* clear space between questions */
+  text-align: left;
+}
+
+.question-label {
+  font-weight: 600;
+  font-size: 1.1rem;
+  display: block;
+  margin-bottom: 0.6rem;
+  color: #222;
+}
+
+.question-number {
+  color: #444;
+  margin-right: 0.4rem;
+  font-weight: bold;
+}
+
+/* === Answer Input Layout === */
+.answer-wrapper {
+  display: flex;
+  flex-direction: column;
+  max-width: 600px;
+}
+
+/* === Input Fields === */
+.answer-wrapper input[type='number'] {
+  width: 80px !important;
+  padding: 0.4rem;
+  font-size: 1rem;
+  border-radius: 6px;
+  border: 1px solid #ccc;
+  box-sizing: border-box;
+}
+
+.answer-wrapper textarea {
+  width: 100%;
+  max-width: 600px;
+  height: 120px;
+  padding: 0.6rem;
+  font-size: 1rem;
+  border-radius: 6px;
+  border: 1px solid #ccc;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.answer-wrapper select {
+  width: auto;
+  max-width: 300px;
+  padding: 0.4rem;
+  font-size: 1rem;
+  border-radius: 6px;
+  border: 1px solid #ccc;
+  box-sizing: border-box;
+}
+
+/* === Sliders === */
+.slider-container {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 0.4rem;
+  max-width: 400px;
+}
+
+.slider-label {
+  font-size: 0.85rem;
+  color: #666;
+  width: 80px;
   text-align: center;
 }
 
-.App-logo {
-  height: 40vmin;
-  pointer-events: none;
+.slider {
+  flex-grow: 1;
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  .App-logo {
-    animation: App-logo-spin infinite 20s linear;
+input[type='range'] {
+  -webkit-appearance: none;
+  width: 100%;
+  height: 8px;
+  border-radius: 5px;
+  background: linear-gradient(to right, #c2e9fb, #005ecb);
+  outline: none;
+  margin: 0;
+}
+
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #0077ff;
+  border: 2px solid white;
+  cursor: pointer;
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.2);
+  transition: background 0.3s ease;
+}
+
+input[type='range']::-webkit-slider-thumb:hover {
+  background: #005ecb;
+}
+
+/* === Buttons === */
+button {
+  display: block;
+  margin: 3rem auto 1rem auto;
+  padding: 1rem 2rem;
+  font-size: 1.2rem;
+  background-color: #28a745;
+  color: white;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.3s ease;
+}
+
+button:hover {
+  background-color: #218838;
+}
+.icon-options {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  align-items: center;
+}
+
+.icon-options-wrapper {
+  display: flex;
+  justify-content: center;
+  margin-top: 2rem;
+}
+.icon-button {
+  width: 80px;
+  height: 80px;
+  background-color: #eee;
+  border: 1px solid #333;
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  color: #000;
+}
+
+/* Standardize icon size */
+.icon-symbol {
+  font-size: 2.5rem;
+  line-height: 1;
+  display: block;
+  width: 100%;
+  text-align: center;
+}
+.star-burst {
+  font-size: 2.5rem;
+  text-align: center;
+  animation: popstar 0.8s ease-in-out;
+  margin-top: 1rem;
+}
+
+@keyframes popstar {
+  0% {
+    transform: scale(0.5) rotate(0deg);
+    opacity: 0;
+  }
+  50% {
+    transform: scale(1.4) rotate(20deg);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1) rotate(0deg);
+    opacity: 0;
   }
 }
+.breathing-circle {
+  width: 100px;
+  height: 100px;
+  margin: 2rem auto;
+  border-radius: 50%;
+  background-color: #aee;
+  animation: breathe 7s ease-in-out infinite;
+}
 
-.App-header {
-  background-color: #282c34;
-  min-height: 100vh;
+@keyframes breathe {
+  0% {
+    transform: scale(1);
+    opacity: 0.7;
+  }
+  50% {
+    transform: scale(1.5);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 0.7;
+  }
+}
+.breathe-step {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  font-size: calc(10px + 2vmin);
-  color: white;
+  align-items: center; /* ✅ center horizontally */
+  text-align: center;
+  max-width: 600px;
+  margin: 0 auto;
 }
 
-.App-link {
-  color: #61dafb;
+.breathe-step p {
+  max-width: 500px;
+  margin-top: 0.5rem;
+  margin-bottom: 1rem;
+  font-size: 1.1rem;
+  line-height: 1.6;
 }
 
-@keyframes App-logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+.breathe-step button {
+  font-size: 1rem;
+  padding: 0.75rem 1.5rem;
+  background-color: #5cdb95;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.breathe-step h2 {
+  width: 100%;
+  text-align: center;
 }
