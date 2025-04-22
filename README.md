@@ -1,3 +1,5 @@
+### To Save from firebase to backup.json firestore-export -a qartexperiment1-firebase-adminsdk-fbsvc-800e7fc19f.json -b backup.json -p
+
 # Getting Started with Create React App
 
 This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).

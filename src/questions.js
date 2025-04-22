@@ -18,13 +18,6 @@ export const preQuestions = [
     ],
   },
   {
-    id: 'spirituality',
-    question:
-      'Do you consider yourself spiritual, religious, or non-spiritual?',
-    type: 'select',
-    options: ['Spiritual', 'Religious', 'Non-spiritual', 'Other'],
-  },
-  {
     id: 'diagnosis',
     question:
       'Do you have any attention-related diagnoses (ADHD, ADD, etc.)?',
@@ -49,13 +42,6 @@ export const preQuestions = [
     options: ['Frequently', 'Sometimes', 'Rarely', 'Never'],
   },
   {
-    id: 'distraction',
-    question:
-      'Do you consider yourself easily distracted or mentally scattered?',
-    type: 'select',
-    options: ['Yes', 'Sometimes', 'No'],
-  },
-  {
     id: 'deepWork',
     question:
       'How much time per day do you spend in deep focus activities (reading, coding, etc.)?',
@@ -73,23 +59,6 @@ export const preQuestions = [
       'Do you experience flow (being fully absorbed) regularly?',
     type: 'select',
     options: ['Often', 'Occasionally', 'Rarely', 'Never'],
-  },
-  {
-    id: 'intuition',
-    question:
-      'Do you rely more on logic or intuition when making decisions?',
-    type: 'select',
-    options: ['Logic', 'Intuition', 'Both equally', 'Depends'],
-  },
-  {
-    id: 'trust',
-    question:
-      'How much do you trust your intuitive or spontaneous responses?',
-    type: 'slider',
-    min: 0,
-    max: 10,
-    leftLabel: 'Not at all',
-    rightLabel: 'Completely',
   },
   {
     id: 'clarityNow',
@@ -125,29 +94,20 @@ export const cueBlocks = [
   {
     id: 'neutral',
     label: 'Neutral',
-    instructions: 'Just choose the icon that feels right.',
+    instructions:
+      'As quickly as possible choose the icon that feels right to you.',
     showFeedback: false,
   },
   {
     id: 'full_stack',
     label: 'Performance',
     instructions:
-      'Take a breath. Feel what it is to know the answer. Stay present. Tune in. If you match the icon, you’ll receive a gold star.',
+      'Take a deep breath. Feel what it is to know the answer. Stay present. Tune in. Take your time with each answer. If you match the icon, you’ll receive a gold star.',
     showFeedback: true,
   },
 ];
 
 export const postQuestions = [
-  {
-    id: 'boredomLevel',
-    question:
-      'How bored were you? (1 = extremely bored, 10 = not bored at all)',
-    type: 'slider',
-    min: 1,
-    max: 10,
-    leftLabel: 'Extremely bored',
-    rightLabel: 'Not bored at all',
-  },
   {
     id: 'focusLevel',
     question:

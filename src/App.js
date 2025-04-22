@@ -4,12 +4,14 @@ import { db } from './firebase';
 import { collection, addDoc } from 'firebase/firestore';
 import { preQuestions, cueBlocks, postQuestions } from './questions';
 import { generateThreeIcons, pickRandom } from './utils';
+import confetti from 'canvas-confetti';
 
 function App() {
   const [step, setStep] = useState('pre');
   const [preResponses, setPreResponses] = useState({});
   const [postResponses, setPostResponses] = useState({});
   const [trialResults, setTrialResults] = useState([]);
+  const [ghostResults, setGhostResults] = useState([]);
   const [currentBlockIndex, setCurrentBlockIndex] = useState(0);
   const [currentTrial, setCurrentTrial] = useState(0);
   const [blockOrder] = useState([
@@ -20,6 +22,9 @@ function App() {
   const [correctIcon, setCorrectIcon] = useState(null);
   const [showStar, setShowStar] = useState(false);
   const [score, setScore] = useState(0);
+  const totalTrialsPerBlock = 50;
+  const [neutralStats, setNeutralStats] = useState(null);
+  const [finalStats, setFinalStats] = useState(null);
 
   const handleChange = (id, value, isPost = false) => {
     const updater = isPost ? setPostResponses : setPreResponses;
@@ -32,69 +37,117 @@ function App() {
     console.log('Neutral block — correct icon:', initialCorrect);
     setCurrentOptions(initialOptions);
     setCorrectIcon(initialCorrect);
+    setGhostResults([]);
+    setTrialResults([]);
     setCurrentTrial(0);
+    setScore(0);
     setStep('trials');
   };
 
   const startFullStackTrials = () => {
     const nextIndex = currentBlockIndex + 1;
-    setCurrentBlockIndex(nextIndex);
     const initialOptions = generateThreeIcons();
     const initialCorrect = pickRandom(initialOptions);
     console.log('Full Stack block — correct icon:', initialCorrect);
+    setCurrentBlockIndex(nextIndex);
     setCurrentOptions(initialOptions);
     setCorrectIcon(initialCorrect);
     setCurrentTrial(0);
+    setScore(0);
     setStep('trials');
   };
 
   const handleTrial = (selected) => {
-    const isCorrect = selected === correctIcon;
+    const isCorrect = selected.id === correctIcon.id;
     const currentBlock = blockOrder[currentBlockIndex];
 
     if (currentBlock.showFeedback && isCorrect) {
       setScore((prev) => prev + 1);
       setShowStar(true);
-      setTimeout(() => {
-        setShowStar(false);
-      }, 1000);
+      setTimeout(() => setShowStar(false), 1000);
     } else {
       setShowStar(false);
     }
 
-    setTrialResults((prev) => [
-      ...prev,
+    const updatedTrialResults = [
+      ...trialResults,
       {
         block: currentBlock.id,
         trial: currentTrial + 1,
-        options: currentOptions,
-        correctIcon,
-        selectedIcon: selected,
+        options: currentOptions.map((opt) => opt.id),
+        correctIcon: correctIcon.id,
+        selectedIcon: selected.id,
         isCorrect,
       },
-    ]);
+    ];
+    setTrialResults(updatedTrialResults);
 
-    const isLastNeutralTrial =
-      currentTrial === 9 && currentBlockIndex === 0;
-    if (isLastNeutralTrial) {
-      setStep('breathe');
-      return;
-    }
+    const ghostChoice = pickRandom(currentOptions);
+    const ghostIsCorrect = ghostChoice.id === correctIcon.id;
+    const updatedGhostResults = [
+      ...ghostResults,
+      {
+        block: currentBlock.id,
+        trial: currentTrial + 1,
+        ghostChoice: ghostChoice.id,
+        correctIcon: correctIcon.id,
+        isCorrect: ghostIsCorrect,
+      },
+    ];
+    setGhostResults(updatedGhostResults);
 
-    const isFullStack = currentBlockIndex === 1;
-    const fullStackLimit = 20;
-    const isLastFullStackTrial =
-      isFullStack && currentTrial === fullStackLimit - 1;
+    if (currentTrial + 1 === totalTrialsPerBlock) {
+      const blockId = currentBlock.id;
 
-    if (isLastFullStackTrial) {
-      setStep('post');
+      const blockTrialResults = updatedTrialResults.filter(
+        (t) => t.block === blockId
+      );
+      const blockGhostResults = updatedGhostResults.filter(
+        (g) => g.block === blockId
+      );
+
+      const userCorrect = blockTrialResults.filter(
+        (t) => t.isCorrect
+      ).length;
+      const ghostCorrect = blockGhostResults.filter(
+        (g) => g.isCorrect
+      ).length;
+
+      const userPercent = (
+        (userCorrect / totalTrialsPerBlock) *
+        100
+      ).toFixed(1);
+      const ghostPercent = (
+        (ghostCorrect / totalTrialsPerBlock) *
+        100
+      ).toFixed(1);
+
+      console.log(`✅ ${blockId} User Accuracy:`, userPercent);
+      console.log(`👻 ${blockId} Ghost Accuracy:`, ghostPercent);
+
+      if (userPercent > 40) {
+        confetti({
+          particleCount: 150,
+          spread: 100,
+          origin: { y: 0.6 },
+        });
+      }
+
+      if (currentBlockIndex === 0) {
+        setNeutralStats({ userPercent, ghostPercent });
+        setStep('neutral-results');
+      } else {
+        setFinalStats({ userPercent, ghostPercent });
+        setStep('final-results');
+      }
+
       return;
     }
 
     const newOptions = generateThreeIcons();
     const newCorrect = pickRandom(newOptions);
     console.log(
-      `${currentBlock.label} block — correct icon:`,
+      `${blockOrder[currentBlockIndex].label} block — correct icon:`,
       newCorrect
     );
     setCurrentOptions(newOptions);
@@ -105,10 +158,8 @@ function App() {
   const renderInput = (q, isPost = false) => {
     const onChange = (e) =>
       handleChange(q.id, e.target.value, isPost);
-
     if (q.type === 'number')
       return <input type="number" onChange={onChange} />;
-
     if (q.type === 'slider') {
       return (
         <div className="slider-container">
@@ -126,10 +177,8 @@ function App() {
         </div>
       );
     }
-
     if (q.type === 'textarea')
       return <textarea onChange={onChange} />;
-
     if (q.type === 'select') {
       return (
         <select onChange={onChange}>
@@ -145,6 +194,22 @@ function App() {
   if (step === 'pre') {
     return (
       <div className="App">
+        <h1>Experiment #1</h1>
+        <p
+          style={{
+            maxWidth: '600px',
+            margin: '0 auto',
+            paddingBottom: '1rem',
+          }}
+        >
+          In this experiment, you'll be asked to choose between icons.
+          I'm exploring whether intuition or focus can help people
+          identify a correct, randomly selected icon — more often than
+          chance would suggest. Can the mind can detect an
+          already-determined outcome before it's known — suggesting
+          awareness can align with or "tune into" reality in a subtle
+          but measurable way.
+        </p>
         <h2>Pre-Experiment Questions</h2>
         {preQuestions.map((q, index) => (
           <div key={q.id} className="question-block">
@@ -164,33 +229,75 @@ function App() {
     );
   }
 
+  if (step === 'neutral-results' && neutralStats) {
+    const { userPercent, ghostPercent } = neutralStats;
+    return (
+      <div className="App">
+        <h2>Neutral Block Results</h2>
+        <p>
+          <strong>Your accuracy:</strong> {userPercent}%
+        </p>
+        <p>
+          Since there were 3 icons, guessing randomly would typically
+          give a score of 33.3%.
+          {userPercent > 40
+            ? 'Nice work — you may be picking up on something!'
+            : 'This is within the range of chance, which is expected.'}
+          {/* <strong>Ghost accuracy:</strong> {ghostPercent}% */}
+        </p>
+        <button onClick={() => setStep('breathe')}>
+          Continue to Focused Trials
+        </button>
+      </div>
+    );
+  }
+
   if (step === 'breathe') {
     return (
       <div className="App">
         <h2>Get Into the Zone</h2>
         <div className="breathing-circle"></div>
         <p>
-          Now, take a moment to imagine yourself knowing the answer —
-          confidently, instinctively.
-          <br />
-          <br />
-          Picture that clarity and let it settle in your body.
-          <br />
-          <br />
-          Take deep, slow breaths, and let your focus sharpen.
+          Take ten deep, slow breaths and let your focus settle.
+          <br></br>
+          Go slowly. Let your body relax.<br></br>
+          Trust that the answer is already there—your mind just needs
+          space to find it.<br></br>
         </p>
         <button onClick={startFullStackTrials}>I'm Ready</button>
       </div>
     );
   }
 
+  if (step === 'final-results') {
+    const { userPercent } = finalStats;
+    return (
+      <div className="App">
+        <h2>Focused Block Results</h2>
+        <p>
+          <strong>Your accuracy:</strong> {userPercent}%
+        </p>
+        <p>
+          Since there were 3 icons, guessing randomly would typically
+          give a score of 33.3%.
+          {userPercent > 40
+            ? 'Nice work — you may be picking up on something!'
+            : 'This is within the range of chance, which is expected.'}
+        </p>
+        <button onClick={() => setStep('post')}>
+          Continue to Post Questions
+        </button>
+      </div>
+    );
+  }
+
   if (step === 'trials') {
     const block = blockOrder[currentBlockIndex];
-
     return (
-      <div>
+      <div className="App">
         <h2>
-          {block.label} — Trial {currentTrial + 1}
+          {block.label} Block — Trial {currentTrial + 1} of{' '}
+          {totalTrialsPerBlock}
         </h2>
         <p>{block.instructions}</p>
         <div className="icon-options-wrapper">
@@ -201,12 +308,67 @@ function App() {
                 onClick={() => handleTrial(icon)}
                 className="icon-button"
               >
-                <span className="icon-symbol">{icon}</span>
+                <span className="icon-symbol">{icon.element}</span>
               </button>
             ))}
           </div>
         </div>
+        <button
+          className="exit-button"
+          onClick={async () => {
+            const neutralTrials = trialResults.filter(
+              (t) => t.block === 'neutral'
+            );
+            const neutralGhosts = ghostResults.filter(
+              (g) => g.block === 'neutral'
+            );
+            const fullTrials = trialResults.filter(
+              (t) => t.block === 'full_stack'
+            );
+            const fullGhosts = ghostResults.filter(
+              (g) => g.block === 'full_stack'
+            );
 
+            const safeAccuracy = (results) => {
+              const correct = results.filter(
+                (r) => r.isCorrect
+              ).length;
+              return results.length > 0
+                ? ((correct / results.length) * 100).toFixed(1)
+                : null;
+            };
+            await addDoc(collection(db, 'responses'), {
+              preResponses,
+              postResponses,
+              neutral: {
+                trialResults: neutralTrials,
+                ghostResults: neutralGhosts,
+                accuracy:
+                  neutralStats?.userPercent ||
+                  safeAccuracy(neutralTrials),
+                ghostAccuracy:
+                  neutralStats?.ghostPercent ||
+                  safeAccuracy(neutralGhosts),
+              },
+              full_stack: {
+                trialResults: fullTrials,
+                ghostResults: fullGhosts,
+                accuracy:
+                  finalStats?.userPercent || safeAccuracy(fullTrials),
+                ghostAccuracy:
+                  finalStats?.ghostPercent ||
+                  safeAccuracy(fullGhosts),
+              },
+              timestamp: new Date().toISOString(),
+              exitedEarly: true,
+            });
+
+            alert('Your progress was saved.');
+            setStep('done');
+          }}
+        >
+          🚪 Exit Study
+        </button>
         {block.showFeedback && (
           <>
             <h3 style={{ textAlign: 'center' }}>Score: {score}</h3>
@@ -219,7 +381,7 @@ function App() {
 
   if (step === 'post') {
     return (
-      <div>
+      <div className="App">
         <h2>Post-Experiment Questions</h2>
         {postQuestions.map((q, index) => (
           <div key={q.id} className="question-block">
@@ -236,19 +398,33 @@ function App() {
         ))}
         <button
           onClick={async () => {
-            try {
-              await addDoc(collection(db, 'responses'), {
-                preResponses,
-                postResponses,
-                trialResults,
-                timestamp: new Date().toISOString(),
-              });
-              alert('Responses saved to database!');
-              setStep('done');
-            } catch (error) {
-              console.error('Error saving to Firestore:', error);
-              alert('There was a problem saving your responses.');
-            }
+            await addDoc(collection(db, 'responses'), {
+              preResponses,
+              postResponses,
+              neutral: {
+                trialResults: trialResults.filter(
+                  (t) => t.block === 'neutral'
+                ),
+                ghostResults: ghostResults.filter(
+                  (g) => g.block === 'neutral'
+                ),
+                accuracy: neutralStats?.userPercent,
+                ghostAccuracy: neutralStats?.ghostPercent,
+              },
+              full_stack: {
+                trialResults: trialResults.filter(
+                  (t) => t.block === 'full_stack'
+                ),
+                ghostResults: ghostResults.filter(
+                  (g) => g.block === 'full_stack'
+                ),
+                accuracy: finalStats?.userPercent,
+                ghostAccuracy: finalStats?.ghostPercent,
+              },
+              timestamp: new Date().toISOString(),
+            });
+            alert('Responses saved!');
+            setStep('done');
           }}
         >
           Submit
@@ -258,9 +434,9 @@ function App() {
   }
 
   return (
-    <div>
-      <h2>Thanks!</h2>
-      <p>Your final score: {score}</p>
+    <div className="App">
+      <h2>Thank You!</h2>
+      <p>Your results have been submitted.</p>
     </div>
   );
 }
