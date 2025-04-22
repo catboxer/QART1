@@ -1,0 +1,1946 @@
+{
+  "__collections__": {
+    "responses": {
+      "ZpU2TwCuXhNJGbBb950q": {
+        "preResponses": {
+          "age": "67",
+          "gender": "Male",
+          "meditation": "Yes, a few times per week",
+          "spirituality": "Religious",
+          "diagnosis": "Yes",
+          "scrolling": "Frequently",
+          "distraction": "Sometimes",
+          "deepWork": "Less than 1 hour",
+          "flow": "Occasionally",
+          "intuition": "Intuition",
+          "trust": "9",
+          "clarityNow": "7",
+          "emotionNow": "3"
+        },
+        "postResponses": {
+          "boredomLevel": "3",
+          "focusLevel": "3",
+          "calmLevel": "6"
+        },
+        "neutral": {
+          "trialResults": [
+            {
+              "block": "neutral",
+              "trial": 1,
+              "options": [
+                "◉",
+                "⌘",
+                "⧊"
+              ],
+              "correctIcon": "⌘",
+              "selectedIcon": "⌘",
+              "isCorrect": true
+            },
+            {
+              "block": "neutral",
+              "trial": 2,
+              "options": [
+                "⬡",
+                "⧉",
+                "⍟"
+              ],
+              "correctIcon": "⬡",
+              "selectedIcon": "⬡",
+              "isCorrect": true
+            },
+            {
+              "block": "neutral",
+              "trial": 3,
+              "options": [
+                "⚇",
+                "⚆",
+                "⧫"
+              ],
+              "correctIcon": "⧫",
+              "selectedIcon": "⧫",
+              "isCorrect": true
+            },
+            {
+              "block": "neutral",
+              "trial": 4,
+              "options": [
+                "⬡",
+                "⨁",
+                "◉"
+              ],
+              "correctIcon": "◉",
+              "selectedIcon": "◉",
+              "isCorrect": true
+            },
+            {
+              "block": "neutral",
+              "trial": 5,
+              "options": [
+                "☍",
+                "◍",
+                "⧖"
+              ],
+              "correctIcon": "☍",
+              "selectedIcon": "◍",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 6,
+              "options": [
+                "◍",
+                "⍟",
+                "◒"
+              ],
+              "correctIcon": "◒",
+              "selectedIcon": "◍",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 7,
+              "options": [
+                "⧊",
+                "⟁",
+                "◒"
+              ],
+              "correctIcon": "◒",
+              "selectedIcon": "⟁",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 8,
+              "options": [
+                "⚇",
+                "⧫",
+                "⧖"
+              ],
+              "correctIcon": "⧖",
+              "selectedIcon": "⧖",
+              "isCorrect": true
+            },
+            {
+              "block": "neutral",
+              "trial": 9,
+              "options": [
+                "⧫",
+                "⦿",
+                "⍟"
+              ],
+              "correctIcon": "⧫",
+              "selectedIcon": "⍟",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 10,
+              "options": [
+                "⟁",
+                "⚇",
+                "◒"
+              ],
+              "correctIcon": "◒",
+              "selectedIcon": "⚇",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 11,
+              "options": [
+                "◍",
+                "☍",
+                "⧉"
+              ],
+              "correctIcon": "◍",
+              "selectedIcon": "◍",
+              "isCorrect": true
+            },
+            {
+              "block": "neutral",
+              "trial": 12,
+              "options": [
+                "◒",
+                "⨁",
+                "◍"
+              ],
+              "correctIcon": "⨁",
+              "selectedIcon": "⨁",
+              "isCorrect": true
+            },
+            {
+              "block": "neutral",
+              "trial": 13,
+              "options": [
+                "⌘",
+                "◍",
+                "☍"
+              ],
+              "correctIcon": "◍",
+              "selectedIcon": "☍",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 14,
+              "options": [
+                "⧉",
+                "⧫",
+                "⌘"
+              ],
+              "correctIcon": "⧫",
+              "selectedIcon": "⧉",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 15,
+              "options": [
+                "⬡",
+                "⦿",
+                "◒"
+              ],
+              "correctIcon": "◒",
+              "selectedIcon": "⦿",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 16,
+              "options": [
+                "◒",
+                "◉",
+                "☍"
+              ],
+              "correctIcon": "☍",
+              "selectedIcon": "☍",
+              "isCorrect": true
+            },
+            {
+              "block": "neutral",
+              "trial": 17,
+              "options": [
+                "⧉",
+                "⊙",
+                "⟁"
+              ],
+              "correctIcon": "⊙",
+              "selectedIcon": "⊙",
+              "isCorrect": true
+            },
+            {
+              "block": "neutral",
+              "trial": 18,
+              "options": [
+                "⦿",
+                "⚇",
+                "◍"
+              ],
+              "correctIcon": "⦿",
+              "selectedIcon": "⦿",
+              "isCorrect": true
+            },
+            {
+              "block": "neutral",
+              "trial": 19,
+              "options": [
+                "◉",
+                "⦿",
+                "⩘"
+              ],
+              "correctIcon": "◉",
+              "selectedIcon": "⦿",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 20,
+              "options": [
+                "⍟",
+                "⧊",
+                "⟁"
+              ],
+              "correctIcon": "⧊",
+              "selectedIcon": "⍟",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 21,
+              "options": [
+                "⧖",
+                "⬡",
+                "⍟"
+              ],
+              "correctIcon": "⬡",
+              "selectedIcon": "⧖",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 22,
+              "options": [
+                "◒",
+                "⨁",
+                "⍟"
+              ],
+              "correctIcon": "⨁",
+              "selectedIcon": "◒",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 23,
+              "options": [
+                "⍟",
+                "⚇",
+                "⧊"
+              ],
+              "correctIcon": "⧊",
+              "selectedIcon": "⚇",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 24,
+              "options": [
+                "⦿",
+                "⩘",
+                "⧉"
+              ],
+              "correctIcon": "⦿",
+              "selectedIcon": "⧉",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 25,
+              "options": [
+                "⌘",
+                "⧫",
+                "⧉"
+              ],
+              "correctIcon": "⌘",
+              "selectedIcon": "⧉",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 26,
+              "options": [
+                "⍟",
+                "⌘",
+                "⧖"
+              ],
+              "correctIcon": "⍟",
+              "selectedIcon": "⌘",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 27,
+              "options": [
+                "⍟",
+                "⬡",
+                "☍"
+              ],
+              "correctIcon": "☍",
+              "selectedIcon": "⍟",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 28,
+              "options": [
+                "⊙",
+                "⩘",
+                "⬡"
+              ],
+              "correctIcon": "⊙",
+              "selectedIcon": "⊙",
+              "isCorrect": true
+            },
+            {
+              "block": "neutral",
+              "trial": 29,
+              "options": [
+                "⚆",
+                "⧊",
+                "◒"
+              ],
+              "correctIcon": "⧊",
+              "selectedIcon": "⧊",
+              "isCorrect": true
+            },
+            {
+              "block": "neutral",
+              "trial": 30,
+              "options": [
+                "⟁",
+                "⧊",
+                "⚇"
+              ],
+              "correctIcon": "⧊",
+              "selectedIcon": "⟁",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 31,
+              "options": [
+                "⧫",
+                "⩘",
+                "⟁"
+              ],
+              "correctIcon": "⩘",
+              "selectedIcon": "⟁",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 32,
+              "options": [
+                "◒",
+                "⊙",
+                "⍟"
+              ],
+              "correctIcon": "⊙",
+              "selectedIcon": "⊙",
+              "isCorrect": true
+            },
+            {
+              "block": "neutral",
+              "trial": 33,
+              "options": [
+                "⨁",
+                "⊙",
+                "⚇"
+              ],
+              "correctIcon": "⚇",
+              "selectedIcon": "⨁",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 34,
+              "options": [
+                "◍",
+                "⊙",
+                "⚇"
+              ],
+              "correctIcon": "⊙",
+              "selectedIcon": "⚇",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 35,
+              "options": [
+                "◒",
+                "⚆",
+                "⧊"
+              ],
+              "correctIcon": "⚆",
+              "selectedIcon": "⚆",
+              "isCorrect": true
+            },
+            {
+              "block": "neutral",
+              "trial": 36,
+              "options": [
+                "⍟",
+                "◒",
+                "⧉"
+              ],
+              "correctIcon": "⧉",
+              "selectedIcon": "⧉",
+              "isCorrect": true
+            },
+            {
+              "block": "neutral",
+              "trial": 37,
+              "options": [
+                "⧉",
+                "⊙",
+                "⍟"
+              ],
+              "correctIcon": "⧉",
+              "selectedIcon": "⍟",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 38,
+              "options": [
+                "◍",
+                "⟁",
+                "⬡"
+              ],
+              "correctIcon": "◍",
+              "selectedIcon": "⟁",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 39,
+              "options": [
+                "◍",
+                "⩘",
+                "⊙"
+              ],
+              "correctIcon": "⩘",
+              "selectedIcon": "⩘",
+              "isCorrect": true
+            },
+            {
+              "block": "neutral",
+              "trial": 40,
+              "options": [
+                "⍟",
+                "⊙",
+                "◍"
+              ],
+              "correctIcon": "⍟",
+              "selectedIcon": "⍟",
+              "isCorrect": true
+            },
+            {
+              "block": "neutral",
+              "trial": 41,
+              "options": [
+                "⚇",
+                "⬡",
+                "⊙"
+              ],
+              "correctIcon": "⬡",
+              "selectedIcon": "⊙",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 42,
+              "options": [
+                "⧉",
+                "⌘",
+                "◉"
+              ],
+              "correctIcon": "◉",
+              "selectedIcon": "⌘",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 43,
+              "options": [
+                "⧊",
+                "⟁",
+                "⦿"
+              ],
+              "correctIcon": "⧊",
+              "selectedIcon": "⧊",
+              "isCorrect": true
+            },
+            {
+              "block": "neutral",
+              "trial": 44,
+              "options": [
+                "⚇",
+                "⚆",
+                "⩘"
+              ],
+              "correctIcon": "⚆",
+              "selectedIcon": "⚆",
+              "isCorrect": true
+            },
+            {
+              "block": "neutral",
+              "trial": 45,
+              "options": [
+                "⬡",
+                "⊙",
+                "⧉"
+              ],
+              "correctIcon": "⊙",
+              "selectedIcon": "⬡",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 46,
+              "options": [
+                "⧖",
+                "⧫",
+                "⍟"
+              ],
+              "correctIcon": "⧫",
+              "selectedIcon": "⧫",
+              "isCorrect": true
+            },
+            {
+              "block": "neutral",
+              "trial": 47,
+              "options": [
+                "⦿",
+                "◒",
+                "⧊"
+              ],
+              "correctIcon": "◒",
+              "selectedIcon": "⧊",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 48,
+              "options": [
+                "⚇",
+                "⧉",
+                "⊙"
+              ],
+              "correctIcon": "⊙",
+              "selectedIcon": "⧉",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 49,
+              "options": [
+                "⧫",
+                "⚆",
+                "⟁"
+              ],
+              "correctIcon": "⧫",
+              "selectedIcon": "⧫",
+              "isCorrect": true
+            },
+            {
+              "block": "neutral",
+              "trial": 50,
+              "options": [
+                "⦿",
+                "⩘",
+                "⍟"
+              ],
+              "correctIcon": "⍟",
+              "selectedIcon": "⩘",
+              "isCorrect": false
+            }
+          ],
+          "ghostResults": [
+            {
+              "block": "neutral",
+              "trial": 1,
+              "ghostChoice": "◉",
+              "correctIcon": "⌘",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 2,
+              "ghostChoice": "⬡",
+              "correctIcon": "⬡",
+              "isCorrect": true
+            },
+            {
+              "block": "neutral",
+              "trial": 3,
+              "ghostChoice": "⧫",
+              "correctIcon": "⧫",
+              "isCorrect": true
+            },
+            {
+              "block": "neutral",
+              "trial": 4,
+              "ghostChoice": "⬡",
+              "correctIcon": "◉",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 5,
+              "ghostChoice": "◍",
+              "correctIcon": "☍",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 6,
+              "ghostChoice": "◒",
+              "correctIcon": "◒",
+              "isCorrect": true
+            },
+            {
+              "block": "neutral",
+              "trial": 7,
+              "ghostChoice": "◒",
+              "correctIcon": "◒",
+              "isCorrect": true
+            },
+            {
+              "block": "neutral",
+              "trial": 8,
+              "ghostChoice": "⧖",
+              "correctIcon": "⧖",
+              "isCorrect": true
+            },
+            {
+              "block": "neutral",
+              "trial": 9,
+              "ghostChoice": "⦿",
+              "correctIcon": "⧫",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 10,
+              "ghostChoice": "⟁",
+              "correctIcon": "◒",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 11,
+              "ghostChoice": "⧉",
+              "correctIcon": "◍",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 12,
+              "ghostChoice": "◍",
+              "correctIcon": "⨁",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 13,
+              "ghostChoice": "☍",
+              "correctIcon": "◍",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 14,
+              "ghostChoice": "⧉",
+              "correctIcon": "⧫",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 15,
+              "ghostChoice": "⦿",
+              "correctIcon": "◒",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 16,
+              "ghostChoice": "◒",
+              "correctIcon": "☍",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 17,
+              "ghostChoice": "⟁",
+              "correctIcon": "⊙",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 18,
+              "ghostChoice": "⦿",
+              "correctIcon": "⦿",
+              "isCorrect": true
+            },
+            {
+              "block": "neutral",
+              "trial": 19,
+              "ghostChoice": "⦿",
+              "correctIcon": "◉",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 20,
+              "ghostChoice": "⍟",
+              "correctIcon": "⧊",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 21,
+              "ghostChoice": "⬡",
+              "correctIcon": "⬡",
+              "isCorrect": true
+            },
+            {
+              "block": "neutral",
+              "trial": 22,
+              "ghostChoice": "⨁",
+              "correctIcon": "⨁",
+              "isCorrect": true
+            },
+            {
+              "block": "neutral",
+              "trial": 23,
+              "ghostChoice": "⚇",
+              "correctIcon": "⧊",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 24,
+              "ghostChoice": "⦿",
+              "correctIcon": "⦿",
+              "isCorrect": true
+            },
+            {
+              "block": "neutral",
+              "trial": 25,
+              "ghostChoice": "⧉",
+              "correctIcon": "⌘",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 26,
+              "ghostChoice": "⌘",
+              "correctIcon": "⍟",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 27,
+              "ghostChoice": "☍",
+              "correctIcon": "☍",
+              "isCorrect": true
+            },
+            {
+              "block": "neutral",
+              "trial": 28,
+              "ghostChoice": "⊙",
+              "correctIcon": "⊙",
+              "isCorrect": true
+            },
+            {
+              "block": "neutral",
+              "trial": 29,
+              "ghostChoice": "◒",
+              "correctIcon": "⧊",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 30,
+              "ghostChoice": "⚇",
+              "correctIcon": "⧊",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 31,
+              "ghostChoice": "⧫",
+              "correctIcon": "⩘",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 32,
+              "ghostChoice": "⍟",
+              "correctIcon": "⊙",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 33,
+              "ghostChoice": "⨁",
+              "correctIcon": "⚇",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 34,
+              "ghostChoice": "⚇",
+              "correctIcon": "⊙",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 35,
+              "ghostChoice": "⚆",
+              "correctIcon": "⚆",
+              "isCorrect": true
+            },
+            {
+              "block": "neutral",
+              "trial": 36,
+              "ghostChoice": "⧉",
+              "correctIcon": "⧉",
+              "isCorrect": true
+            },
+            {
+              "block": "neutral",
+              "trial": 37,
+              "ghostChoice": "⧉",
+              "correctIcon": "⧉",
+              "isCorrect": true
+            },
+            {
+              "block": "neutral",
+              "trial": 38,
+              "ghostChoice": "⬡",
+              "correctIcon": "◍",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 39,
+              "ghostChoice": "◍",
+              "correctIcon": "⩘",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 40,
+              "ghostChoice": "⊙",
+              "correctIcon": "⍟",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 41,
+              "ghostChoice": "⊙",
+              "correctIcon": "⬡",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 42,
+              "ghostChoice": "◉",
+              "correctIcon": "◉",
+              "isCorrect": true
+            },
+            {
+              "block": "neutral",
+              "trial": 43,
+              "ghostChoice": "⧊",
+              "correctIcon": "⧊",
+              "isCorrect": true
+            },
+            {
+              "block": "neutral",
+              "trial": 44,
+              "ghostChoice": "⚆",
+              "correctIcon": "⚆",
+              "isCorrect": true
+            },
+            {
+              "block": "neutral",
+              "trial": 45,
+              "ghostChoice": "⊙",
+              "correctIcon": "⊙",
+              "isCorrect": true
+            },
+            {
+              "block": "neutral",
+              "trial": 46,
+              "ghostChoice": "⧖",
+              "correctIcon": "⧫",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 47,
+              "ghostChoice": "◒",
+              "correctIcon": "◒",
+              "isCorrect": true
+            },
+            {
+              "block": "neutral",
+              "trial": 48,
+              "ghostChoice": "⊙",
+              "correctIcon": "⊙",
+              "isCorrect": true
+            },
+            {
+              "block": "neutral",
+              "trial": 49,
+              "ghostChoice": "⚆",
+              "correctIcon": "⧫",
+              "isCorrect": false
+            },
+            {
+              "block": "neutral",
+              "trial": 50,
+              "ghostChoice": "⩘",
+              "correctIcon": "⍟",
+              "isCorrect": false
+            }
+          ],
+          "accuracy": "42.0",
+          "ghostAccuracy": "40.0"
+        },
+        "full_stack": {
+          "trialResults": [
+            {
+              "block": "full_stack",
+              "trial": 1,
+              "options": [
+                "◉",
+                "⚇",
+                "⬡"
+              ],
+              "correctIcon": "⚇",
+              "selectedIcon": "⚇",
+              "isCorrect": true
+            },
+            {
+              "block": "full_stack",
+              "trial": 2,
+              "options": [
+                "⚇",
+                "⍟",
+                "⌘"
+              ],
+              "correctIcon": "⌘",
+              "selectedIcon": "⌘",
+              "isCorrect": true
+            },
+            {
+              "block": "full_stack",
+              "trial": 3,
+              "options": [
+                "⊙",
+                "⍟",
+                "⌘"
+              ],
+              "correctIcon": "⊙",
+              "selectedIcon": "⌘",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 4,
+              "options": [
+                "⬡",
+                "◒",
+                "⊙"
+              ],
+              "correctIcon": "◒",
+              "selectedIcon": "◒",
+              "isCorrect": true
+            },
+            {
+              "block": "full_stack",
+              "trial": 5,
+              "options": [
+                "⟁",
+                "⧉",
+                "⍟"
+              ],
+              "correctIcon": "⧉",
+              "selectedIcon": "⟁",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 6,
+              "options": [
+                "⧊",
+                "⚆",
+                "⨁"
+              ],
+              "correctIcon": "⨁",
+              "selectedIcon": "⚆",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 7,
+              "options": [
+                "◒",
+                "⊙",
+                "☍"
+              ],
+              "correctIcon": "◒",
+              "selectedIcon": "☍",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 8,
+              "options": [
+                "⧊",
+                "⚇",
+                "⦿"
+              ],
+              "correctIcon": "⧊",
+              "selectedIcon": "⧊",
+              "isCorrect": true
+            },
+            {
+              "block": "full_stack",
+              "trial": 9,
+              "options": [
+                "⍟",
+                "⩘",
+                "⨁"
+              ],
+              "correctIcon": "⩘",
+              "selectedIcon": "⍟",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 10,
+              "options": [
+                "⬡",
+                "⟁",
+                "⧉"
+              ],
+              "correctIcon": "⟁",
+              "selectedIcon": "⧉",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 11,
+              "options": [
+                "⍟",
+                "⨁",
+                "⌘"
+              ],
+              "correctIcon": "⌘",
+              "selectedIcon": "⨁",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 12,
+              "options": [
+                "⟁",
+                "⚇",
+                "⨁"
+              ],
+              "correctIcon": "⚇",
+              "selectedIcon": "⚇",
+              "isCorrect": true
+            },
+            {
+              "block": "full_stack",
+              "trial": 13,
+              "options": [
+                "⩘",
+                "⍟",
+                "◉"
+              ],
+              "correctIcon": "⍟",
+              "selectedIcon": "⩘",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 14,
+              "options": [
+                "⍟",
+                "⌘",
+                "⟁"
+              ],
+              "correctIcon": "⌘",
+              "selectedIcon": "⌘",
+              "isCorrect": true
+            },
+            {
+              "block": "full_stack",
+              "trial": 15,
+              "options": [
+                "⌘",
+                "⧉",
+                "⬡"
+              ],
+              "correctIcon": "⌘",
+              "selectedIcon": "⧉",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 16,
+              "options": [
+                "⟁",
+                "◒",
+                "⍟"
+              ],
+              "correctIcon": "⍟",
+              "selectedIcon": "⟁",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 17,
+              "options": [
+                "⧫",
+                "⟁",
+                "⚇"
+              ],
+              "correctIcon": "⟁",
+              "selectedIcon": "⟁",
+              "isCorrect": true
+            },
+            {
+              "block": "full_stack",
+              "trial": 18,
+              "options": [
+                "⌘",
+                "◍",
+                "⚆"
+              ],
+              "correctIcon": "⚆",
+              "selectedIcon": "◍",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 19,
+              "options": [
+                "⚇",
+                "⧫",
+                "◒"
+              ],
+              "correctIcon": "◒",
+              "selectedIcon": "◒",
+              "isCorrect": true
+            },
+            {
+              "block": "full_stack",
+              "trial": 20,
+              "options": [
+                "⨁",
+                "⚇",
+                "⌘"
+              ],
+              "correctIcon": "⌘",
+              "selectedIcon": "⌘",
+              "isCorrect": true
+            },
+            {
+              "block": "full_stack",
+              "trial": 21,
+              "options": [
+                "⚆",
+                "⩘",
+                "⧖"
+              ],
+              "correctIcon": "⩘",
+              "selectedIcon": "⧖",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 22,
+              "options": [
+                "⊙",
+                "⚇",
+                "◉"
+              ],
+              "correctIcon": "⚇",
+              "selectedIcon": "⚇",
+              "isCorrect": true
+            },
+            {
+              "block": "full_stack",
+              "trial": 23,
+              "options": [
+                "⚇",
+                "⩘",
+                "⬡"
+              ],
+              "correctIcon": "⩘",
+              "selectedIcon": "⚇",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 24,
+              "options": [
+                "⦿",
+                "⚇",
+                "⬡"
+              ],
+              "correctIcon": "⦿",
+              "selectedIcon": "⬡",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 25,
+              "options": [
+                "⍟",
+                "⌘",
+                "⧊"
+              ],
+              "correctIcon": "⍟",
+              "selectedIcon": "⌘",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 26,
+              "options": [
+                "⩘",
+                "⚇",
+                "⌘"
+              ],
+              "correctIcon": "⚇",
+              "selectedIcon": "⚇",
+              "isCorrect": true
+            },
+            {
+              "block": "full_stack",
+              "trial": 27,
+              "options": [
+                "⩘",
+                "☍",
+                "⍟"
+              ],
+              "correctIcon": "☍",
+              "selectedIcon": "☍",
+              "isCorrect": true
+            },
+            {
+              "block": "full_stack",
+              "trial": 28,
+              "options": [
+                "⌘",
+                "⚆",
+                "⩘"
+              ],
+              "correctIcon": "⩘",
+              "selectedIcon": "⩘",
+              "isCorrect": true
+            },
+            {
+              "block": "full_stack",
+              "trial": 29,
+              "options": [
+                "◍",
+                "⧫",
+                "◉"
+              ],
+              "correctIcon": "◉",
+              "selectedIcon": "◍",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 30,
+              "options": [
+                "◉",
+                "◍",
+                "◒"
+              ],
+              "correctIcon": "◉",
+              "selectedIcon": "◍",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 31,
+              "options": [
+                "⌘",
+                "⍟",
+                "⬡"
+              ],
+              "correctIcon": "⍟",
+              "selectedIcon": "⍟",
+              "isCorrect": true
+            },
+            {
+              "block": "full_stack",
+              "trial": 32,
+              "options": [
+                "⦿",
+                "⍟",
+                "⌘"
+              ],
+              "correctIcon": "⍟",
+              "selectedIcon": "⦿",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 33,
+              "options": [
+                "◒",
+                "⧖",
+                "⚆"
+              ],
+              "correctIcon": "◒",
+              "selectedIcon": "⚆",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 34,
+              "options": [
+                "⧖",
+                "⚆",
+                "⬡"
+              ],
+              "correctIcon": "⬡",
+              "selectedIcon": "⚆",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 35,
+              "options": [
+                "⧊",
+                "⬡",
+                "⌘"
+              ],
+              "correctIcon": "⌘",
+              "selectedIcon": "⌘",
+              "isCorrect": true
+            },
+            {
+              "block": "full_stack",
+              "trial": 36,
+              "options": [
+                "⍟",
+                "⌘",
+                "⧫"
+              ],
+              "correctIcon": "⍟",
+              "selectedIcon": "⧫",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 37,
+              "options": [
+                "⌘",
+                "⩘",
+                "⊙"
+              ],
+              "correctIcon": "⊙",
+              "selectedIcon": "⊙",
+              "isCorrect": true
+            },
+            {
+              "block": "full_stack",
+              "trial": 38,
+              "options": [
+                "◉",
+                "⟁",
+                "⦿"
+              ],
+              "correctIcon": "⦿",
+              "selectedIcon": "◉",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 39,
+              "options": [
+                "⨁",
+                "⚆",
+                "⚇"
+              ],
+              "correctIcon": "⚆",
+              "selectedIcon": "⚆",
+              "isCorrect": true
+            },
+            {
+              "block": "full_stack",
+              "trial": 40,
+              "options": [
+                "⊙",
+                "⍟",
+                "⦿"
+              ],
+              "correctIcon": "⍟",
+              "selectedIcon": "⦿",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 41,
+              "options": [
+                "⊙",
+                "⍟",
+                "⩘"
+              ],
+              "correctIcon": "⊙",
+              "selectedIcon": "⊙",
+              "isCorrect": true
+            },
+            {
+              "block": "full_stack",
+              "trial": 42,
+              "options": [
+                "⊙",
+                "◉",
+                "⦿"
+              ],
+              "correctIcon": "⊙",
+              "selectedIcon": "◉",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 43,
+              "options": [
+                "⧖",
+                "◒",
+                "⧫"
+              ],
+              "correctIcon": "⧖",
+              "selectedIcon": "◒",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 44,
+              "options": [
+                "⨁",
+                "⌘",
+                "⧉"
+              ],
+              "correctIcon": "⌘",
+              "selectedIcon": "⨁",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 45,
+              "options": [
+                "⧫",
+                "◒",
+                "⩘"
+              ],
+              "correctIcon": "◒",
+              "selectedIcon": "⩘",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 46,
+              "options": [
+                "⬡",
+                "☍",
+                "⦿"
+              ],
+              "correctIcon": "⬡",
+              "selectedIcon": "☍",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 47,
+              "options": [
+                "◉",
+                "⌘",
+                "◍"
+              ],
+              "correctIcon": "◍",
+              "selectedIcon": "◍",
+              "isCorrect": true
+            },
+            {
+              "block": "full_stack",
+              "trial": 48,
+              "options": [
+                "⩘",
+                "◉",
+                "⊙"
+              ],
+              "correctIcon": "⊙",
+              "selectedIcon": "⩘",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 49,
+              "options": [
+                "⦿",
+                "⧫",
+                "⧊"
+              ],
+              "correctIcon": "⦿",
+              "selectedIcon": "⧊",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 50,
+              "options": [
+                "⬡",
+                "⊙",
+                "⦿"
+              ],
+              "correctIcon": "⊙",
+              "selectedIcon": "⊙",
+              "isCorrect": true
+            }
+          ],
+          "ghostResults": [
+            {
+              "block": "full_stack",
+              "trial": 1,
+              "ghostChoice": "⚇",
+              "correctIcon": "⚇",
+              "isCorrect": true
+            },
+            {
+              "block": "full_stack",
+              "trial": 2,
+              "ghostChoice": "⚇",
+              "correctIcon": "⌘",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 3,
+              "ghostChoice": "⊙",
+              "correctIcon": "⊙",
+              "isCorrect": true
+            },
+            {
+              "block": "full_stack",
+              "trial": 4,
+              "ghostChoice": "⊙",
+              "correctIcon": "◒",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 5,
+              "ghostChoice": "⍟",
+              "correctIcon": "⧉",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 6,
+              "ghostChoice": "⧊",
+              "correctIcon": "⨁",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 7,
+              "ghostChoice": "☍",
+              "correctIcon": "◒",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 8,
+              "ghostChoice": "⚇",
+              "correctIcon": "⧊",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 9,
+              "ghostChoice": "⨁",
+              "correctIcon": "⩘",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 10,
+              "ghostChoice": "⟁",
+              "correctIcon": "⟁",
+              "isCorrect": true
+            },
+            {
+              "block": "full_stack",
+              "trial": 11,
+              "ghostChoice": "⨁",
+              "correctIcon": "⌘",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 12,
+              "ghostChoice": "⨁",
+              "correctIcon": "⚇",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 13,
+              "ghostChoice": "◉",
+              "correctIcon": "⍟",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 14,
+              "ghostChoice": "⌘",
+              "correctIcon": "⌘",
+              "isCorrect": true
+            },
+            {
+              "block": "full_stack",
+              "trial": 15,
+              "ghostChoice": "⬡",
+              "correctIcon": "⌘",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 16,
+              "ghostChoice": "⟁",
+              "correctIcon": "⍟",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 17,
+              "ghostChoice": "⟁",
+              "correctIcon": "⟁",
+              "isCorrect": true
+            },
+            {
+              "block": "full_stack",
+              "trial": 18,
+              "ghostChoice": "◍",
+              "correctIcon": "⚆",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 19,
+              "ghostChoice": "⧫",
+              "correctIcon": "◒",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 20,
+              "ghostChoice": "⚇",
+              "correctIcon": "⌘",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 21,
+              "ghostChoice": "⩘",
+              "correctIcon": "⩘",
+              "isCorrect": true
+            },
+            {
+              "block": "full_stack",
+              "trial": 22,
+              "ghostChoice": "⚇",
+              "correctIcon": "⚇",
+              "isCorrect": true
+            },
+            {
+              "block": "full_stack",
+              "trial": 23,
+              "ghostChoice": "⩘",
+              "correctIcon": "⩘",
+              "isCorrect": true
+            },
+            {
+              "block": "full_stack",
+              "trial": 24,
+              "ghostChoice": "⚇",
+              "correctIcon": "⦿",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 25,
+              "ghostChoice": "⧊",
+              "correctIcon": "⍟",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 26,
+              "ghostChoice": "⌘",
+              "correctIcon": "⚇",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 27,
+              "ghostChoice": "⩘",
+              "correctIcon": "☍",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 28,
+              "ghostChoice": "⌘",
+              "correctIcon": "⩘",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 29,
+              "ghostChoice": "◉",
+              "correctIcon": "◉",
+              "isCorrect": true
+            },
+            {
+              "block": "full_stack",
+              "trial": 30,
+              "ghostChoice": "◍",
+              "correctIcon": "◉",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 31,
+              "ghostChoice": "⍟",
+              "correctIcon": "⍟",
+              "isCorrect": true
+            },
+            {
+              "block": "full_stack",
+              "trial": 32,
+              "ghostChoice": "⦿",
+              "correctIcon": "⍟",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 33,
+              "ghostChoice": "◒",
+              "correctIcon": "◒",
+              "isCorrect": true
+            },
+            {
+              "block": "full_stack",
+              "trial": 34,
+              "ghostChoice": "⧖",
+              "correctIcon": "⬡",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 35,
+              "ghostChoice": "⧊",
+              "correctIcon": "⌘",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 36,
+              "ghostChoice": "⌘",
+              "correctIcon": "⍟",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 37,
+              "ghostChoice": "⌘",
+              "correctIcon": "⊙",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 38,
+              "ghostChoice": "⟁",
+              "correctIcon": "⦿",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 39,
+              "ghostChoice": "⚆",
+              "correctIcon": "⚆",
+              "isCorrect": true
+            },
+            {
+              "block": "full_stack",
+              "trial": 40,
+              "ghostChoice": "⍟",
+              "correctIcon": "⍟",
+              "isCorrect": true
+            },
+            {
+              "block": "full_stack",
+              "trial": 41,
+              "ghostChoice": "⍟",
+              "correctIcon": "⊙",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 42,
+              "ghostChoice": "◉",
+              "correctIcon": "⊙",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 43,
+              "ghostChoice": "⧫",
+              "correctIcon": "⧖",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 44,
+              "ghostChoice": "⧉",
+              "correctIcon": "⌘",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 45,
+              "ghostChoice": "◒",
+              "correctIcon": "◒",
+              "isCorrect": true
+            },
+            {
+              "block": "full_stack",
+              "trial": 46,
+              "ghostChoice": "⦿",
+              "correctIcon": "⬡",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 47,
+              "ghostChoice": "⌘",
+              "correctIcon": "◍",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 48,
+              "ghostChoice": "⩘",
+              "correctIcon": "⊙",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 49,
+              "ghostChoice": "⧊",
+              "correctIcon": "⦿",
+              "isCorrect": false
+            },
+            {
+              "block": "full_stack",
+              "trial": 50,
+              "ghostChoice": "⬡",
+              "correctIcon": "⊙",
+              "isCorrect": false
+            }
+          ],
+          "accuracy": "82.0",
+          "ghostAccuracy": "34.0"
+        },
+        "timestamp": "2025-04-21T20:45:40.922Z",
+        "__collections__": {}
+      }
+    }
+  }
+}

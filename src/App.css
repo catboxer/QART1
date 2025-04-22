@@ -248,3 +248,35 @@ button:hover {
   width: 100%;
   text-align: center;
 }
+.exit-button {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background-color: #f8f8f8;
+  border: 1px solid #ccc;
+  padding: 8px 14px;
+  border-radius: 20px;
+  font-size: 1rem;
+  color: #333;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  transition: all 0.2s ease;
+  z-index: 9999;
+}
+
+.exit-button:hover {
+  background-color: #e74c3c;
+  color: #fff;
+  border-color: #e74c3c;
+}
+
+.exit-icon {
+  font-size: 1.4rem;
+}
+
+.exit-text {
+  font-weight: 500;
+}
