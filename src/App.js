@@ -325,7 +325,6 @@ function App() {
 
   const renderButtonChoices = () => {
     const labels = choiceLabels[blockOrder[currentBlockIndex].id];
-    const feedbackId = `pending-feedback-${currentBlock}-${currentTrial}`;
     return (
       <div
         className="icon-options-wrapper"
