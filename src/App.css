@@ -301,3 +301,10 @@ body.user-is-tabbing .icon-button:focus {
 .exit-text {
   font-weight: 500;
 }
+.status-placeholder {
+  min-height: 1.2em;
+}
+.results-display {
+  /* e.g. 6em → 7em to cover the extra line */
+  min-height: 7em;
+}

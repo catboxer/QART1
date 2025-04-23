@@ -4,6 +4,7 @@ import { db } from './firebase';
 import { collection, addDoc } from 'firebase/firestore';
 import { preQuestions, cueBlocks, postQuestions } from './questions';
 import confetti from 'canvas-confetti';
+
 function pickRandom(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
@@ -23,6 +24,7 @@ async function getQuantumRandomSide() {
     return pickRandom(['left', 'right']);
   }
 }
+
 function App() {
   const [step, setStep] = useState('pre');
   const [preResponses, setPreResponses] = useState({});
@@ -31,106 +33,128 @@ function App() {
   const [ghostResults, setGhostResults] = useState([]);
   const [currentBlockIndex, setCurrentBlockIndex] = useState(0);
   const [currentTrial, setCurrentTrial] = useState(0);
-  const [blockOrder] = useState([
-    cueBlocks.find((b) => b.id === 'neutral'),
-    cueBlocks.find((b) => b.id === 'full_stack'),
-  ]);
   const [showStar, setShowStar] = useState(false);
   const [score, setScore] = useState(0);
   const [lastResult, setLastResult] = useState(null);
   const [buttonsDisabled, setButtonsDisabled] = useState(false);
   const totalTrialsPerBlock = 35;
   const [neutralStats, setNeutralStats] = useState(null);
-  const [finalStats, setFinalStats] = useState(null);
-  const [experimentRuns, setExperimentRuns] = useState(1);
-  // inside your App function, before the return:
-  const currentBlock = blockOrder[currentBlockIndex];
+  const [fullStackStats, setFullStackStats] = useState(null);
+  const [spoonLoveStats, setSpoonLoveStats] = useState(null);
+  const [experimentRuns, setExperimentRuns] = useState(
+    parseInt(localStorage.getItem('experimentRuns') || '0', 10)
+  );
+  const [isLoading, setIsLoading] = useState(false);
+
+  // Define blocks: neutral, full_stack, spoon_love
+  const baseBlocks = [
+    cueBlocks.find((b) => b.id === 'neutral'),
+    cueBlocks.find((b) => b.id === 'full_stack'),
+  ];
+  const [blockOrder] = useState([
+    ...baseBlocks,
+    {
+      ...baseBlocks[1],
+      id: 'spoon_love',
+      showFeedback: baseBlocks[1].showFeedback,
+    },
+  ]);
+
   const trialInstructions = {
-    neutral: `This block is a quick check using an internal pseudorandom number generator (no external delay or feedback). Go as fast as you like and pick whatever feels right—this is simply a default performance measurement. `,
-    full_stack: `This block uses an external Quantum Random Number
-            Generator (QRNG), which introduces a short delay. Once you
-            make your choice, the QRNG samples a quantum event and
-            returns the result. Go slowly. Stay present. Tune into the
-            flow.`,
+    neutral:
+      'This block is a quick check using an internal pseudorandom number generator (no external delay or feedback). Go as fast as you like and pick whatever feels right—this is simply a default performance measurement.',
+    full_stack:
+      'This block uses an external Quantum Random Number Generator (QRNG), which introduces a short delay. Once you make your choice and before you push the button focus on what you want returned. The QRNG samples a quantum event and returns the result. Go slowly. Stay present. Tune into the flow.',
+    spoon_love:
+      'This block also uses an external Quantum Random Number Generator (QRNG), which introduces a short delay. In this trial, you will ALWAYS select “Love” — the aim is not to choose between Love and Bowl, but to bias the QRNG’s decoherence toward the Love outcome more often than Bowl, reaching a statistically significant effect. To do this, harness your emotions and thoughts around the word Love. Before each trial, cue the feeling of Love by recalling the feeling you have of deep connection. Maintain that focused mental representation throughout the QRNG’s decoherence window. Proceed at a steady pace, stay fully attentive during each delay. Go slowly. Stay present. Tune into the flow.',
   };
-  const currentInstruction =
-    currentBlock && trialInstructions[currentBlock.id];
+
+  const choiceLabels = {
+    neutral: { left: 'Left', right: 'Right' },
+    full_stack: { left: 'Left', right: 'Right' },
+    spoon_love: { left: 'Bowl', right: 'Love' },
+  };
+  const currentBlock = blockOrder[currentBlockIndex].id;
+  const labels = choiceLabels[currentBlock];
+
   const handleChange = (id, value, isPost = false) => {
-    const updater = isPost ? setPostResponses : setPreResponses;
-    updater((prev) => ({ ...prev, [id]: value }));
+    const setter = isPost ? setPostResponses : setPreResponses;
+    setter((prev) => ({ ...prev, [id]: value }));
   };
+
   const renderInput = (q, isPost = false) => {
     const onChange = (e) =>
       handleChange(q.id, e.target.value, isPost);
-    if (q.type === 'number') {
-      return (
-        <input
-          id={q.id}
-          type="number"
-          onChange={onChange}
-          className="number-input"
-        />
-      );
-    }
-    if (q.type === 'slider') {
-      return (
-        <div className="slider-container">
-          <span className="slider-label">{q.leftLabel || 'Low'}</span>
+    switch (q.type) {
+      case 'number':
+        return (
           <input
             id={q.id}
-            type="range"
-            min={q.min}
-            max={q.max}
+            type="number"
             onChange={onChange}
-            className="slider"
-            aria-labelledby={`label-${q.id}`}
+            className="number-input"
           />
-          <span className="slider-label">
-            {q.rightLabel || 'High'}
-          </span>
-        </div>
-      );
+        );
+      case 'slider':
+        return (
+          <div className="slider-container">
+            <span id={`label-${q.id}-low`} className="slider-label">
+              {q.leftLabel || 'Low'}
+            </span>
+
+            <input
+              id={q.id}
+              type="range"
+              min={q.min}
+              max={q.max}
+              onChange={onChange}
+              className="slider"
+              aria-labelledby={`label-${q.id}-low label-${q.id}-high`}
+            />
+            <span id={`label-${q.id}-high`} className="slider-label">
+              {q.rightLabel || 'High'}
+            </span>
+          </div>
+        );
+      case 'textarea':
+        return (
+          <textarea
+            id={q.id}
+            onChange={onChange}
+            className="textarea-input"
+          />
+        );
+      case 'select':
+        return (
+          <select
+            id={q.id}
+            onChange={onChange}
+            className="select-input"
+          >
+            <option value="">Select</option>
+            {q.options.map((opt, idx) => (
+              <option key={idx} value={opt}>
+                {opt}
+              </option>
+            ))}
+          </select>
+        );
+      default:
+        return (
+          <input
+            id={q.id}
+            type="text"
+            onChange={onChange}
+            className="text-input"
+          />
+        );
     }
-    if (q.type === 'textarea') {
-      return (
-        <textarea
-          id={q.id}
-          onChange={onChange}
-          className="textarea-input"
-        />
-      );
-    }
-    if (q.type === 'select') {
-      return (
-        <select
-          id={q.id}
-          onChange={onChange}
-          className="select-input"
-        >
-          <option value="">Select</option>
-          {q.options.map((opt, idx) => (
-            <option key={idx} value={opt}>
-              {opt}
-            </option>
-          ))}
-        </select>
-      );
-    }
-    return (
-      <input
-        id={q.id}
-        type="text"
-        onChange={onChange}
-        className="text-input"
-      />
-    );
   };
-  const startTrials = (isFullStack = false) => {
-    if (isFullStack) {
-      setCurrentBlockIndex(1);
-    }
-    setGhostResults([]);
+
+  const startTrials = (index = 0) => {
+    setCurrentBlockIndex(index);
     setTrialResults([]);
+    setGhostResults([]);
     setCurrentTrial(0);
     setScore(0);
     setLastResult(null);
@@ -138,111 +162,103 @@ function App() {
   };
 
   const handleTrial = async (selected) => {
+    setIsLoading(true);
     setButtonsDisabled(true);
-    try {
-      const currentBlock = blockOrder[currentBlockIndex];
-      const ghostChoice = pickRandom(['left', 'right']);
-      const correct =
-        currentBlock.id === 'full_stack'
-          ? await getQuantumRandomSide()
-          : pickRandom(['left', 'right']);
+    setLastResult(null);
 
-      const isCorrect = selected === correct;
-      const ghostIsCorrect = ghostChoice === correct;
+    const block = blockOrder[currentBlockIndex];
+    const ghostChoice = pickRandom(['left', 'right']);
+    const correct =
+      block.id === 'full_stack' || block.id === 'spoon_love'
+        ? await getQuantumRandomSide()
+        : pickRandom(['left', 'right']);
 
-      const newTrial = {
-        block: currentBlock.id,
-        trial: currentTrial + 1,
-        selectedSide: selected,
-        correctSide: correct,
-        isCorrect,
-      };
+    setIsLoading(false);
+    setButtonsDisabled(false);
 
-      const newGhost = {
-        block: currentBlock.id,
-        trial: currentTrial + 1,
-        ghostChoice,
-        correctSide: correct,
-        isCorrect: ghostIsCorrect,
-      };
+    const isCorrect = selected === correct;
+    const ghostIsCorrect = ghostChoice === correct;
 
-      const updatedTrialResults = [...trialResults, newTrial];
-      const updatedGhostResults = [...ghostResults, newGhost];
+    const trialData = {
+      block: block.id,
+      trial: currentTrial + 1,
+      selectedSide: selected,
+      correctSide: correct,
+      isCorrect,
+    };
+    const ghostData = {
+      block: block.id,
+      trial: currentTrial + 1,
+      ghostChoice,
+      correctSide: correct,
+      isCorrect: ghostIsCorrect,
+    };
 
-      setTrialResults(updatedTrialResults);
-      setGhostResults(updatedGhostResults);
-      setLastResult(
-        currentBlock.id === 'full_stack'
-          ? { selected, ghostChoice, correct }
-          : null
-      );
+    const newTrials = [...trialResults, trialData];
+    const newGhosts = [...ghostResults, ghostData];
+    setTrialResults(newTrials);
+    setGhostResults(newGhosts);
 
-      if (currentBlock.showFeedback && isCorrect) {
-        setScore((prev) => prev + 1);
-        setShowStar(true);
-        setTimeout(() => setShowStar(false), 1000);
-      } else {
-        setShowStar(false);
-      }
-
-      if (currentTrial + 1 === totalTrialsPerBlock) {
-        const userCorrect = updatedTrialResults.filter(
-          (t) => t.block === currentBlock.id && t.isCorrect
-        ).length;
-        const ghostCorrect = updatedGhostResults.filter(
-          (g) => g.block === currentBlock.id && g.isCorrect
-        ).length;
-
-        const userPercent = (
-          (userCorrect / totalTrialsPerBlock) *
-          100
-        ).toFixed(1);
-        const ghostPercent = (
-          (ghostCorrect / totalTrialsPerBlock) *
-          100
-        ).toFixed(1);
-
-        if (userPercent > 65) {
-          confetti({
-            particleCount: 150,
-            spread: 100,
-            origin: { y: 0.6 },
-          });
-        }
-
-        if (currentBlockIndex === 0) {
-          setNeutralStats({ userPercent, ghostPercent });
-          setStep('neutral-results');
-        } else {
-          setFinalStats({ userPercent, ghostPercent });
-          setStep('final-results');
-        }
-
-        return;
-      }
-
-      if (currentBlock.id === 'full_stack') {
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-      }
-
-      // clear the old result and bump to the next trial
-      setLastResult(null);
-      setCurrentTrial((prev) => prev + 1);
-    } finally {
-      // only now do we re-enable the buttons
-      setButtonsDisabled(false);
+    setLastResult(
+      block.id !== 'neutral'
+        ? { selected, ghostChoice, correct }
+        : null
+    );
+    if (block.showFeedback && isCorrect) {
+      setScore((s) => s + 1);
+      setShowStar(true);
+      setTimeout(() => setShowStar(false), 1000);
     }
+
+    // End of block
+    if (currentTrial + 1 === totalTrialsPerBlock) {
+      const userCorrect = newTrials.filter(
+        (t) => t.block === block.id && t.isCorrect
+      ).length;
+      const ghostCorrect = newGhosts.filter(
+        (g) => g.block === block.id && g.isCorrect
+      ).length;
+      const userPercent = (
+        (userCorrect / totalTrialsPerBlock) *
+        100
+      ).toFixed(1);
+      const ghostPercent = (
+        (ghostCorrect / totalTrialsPerBlock) *
+        100
+      ).toFixed(1);
+      if (userPercent > 65) {
+        confetti({
+          particleCount: 150,
+          spread: 100,
+          origin: { y: 0.6 },
+        });
+      }
+
+      if (block.id === 'neutral') {
+        setNeutralStats({ userPercent, ghostPercent });
+        setStep('neutral-results');
+      } else if (block.id === 'full_stack') {
+        setFullStackStats({ userPercent, ghostPercent });
+        setStep('fullstack-results');
+      } else {
+        setSpoonLoveStats({ userPercent, ghostPercent });
+        setStep('final-results');
+      }
+      return;
+    }
+    setCurrentTrial((c) => c + 1);
   };
+
   const saveResults = async (exitedEarly = false) => {
-    const storedRuns = parseInt(
+    const runs = parseInt(
       localStorage.getItem('experimentRuns') || '0',
       10
     );
-    const newCount = exitedEarly ? storedRuns : storedRuns + 1;
-    localStorage.setItem('experimentRuns', newCount);
-    setExperimentRuns(newCount);
+    const newRuns = exitedEarly ? runs : runs + 1;
+    localStorage.setItem('experimentRuns', newRuns);
+    setExperimentRuns(newRuns);
 
-    await addDoc(collection(db, 'experiment2_responses'), {
+    const payload = {
       preResponses,
       postResponses,
       neutral: {
@@ -262,46 +278,42 @@ function App() {
         ghostResults: ghostResults.filter(
           (g) => g.block === 'full_stack'
         ),
-        accuracy: neutralStats?.userPercent ?? null,
-        ghostAccuracy: neutralStats?.ghostPercent ?? null,
+        accuracy: fullStackStats?.userPercent ?? null,
+        ghostAccuracy: fullStackStats?.ghostPercent ?? null,
       },
-      experimentRuns: newCount,
+      spoon_love: {
+        trialResults: trialResults.filter(
+          (t) => t.block === 'spoon_love'
+        ),
+        ghostResults: ghostResults.filter(
+          (g) => g.block === 'spoon_love'
+        ),
+        accuracy: spoonLoveStats?.userPercent ?? null,
+        ghostAccuracy: spoonLoveStats?.ghostPercent ?? null,
+      },
+      experimentRuns: newRuns,
       exitedEarly,
       timestamp: new Date().toISOString(),
-    });
+    };
+    console.log('Saving payload:', payload);
+    try {
+      const collRef = collection(db, 'experiment2_responses');
+      console.log('🔍 Collection ref:', collRef.path);
+
+      console.log('🔍 Attempting addDoc()…');
+      const docRef = await addDoc(collRef, payload);
+      console.log(
+        '✅ Firestore write succeeded, new doc ID:',
+        docRef.id
+      );
+    } catch (err) {
+      console.error('❌ Firestore write ERROR:', err);
+      alert('Save failed—see console for error details');
+      return;
+    }
+    console.log('🏁 saveResults complete, moving to done step');
+    setStep('done');
   };
-
-  const renderButtonChoices = () => (
-    <div
-      className="icon-options-wrapper"
-      role="group"
-      aria-label="Binary choice between left and right"
-    >
-      <div
-        className={`icon-options large-buttons ${
-          buttonsDisabled ? 'text-hidden' : 'text-visible'
-        }`}
-      >
-        <button
-          className="icon-button"
-          onClick={() => handleTrial('left')}
-          aria-label="Choose Left"
-          disabled={buttonsDisabled}
-        >
-          Left
-        </button>
-        <button
-          className="icon-button"
-          onClick={() => handleTrial('right')}
-          aria-label="Choose Right"
-          disabled={buttonsDisabled}
-        >
-          Right
-        </button>
-      </div>
-    </div>
-  );
-
   const ratingMessage = (percent) => {
     const p = parseFloat(percent);
     if (p <= 50) return 'Expected by chance.';
@@ -309,6 +321,43 @@ function App() {
     if (p <= 69) return 'Notably above chance.';
     if (p <= 79) return 'Strong result.';
     return 'Very strong alignment — impressive!';
+  };
+
+  const renderButtonChoices = () => {
+    const labels = choiceLabels[blockOrder[currentBlockIndex].id];
+    const feedbackId = `pending-feedback-${currentBlock}-${currentTrial}`;
+    return (
+      <div
+        className="icon-options-wrapper"
+        role="group"
+        aria-label="Binary choice"
+      >
+        <div
+          className={`icon-options large-buttons ${
+            buttonsDisabled ? 'text-hidden' : 'text-visible'
+          }`}
+        >
+          <button
+            type="button"
+            className="icon-button"
+            onClick={() => handleTrial('left')}
+            aria-label={`Choose ${labels.left}`}
+            disabled={isLoading}
+          >
+            {labels.left}
+          </button>
+          <button
+            type="button"
+            className="icon-button"
+            onClick={() => handleTrial('right')}
+            aria-label={`Choose ${labels.right}`}
+            disabled={isLoading}
+          >
+            {labels.right}
+          </button>
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -326,22 +375,18 @@ function App() {
           </p>
           <p>
             You’ve completed this experiment{' '}
-            <strong>{experimentRuns}</strong> time(s).
+            <strong>{experimentRuns}</strong>
+            time(s).
           </p>
-          {preQuestions.map((q, index) => (
+          {preQuestions.map((q, i) => (
             <div key={q.id} className="question-block">
               <label htmlFor={q.id} className="question-label">
-                <strong className="question-number">
-                  Q{index + 1}.
-                </strong>{' '}
-                {q.question}
+                <strong>Q{i + 1}.</strong> {q.question}
               </label>
-              <div className="answer-wrapper">
-                {renderInput(q, true)}
-              </div>
+              <div className="answer-wrapper">{renderInput(q)}</div>
             </div>
           ))}
-          <button onClick={() => startTrials(false)}>
+          <button onClick={() => startTrials(0)}>
             Start Neutral Trials
           </button>
         </>
@@ -371,28 +416,47 @@ function App() {
           <div className="breathing-circle"></div>
           <p>
             Take ten deep, slow breaths and let your focus settle.
-            <br></br>
-            Go slowly. Let your body relax.<br></br>
+            <br />
+            Go slowly. Let your body relax.
+            <br />
             Trust that the answer is already there—your mind just
-            needs space to find it.<br></br>
+            needs space to find it.
           </p>
-          <button onClick={() => startTrials(true)}>I'm Ready</button>
+          <button onClick={() => startTrials(1)}>I'm Ready</button>
+        </div>
+      )}
+      {step === 'breathe-spoon' && (
+        <div className="breathe-step">
+          <h2 tabIndex={-1}>Center Yourself for the Final Block</h2>
+          <div className="breathing-circle" aria-hidden="true" />
+          <p>
+            Take ten deep, slow breaths to calm your mind before the
+            last set of trials.
+            <br />
+            Inhale… 1, 2, 3… exhale… 1, 2, 3…
+            <br />
+            Let your focus settle.
+          </p>
+          <button onClick={() => startTrials(2)}>
+            Start Final Trials
+          </button>
         </div>
       )}
 
-      {step === 'final-results' && finalStats && (
+      {step === 'fullstack-results' && fullStackStats && (
         <>
           <h2>Focused Block Results</h2>
           <p>
-            <strong>Your accuracy:</strong> {finalStats.userPercent}%
+            <strong>Your accuracy:</strong>{' '}
+            {fullStackStats.userPercent}%
           </p>
           <p>
-            <strong>Ghost accuracy:</strong> {finalStats.ghostPercent}
-            %
+            <strong>Ghost accuracy:</strong>{' '}
+            {fullStackStats.ghostPercent}%
           </p>
-          <p>{ratingMessage(finalStats.userPercent)}</p>
-          <button onClick={() => setStep('post')}>
-            Continue to Post-Experiment Questions
+          <p>{ratingMessage(fullStackStats.userPercent)}</p>
+          <button onClick={() => setStep('breathe-spoon')}>
+            Get Ready For The Final Trial
           </button>
         </>
       )}
@@ -402,22 +466,39 @@ function App() {
           <h2>
             Trial {currentTrial + 1} of {totalTrialsPerBlock}
           </h2>
-          <p>{currentInstruction}</p>
+          <p>{trialInstructions[blockOrder[currentBlockIndex].id]}</p>
           {renderButtonChoices()}
-
-          {lastResult && (
-            <div className="results-display" aria-live="polite">
+          {isLoading && (
+            <div role="status" aria-live="polite">
+              Waiting for the quantum RNG…
+            </div>
+          )}
+          {lastResult && !isLoading && (
+            <div
+              className="results-display"
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+            >
               <p>
-                You picked <strong>{lastResult.selected}</strong>
+                You picked{' '}
+                <strong>{labels[lastResult.selected]}</strong>
               </p>
-              <p>
-                Ghost picked <strong>{lastResult.ghostChoice}</strong>
-              </p>
+              {currentBlock !== 'neutral' && (
+                <p>
+                  Ghost picked{' '}
+                  <strong>{labels[lastResult.ghostChoice]}</strong>
+                </p>
+              )}
               <p>
                 Correct answer was{' '}
-                <strong>{lastResult.correct}</strong>
+                <strong>{labels[lastResult.correct]}</strong>
               </p>
-              {showStar && <div className="star-burst">🌟</div>}
+              {showStar && (
+                <div className="star-burst" aria-hidden="true">
+                  🌟
+                </div>
+              )}
             </div>
           )}
           <button
@@ -432,23 +513,36 @@ function App() {
             🚪 Exit Study
           </button>
           {blockOrder[currentBlockIndex].showFeedback && (
-            <>
-              <h3 style={{ textAlign: 'center' }}>Score: {score}</h3>
-            </>
+            <h3 style={{ textAlign: 'center' }}>Score: {score}</h3>
           )}
+        </>
+      )}
+
+      {step === 'final-results' && spoonLoveStats && (
+        <>
+          <h2>Spoon/Love Block Results</h2>
+          <p>
+            <strong>Your accuracy:</strong>{' '}
+            {spoonLoveStats.userPercent}%
+          </p>
+          <p>
+            <strong>Ghost accuracy:</strong>{' '}
+            {spoonLoveStats.ghostPercent}%
+          </p>
+          <p>{ratingMessage(spoonLoveStats.userPercent)}</p>
+          <button onClick={() => setStep('post')}>
+            Continue to Post-Experiment Questions
+          </button>
         </>
       )}
 
       {step === 'post' && (
         <>
           <h2>Post-Experiment Questions</h2>
-          {postQuestions.map((q, index) => (
+          {postQuestions.map((q, i) => (
             <div key={q.id} className="question-block">
               <label htmlFor={q.id} className="question-label">
-                <strong className="question-number">
-                  Q{index + 1}.
-                </strong>{' '}
-                {q.question}
+                <strong>Q{i + 1}.</strong> {q.question}
               </label>
               <div className="answer-wrapper">
                 {renderInput(q, true)}
@@ -469,7 +563,7 @@ function App() {
 
       {step === 'done' && (
         <>
-          <h2>Thank you!</h2>
+          <h2>Thank you for participating!</h2>
           <p>Your data has been submitted.</p>
         </>
       )}

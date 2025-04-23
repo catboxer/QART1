@@ -1,19 +1,30 @@
 rules_version = '2';
-
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // This rule allows anyone with your Firestore database reference to view, edit,
-    // and delete all data in your Firestore database. It is useful for getting
-    // started, but it is configured to expire after 30 days because it
-    // leaves your app open to attackers. At that time, all client
-    // requests to your Firestore database will be denied.
-    //
-    // Make sure to write security rules for your app before that time, or else
-    // all client requests to your Firestore database will be denied until you Update
-    // your rules
+    // --- Your original responses collection ---
+    match /responses/{docId} {
+      // only authenticated users can add new survey responses
+      allow create: if request.auth.uid != null;
+      // only authenticated users can read responses
+      allow read:   if request.auth.uid != null;
+      // no client-side updates or deletes
+      allow update, delete: if false;
+    }
+
+    // --- Your new experiment2_responses collection ---
+    match /experiment2_responses/{docId} {
+      // only signed-in users may submit data
+      allow create: if request.auth.uid != null;
+      // only signed-in users may view the results
+      allow read:   if request.auth.uid != null;
+      // once written, documents are immutable from the client
+      allow update, delete: if false;
+    }
+
+    // --- Everything else is locked down ---
     match /{document=**} {
-      allow read, write: if request.time < timestamp.date(2025, 5, 20);
+      allow read, write: if false;
     }
   }
 }
