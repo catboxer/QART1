@@ -12,7 +12,7 @@ function pickRandom(arr) {
 async function getQuantumRandomSide() {
   try {
     const response = await fetch(
-      'https://qrng.anu.edu.au/API/jsonI.php?length=1&type=uint8'
+      'https://quartheory.netlify.app/.netlify/functions/qrng-proxy'
     );
     const data = await response.json();
     return data.data[0] % 2 === 0 ? 'left' : 'right';

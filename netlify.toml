@@ -1,2 +1,7 @@
 [build]
+  publish   = "."                    # no front-end to publish
   functions = "netlify/functions"
+
+[build.environment]
+  # your actual branch name here
+  NETLIFY_PRODUCTION_BRANCH = "QRNG-Experiment-2-Emotion"
