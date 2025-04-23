@@ -40,13 +40,6 @@ h2 {
   font-weight: bold;
 }
 
-/* === Answer Input Layout === */
-.answer-wrapper {
-  display: flex;
-  flex-direction: column;
-  max-width: 600px;
-}
-
 /* === Input Fields === */
 .answer-wrapper input[type='number'] {
   width: 80px !important;
@@ -139,11 +132,11 @@ button {
   transition: background 0.3s ease;
 }
 
-button:not(.icon-button):hover {
+button:hover {
   background-color: #218838;
 }
 
-/* === Focus Outline Management === */
+/* === Focus Outline === */
 :focus {
   outline: none;
 }
@@ -157,11 +150,11 @@ body.user-is-tabbing .icon-button:focus {
   outline-offset: 2px;
 }
 
-/* === Icon Button === */
+/* === Left/Right Buttons === */
 .icon-options-wrapper {
-  width: 100%;
   display: flex;
   justify-content: center;
+  gap: 2rem;
   margin-top: 2rem;
 }
 
@@ -169,46 +162,38 @@ body.user-is-tabbing .icon-button:focus {
   display: flex;
   gap: 2rem;
 }
+.icon-options.large-buttons .icon-button {
+  width: 35vw;
+  height: 35vh;
+  font-size: 2rem;
+}
 
 .icon-button {
-  width: 30vw;
-  height: 30vh;
-  background-color: #fff;
-  border: 1px solid #ccc;
-  padding: 0;
+  font-size: 1.5rem;
+  padding: 1.2rem 2.5rem;
+  background-color: #ffffff;
+  border: 2px solid #ccc;
+  border-radius: 12px;
   cursor: pointer;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  transition: background-color 0.2s ease;
-  outline: none;
-  box-shadow: none;
+  transition: background-color 0.2s ease, transform 0.1s ease;
+  min-width: 100px;
+}
+/* Default state: text hidden until trial is ready */
+.icon-options.text-hidden .icon-button {
+  color: white;
 }
 
-.icon-button:hover,
+/* Text becomes visible when input is enabled */
+.icon-options.text-visible .icon-button {
+  color: black;
+}
+
+.icon-button:hover {
+  background-color: #eef6ff;
+}
+
 .icon-button:active {
-  background-color: #fff !important;
-  box-shadow: none !important;
-}
-.icon-button:focus {
-  outline: none;
-}
-
-.icon-button:active {
-  transform: scale(0.98);
-}
-
-.icon-symbol {
-  width: 60%;
-  height: 60%;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-}
-
-.icon-symbol svg {
-  width: 100%;
-  height: 100%;
+  transform: scale(0.97);
 }
 
 /* === Star Burst === */
@@ -233,8 +218,6 @@ body.user-is-tabbing .icon-button:focus {
     opacity: 0;
   }
 }
-
-/* === Breathing Circle === */
 .breathing-circle {
   width: 100px;
   height: 100px;
@@ -243,7 +226,6 @@ body.user-is-tabbing .icon-button:focus {
   background-color: #aee;
   animation: breathe 7s ease-in-out infinite;
 }
-
 @keyframes breathe {
   0% {
     transform: scale(1);
@@ -258,12 +240,10 @@ body.user-is-tabbing .icon-button:focus {
     opacity: 0.7;
   }
 }
-
-/* === Breathing Step === */
 .breathe-step {
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: center; /* ✅ center horizontally */
   text-align: center;
   max-width: 600px;
   margin: 0 auto;
@@ -285,13 +265,10 @@ body.user-is-tabbing .icon-button:focus {
   border-radius: 8px;
   cursor: pointer;
 }
-
 .breathe-step h2 {
   width: 100%;
   text-align: center;
 }
-
-/* === Exit Button === */
 .exit-button {
   position: fixed;
   bottom: 20px;
