@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
 import { db } from './firebase';
 import { collection, addDoc } from 'firebase/firestore';
@@ -14,17 +14,35 @@ async function getQuantumRandomSide() {
     const response = await fetch(
       'https://quartheory.netlify.app/.netlify/functions/qrng-proxy'
     );
-    const data = await response.json();
-    return data.data[0] % 2 === 0 ? 'left' : 'right';
-  } catch (error) {
-    console.error(
-      'QRNG fallback to pseudorandom due to error:',
-      error
-    );
+    const payload = await response.json();
+
+    // 💡 Debug: inspect the payload
+    console.log('QRNG payload:', payload);
+
+    const byte = payload.data[0];
+    const choice = byte % 2 === 0 ? 'left' : 'right';
+
+    // Only alert when success===false
+    if (payload.success === false) {
+      alert(
+        `⚠️ Quantum RNG unavailable; using pseudorandom fallback (byte=${byte})`
+      );
+      return pickRandom(['left', 'right']);
+    }
+
+    return choice;
+  } catch (err) {
+    alert('Error reaching QRNG proxy—using random fallback');
     return pickRandom(['left', 'right']);
   }
 }
-
+async function getPhysicalRandomSide() {
+  const res = await fetch(
+    'https://quartheory.netlify.app/.netlify/functions/random-org-proxy'
+  );
+  const { data } = await res.json();
+  return data[0] % 2 === 0 ? 'left' : 'right';
+}
 function App() {
   const [step, setStep] = useState('pre');
   const [preResponses, setPreResponses] = useState({});
@@ -45,7 +63,22 @@ function App() {
     parseInt(localStorage.getItem('experimentRuns') || '0', 10)
   );
   const [isLoading, setIsLoading] = useState(false);
-
+  // remember when we last fetched from the quantum API
+  const lastQuantumRef = useRef(0);
+  const [cooldown, setCooldown] = useState(0);
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const id = setInterval(() => {
+      setCooldown((c) => {
+        if (c <= 1) {
+          clearInterval(id);
+          return 0;
+        }
+        return c - 1;
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, [cooldown]);
   // Define blocks: neutral, full_stack, spoon_love
   const baseBlocks = [
     cueBlocks.find((b) => b.id === 'neutral'),
@@ -162,23 +195,48 @@ function App() {
   };
 
   const handleTrial = async (selected) => {
-    setIsLoading(true);
-    setButtonsDisabled(true);
-    setLastResult(null);
-
     const block = blockOrder[currentBlockIndex];
     const ghostChoice = pickRandom(['left', 'right']);
-    const correct =
-      block.id === 'full_stack' || block.id === 'spoon_love'
-        ? await getQuantumRandomSide()
-        : pickRandom(['left', 'right']);
+    let correct;
 
-    setIsLoading(false);
-    setButtonsDisabled(false);
+    if (block.id === 'neutral') {
+      // — Neutral: synchronous, pseudorandom —
+      correct = pickRandom(['left', 'right']);
+    } else if (block.id === 'full_stack') {
+      // — Focused: physical RNG —
+      setIsLoading(true);
+      setButtonsDisabled(true);
+      setLastResult(null);
 
+      correct = await getPhysicalRandomSide();
+
+      setIsLoading(false);
+      setButtonsDisabled(false);
+    } /* spoon_love */ else {
+      // — Final: quantum RNG with 60s throttle —
+      setIsLoading(true);
+      setButtonsDisabled(true);
+      setLastResult(null);
+
+      const now = Date.now();
+      const elapsed = now - lastQuantumRef.current;
+      if (elapsed < 60_000) {
+        // Still cooling down
+        setCooldown(Math.ceil((60_000 - elapsed) / 1000));
+        correct = pickRandom(['left', 'right']);
+      } else {
+        lastQuantumRef.current = now;
+        setCooldown(60);
+        correct = await getQuantumRandomSide();
+      }
+
+      setIsLoading(false);
+      setButtonsDisabled(false);
+    }
+
+    // — Everything below is unchanged:
     const isCorrect = selected === correct;
     const ghostIsCorrect = ghostChoice === correct;
-
     const trialData = {
       block: block.id,
       trial: currentTrial + 1,
@@ -210,8 +268,11 @@ function App() {
       setTimeout(() => setShowStar(false), 1000);
     }
 
-    // End of block
-    if (currentTrial + 1 === totalTrialsPerBlock) {
+    // end‐of‐block detection...
+    const countThisBlock = newTrials.filter(
+      (t) => t.block === block.id
+    ).length;
+    if (countThisBlock === totalTrialsPerBlock) {
       const userCorrect = newTrials.filter(
         (t) => t.block === block.id && t.isCorrect
       ).length;
@@ -226,13 +287,6 @@ function App() {
         (ghostCorrect / totalTrialsPerBlock) *
         100
       ).toFixed(1);
-      if (userPercent > 65) {
-        confetti({
-          particleCount: 150,
-          spread: 100,
-          origin: { y: 0.6 },
-        });
-      }
 
       if (block.id === 'neutral') {
         setNeutralStats({ userPercent, ghostPercent });
@@ -246,6 +300,7 @@ function App() {
       }
       return;
     }
+
     setCurrentTrial((c) => c + 1);
   };
 
@@ -324,7 +379,9 @@ function App() {
   };
 
   const renderButtonChoices = () => {
+    const blockId = blockOrder[currentBlockIndex].id;
     const labels = choiceLabels[blockOrder[currentBlockIndex].id];
+    const hideText = isLoading && blockId !== 'neutral';
     return (
       <div
         className="icon-options-wrapper"
@@ -341,7 +398,7 @@ function App() {
             className="icon-button"
             onClick={() => handleTrial('left')}
             aria-label={`Choose ${labels.left}`}
-            disabled={isLoading}
+            disabled={isLoading || buttonsDisabled}
           >
             {labels.left}
           </button>
@@ -350,7 +407,7 @@ function App() {
             className="icon-button"
             onClick={() => handleTrial('right')}
             aria-label={`Choose ${labels.right}`}
-            disabled={isLoading}
+            disabled={isLoading || buttonsDisabled}
           >
             {labels.right}
           </button>
