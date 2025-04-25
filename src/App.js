@@ -97,9 +97,9 @@ function App() {
     neutral:
       'This block is a quick check using an internal pseudorandom number generator (no external delay or feedback). Go as fast as you like and pick whatever feels right—this is simply a default performance measurement.',
     full_stack:
-      'This block uses an external Quantum Random Number Generator (QRNG), which introduces a short delay. Once you make your choice and before you push the button focus on what you want returned. The QRNG samples a quantum event and returns the result. Go slowly. Stay present. Tune into the flow.',
+      'This block uses an external Physical Random Number Generator (PRNG). Once you make your choice and before you push the button focus on what you want returned. The PRNG samples a physical event and returns the result. Go slowly. Stay present. Tune into the flow.',
     spoon_love:
-      'This block also uses an external Quantum Random Number Generator (QRNG), which introduces a short delay. In this trial, you will ALWAYS select “Love” — the aim is not to choose between Love and Bowl, but to bias the QRNG’s decoherence toward the Love outcome more often than Bowl, reaching a statistically significant effect. To do this, harness your emotions and thoughts around the word Love. Before each trial, cue the feeling of Love by recalling the feeling you have of deep connection. Maintain that focused mental representation throughout the QRNG’s decoherence window. Proceed at a steady pace, stay fully attentive during each delay. Go slowly. Stay present. Tune into the flow.',
+      'This block uses an external Quantum Random Number Generator (QRNG), which introduces a long delay. In this trial, you will ALWAYS select “Love” — the aim is not to choose between Love and Bowl, but to bias the QRNG’s decoherence toward the Love outcome more often than Bowl, reaching a statistically significant effect. To do this, harness your emotions and thoughts around the word Love. Before each trial, cue the feeling of Love by recalling the feeling you have of deep connection. Maintain that focused mental representation throughout the QRNG’s decoherence window. Proceed at a steady pace, stay fully attentive during each delay. Go slowly. Stay present. Tune into the flow.',
   };
 
   const choiceLabels = {
@@ -288,6 +288,13 @@ function App() {
         100
       ).toFixed(1);
 
+      if (userPercent > 65) {
+        confetti({
+          particleCount: 150,
+          spread: 100,
+          origin: { y: 0.6 },
+        });
+      }
       if (block.id === 'neutral') {
         setNeutralStats({ userPercent, ghostPercent });
         setStep('neutral-results');
