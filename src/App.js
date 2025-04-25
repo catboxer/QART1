@@ -386,7 +386,7 @@ function App() {
   };
 
   const renderButtonChoices = () => {
-    const blockId = blockOrder[currentBlockIndex].id;
+    // const blockId = blockOrder[currentBlockIndex].id;
     const labels = choiceLabels[blockOrder[currentBlockIndex].id];
     // const hideText = isLoading && blockId !== 'neutral';
     return (
