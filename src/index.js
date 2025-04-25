@@ -20,6 +20,7 @@ function handleMouseDownOnce() {
 }
 
 window.addEventListener('keydown', handleFirstTab);
+
 root.render(
   <React.StrictMode>
     <App />

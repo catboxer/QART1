@@ -4,7 +4,7 @@ import { db } from './firebase';
 import { collection, addDoc } from 'firebase/firestore';
 import { preQuestions, cueBlocks, postQuestions } from './questions';
 import confetti from 'canvas-confetti';
-
+import { useGoogleReCaptcha } from '@google-recaptcha/react';
 function pickRandom(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
@@ -14,34 +14,60 @@ async function getQuantumRandomSide() {
     const response = await fetch(
       'https://quartheory.netlify.app/.netlify/functions/qrng-proxy'
     );
-    const payload = await response.json();
 
-    // 💡 Debug: inspect the payload
-    console.log('QRNG payload:', payload);
-
-    const byte = payload.data[0];
-    const choice = byte % 2 === 0 ? 'left' : 'right';
-
-    // Only alert when success===false
-    if (payload.success === false) {
-      alert(
-        `⚠️ Quantum RNG unavailable; using pseudorandom fallback (byte=${byte})`
-      );
-      return pickRandom(['left', 'right']);
+    // 1) First check for HTTP-level failures:
+    if (!response.ok) {
+      // network/server returned 4xx or 5xx
+      console.warn(`QRNG proxy responded ${response.status}`);
+      throw new Error('QRNG proxy HTTP error');
     }
 
-    return choice;
+    // 2) Parse JSON once we know it’s a 2xx:
+    const payload = await response.json();
+    console.log('QRNG payload:', payload);
+
+    // 3) Check the payload’s own success flag:
+    if (payload.success === false) {
+      console.warn(
+        `⚠️ Quantum RNG unavailable (success=false); using physical fallback`
+      );
+      return pickRandom(['left', 'right']); // make sure pickRandom is defined!
+    }
+
+    // 4) Normal path: derive your random side and return it:
+    const byte = payload.data[0];
+    return byte % 2 === 0 ? 'left' : 'right';
   } catch (err) {
-    alert('Error reaching QRNG proxy—using random fallback');
-    return pickRandom(['left', 'right']);
+    // Anything thrown above (HTTP error, JSON parse error, network error)
+    console.error('QRNG proxy error:', err);
+    alert('Error reaching QRNG proxy—using physical RNG fallback');
+    return getPhysicalRandomSide(); // call with no args, matching its signature
   }
 }
+
 async function getPhysicalRandomSide() {
-  const res = await fetch(
-    'https://quartheory.netlify.app/.netlify/functions/random-org-proxy'
-  );
-  const { data } = await res.json();
-  return data[0] % 2 === 0 ? 'left' : 'right';
+  try {
+    const res = await fetch(
+      'https://quartheory.netlify.app/.netlify/functions/random-org-proxy'
+    );
+
+    if (!res.ok) {
+      console.warn(`Random.org proxy HTTP ${res.status}`);
+      throw new Error('random-org HTTP error');
+    }
+
+    const { data, success, fallback } = await res.json();
+    if (!success && fallback) {
+      console.warn('Random.org proxy fallback—using pseudorandom');
+    }
+
+    return data[0] % 2 === 0 ? 'left' : 'right';
+  } catch (err) {
+    // If the physical-RNG proxy is broken too, at least give a final pseudorandom
+    console.error('Physical RNG proxy error:', err);
+    // fallback to a pure JS PRNG:
+    return pickRandom(['left', 'right']);
+  }
 }
 function App() {
   const [step, setStep] = useState('pre');
@@ -97,9 +123,16 @@ function App() {
     neutral:
       'This block is a quick check using an internal pseudorandom number generator (no external delay or feedback). Go as fast as you like and pick whatever feels right—this is simply a default performance measurement.',
     full_stack:
-      'This block uses an external Quantum Random Number Generator (QRNG), which introduces a short delay. Once you make your choice and before you push the button focus on what you want returned. The QRNG samples a quantum event and returns the result. Go slowly. Stay present. Tune into the flow.',
-    spoon_love:
-      'This block also uses an external Quantum Random Number Generator (QRNG), which introduces a short delay. In this trial, you will ALWAYS select “Love” — the aim is not to choose between Love and Bowl, but to bias the QRNG’s decoherence toward the Love outcome more often than Bowl, reaching a statistically significant effect. To do this, harness your emotions and thoughts around the word Love. Before each trial, cue the feeling of Love by recalling the feeling you have of deep connection. Maintain that focused mental representation throughout the QRNG’s decoherence window. Proceed at a steady pace, stay fully attentive during each delay. Go slowly. Stay present. Tune into the flow.',
+      'This block uses an external physical RNG powered by a free atmospheric-noise service. Once you make your choice—and before you press the button—focus as real-world electrical noise is sampled to produce a genuinely unpredictable result. Go slowly. Stay present. Tune into the flow.',
+    spoon_love: `
+      This block uses an external Quantum Random Number Generator (QRNG), which introduces a long 1 minute delay due to how often we’re allowed to make a request.
+      
+      In this trial, you will ALWAYS select “Love” — the aim is not to choose between Love and Bowl, but to bias the QRNG’s decoherence toward the Love outcome more often than Bowl, reaching a statistically significant effect.
+      
+      To do this, harness your emotions and thoughts around the word Love. Before each trial, cue the feeling of Love by recalling the feeling you have of deep connection. Maintain that focused mental representation throughout the QRNG’s decoherence window.
+      
+      Proceed at a steady pace, stay fully attentive during each delay. Go slowly. Stay present. Tune into the flow.
+      `,
   };
 
   const choiceLabels = {
@@ -119,6 +152,28 @@ function App() {
     const onChange = (e) =>
       handleChange(q.id, e.target.value, isPost);
     switch (q.type) {
+      case 'honeypot': {
+        return (
+          <textarea
+            key={q.id}
+            id={q.id}
+            name={q.id}
+            onChange={onChange}
+            // off‐screen styling
+            style={{
+              position: 'absolute',
+              left: '-10000px',
+              top: 'auto',
+              width: '1px',
+              height: '1px',
+              overflow: 'hidden',
+            }}
+            autoComplete="off"
+            tabIndex={-1}
+            aria-hidden="true"
+          />
+        );
+      }
       case 'number':
         return (
           <input
@@ -126,6 +181,15 @@ function App() {
             type="number"
             onChange={onChange}
             className="number-input"
+          />
+        );
+      case 'text':
+        return (
+          <input
+            id={q.id}
+            type="text"
+            onChange={onChange}
+            className="textarea-input"
           />
         );
       case 'slider':
@@ -220,13 +284,13 @@ function App() {
 
       const now = Date.now();
       const elapsed = now - lastQuantumRef.current;
-      if (elapsed < 60_000) {
+      if (elapsed < 60_500) {
         // Still cooling down
-        setCooldown(Math.ceil((60_000 - elapsed) / 1000));
+        setCooldown(Math.ceil((60_500 - elapsed) / 1000));
         correct = pickRandom(['left', 'right']);
       } else {
         lastQuantumRef.current = now;
-        setCooldown(60);
+        setCooldown(65);
         correct = await getQuantumRandomSide();
       }
 
@@ -381,7 +445,9 @@ function App() {
   const renderButtonChoices = () => {
     const blockId = blockOrder[currentBlockIndex].id;
     const labels = choiceLabels[blockOrder[currentBlockIndex].id];
-    const hideText = isLoading && blockId !== 'neutral';
+    const hideText =
+      (isLoading && blockId !== 'neutral') ||
+      (blockId === 'spoon_love' && cooldown > 0);
     return (
       <div
         className="icon-options-wrapper"
@@ -390,7 +456,7 @@ function App() {
       >
         <div
           className={`icon-options large-buttons ${
-            buttonsDisabled ? 'text-hidden' : 'text-visible'
+            hideText ? 'text-hidden' : 'text-visible'
           }`}
         >
           <button
@@ -398,7 +464,11 @@ function App() {
             className="icon-button"
             onClick={() => handleTrial('left')}
             aria-label={`Choose ${labels.left}`}
-            disabled={isLoading || buttonsDisabled}
+            disabled={
+              isLoading ||
+              buttonsDisabled ||
+              (blockId === 'spoon_love' && cooldown > 0)
+            }
           >
             {labels.left}
           </button>
@@ -407,13 +477,75 @@ function App() {
             className="icon-button"
             onClick={() => handleTrial('right')}
             aria-label={`Choose ${labels.right}`}
-            disabled={isLoading || buttonsDisabled}
+            disabled={
+              isLoading ||
+              buttonsDisabled ||
+              (blockId === 'spoon_love' && cooldown > 0)
+            }
           >
             {labels.right}
           </button>
         </div>
       </div>
     );
+  };
+  const handlePreSubmit = async () => {
+    if (window.location.hostname === 'localhost') {
+      console.log('⚡️ Dev mode: skipping CAPTCHA & honeypot');
+      startTrials(0);
+      return;
+    }
+    console.log('▶️ handlePreSubmit called');
+
+    // Honeypot check
+    if (preResponses.company) {
+      console.log('🛑 honeypot triggered', preResponses.company);
+      alert('Bot detected…');
+      return;
+    }
+    console.log('✅ honeypot clean');
+
+    // reCAPTCHA readiness
+    if (
+      !window.grecaptcha ||
+      typeof window.grecaptcha.execute !== 'function'
+    ) {
+      alert('Captcha still loading… please wait a moment.');
+      return;
+    }
+
+    try {
+      // 3) Wait for the library to be ready
+      await window.grecaptcha.ready;
+
+      // 4) Execute the v3 action
+      const token = await window.grecaptcha.execute(
+        process.env.REACT_APP_RECAPTCHA_SITE_KEY,
+        { action: 'signup' }
+      );
+      console.log('✅ got token', token);
+
+      // 5) Send everything to your Cloud Function
+      const res = await fetch('/__/functions/verifySignup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...preResponses,
+          captchaToken: token,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        alert(json.error || 'Verification failed');
+        return;
+      }
+
+      // 6) Both gates passed—move on
+      startTrials(0);
+    } catch (err) {
+      console.error('Pre-submit error:', err);
+      alert('Unexpected error—please try again.');
+    }
   };
 
   return (
@@ -429,20 +561,18 @@ function App() {
             first round includes no feedback. The second provides
             feedback with stars.
           </p>
-          <p>
-            You’ve completed this experiment{' '}
-            <strong>{experimentRuns}</strong>
-            time(s).
-          </p>
+          <p>{`You have completed this experiment ${experimentRuns} time(s).`}</p>
           {preQuestions.map((q, i) => (
             <div key={q.id} className="question-block">
-              <label htmlFor={q.id} className="question-label">
-                <strong>Q{i + 1}.</strong> {q.question}
-              </label>
+              {q.type !== 'honeypot' && (
+                <label htmlFor={q.id} className="question-label">
+                  <strong>Q{i + 1}.</strong> {q.question}
+                </label>
+              )}
               <div className="answer-wrapper">{renderInput(q)}</div>
             </div>
           ))}
-          <button onClick={() => startTrials(0)}>
+          <button type="button" onClick={handlePreSubmit}>
             Start Neutral Trials
           </button>
         </>
@@ -523,10 +653,20 @@ function App() {
             Trial {currentTrial + 1} of {totalTrialsPerBlock}
           </h2>
           <p>{trialInstructions[blockOrder[currentBlockIndex].id]}</p>
+          {currentBlock === 'spoon_love' && cooldown > 0 && (
+            <p style={{ textAlign: 'center', color: '#d00' }}>
+              🔄 Next quantum RNG available in{' '}
+              <strong>{cooldown}s</strong>
+            </p>
+          )}
           {renderButtonChoices()}
           {isLoading && (
             <div role="status" aria-live="polite">
-              Waiting for the quantum RNG…
+              {currentBlock === 'full_stack'
+                ? 'Waiting for the physical RNG…'
+                : currentBlock === 'spoon_love'
+                ? 'Waiting for the quantum RNG…'
+                : 'Loading…'}
             </div>
           )}
           {lastResult && !isLoading && (

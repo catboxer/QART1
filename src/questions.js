@@ -1,4 +1,16 @@
 export const preQuestions = [
+  { id: 'name', question: 'What is your name?', type: 'text' },
+  {
+    id: 'email',
+    question:
+      'What is your email? *(optional—only used by research team if your results are unusually high)',
+    type: 'email',
+  },
+  {
+    id: 'company',
+    question: 'What is the name of your Company?',
+    type: 'honeypot',
+  },
   { id: 'age', question: 'What is your age?', type: 'number' },
   {
     id: 'gender',
