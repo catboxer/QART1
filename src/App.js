@@ -10,39 +10,77 @@ function pickRandom(arr) {
 }
 
 async function getQuantumRandomSide() {
+  // Helper to interpret a byte as 'left'|'right'
+  const byteToChoice = (byte) => (byte % 2 === 0 ? 'left' : 'right');
+
+  // 1) First try the LFDR proxy
   try {
-    const response = await fetch(
-      'https://quartheory.netlify.app/.netlify/functions/qrng-proxy'
+    const res1 = await fetch(
+      'https://qarttheory.netlify.app/.netlify/functions/lfdr-qrng'
     );
-    const payload = await response.json();
-
-    // 💡 Debug: inspect the payload
-    console.log('QRNG payload:', payload);
-
-    const byte = payload.data[0];
-    const choice = byte % 2 === 0 ? 'left' : 'right';
-
-    // Only alert when success===false
-    if (payload.success === false) {
-      alert(
-        `⚠️ Quantum RNG unavailable; using pseudorandom fallback (byte=${byte})`
-      );
-      return pickRandom(['left', 'right']);
+    const p1 = await res1.json(); // { data: [byte], success: bool, fallback: bool, ... }
+    if (p1.success) {
+      console.log('Using ANU QRNG byte:', p1.data[0]);
+      return byteToChoice(p1.data[0]);
     }
-
-    return choice;
+    console.warn('ANU QRNG proxy failed, falling back');
   } catch (err) {
-    alert('Error reaching QRNG proxy—using random fallback');
+    console.warn('ANU fetch error, falling back:', err);
+  }
+
+  // 2) Then try the ANU proxy
+  try {
+    const res2 = await fetch(
+      'https://qarttheory.netlify.app/.netlify/functions/qrng-proxy'
+    );
+    const p2 = await res2.json(); // same shape
+    if (p2.success) {
+      console.log('Using LFDR QRNG bit:', p2.data[0]);
+      return byteToChoice(p2.data[0]);
+    }
+    console.warn('LFDR QRNG proxy failed, falling back');
+  } catch (err) {
+    console.warn('LFDR fetch error, falling back:', err);
+  }
+
+  // 3) Then your physical RNG
+  try {
+    console.warn('Falling back to Physical RNG');
+    return await getPhysicalRandomSide(); // returns 'left'|'right'
+  } catch (err) {
+    console.warn('Physical RNG failed:', err);
+  }
+
+  // 4) Last-resort pseudorandom
+  console.warn(
+    'All external RNGs failed—using pseudorandom fallback'
+  );
+  return pickRandom(['left', 'right']);
+}
+
+async function getPhysicalRandomSide() {
+  try {
+    const res = await fetch(
+      'https://qarttheory.netlify.app/.netlify/functions/random-org-proxy'
+    );
+    if (!res.ok) {
+      throw new Error(`Physical RNG HTTP ${res.status}`);
+    }
+    const { data } = await res.json();
+    if (!Array.isArray(data) || data.length === 0) {
+      throw new Error('Physical RNG returned no data');
+    }
+    return data[0] % 2 === 0 ? 'left' : 'right';
+  } catch (err) {
+    console.error(
+      'Physical RNG failed, falling back to pseudorandom:',
+      err
+    );
+    // last‐resort pseudo-random choice
     return pickRandom(['left', 'right']);
   }
 }
-async function getPhysicalRandomSide() {
-  const res = await fetch(
-    'https://quartheory.netlify.app/.netlify/functions/random-org-proxy'
-  );
-  const { data } = await res.json();
-  return data[0] % 2 === 0 ? 'left' : 'right';
-}
+
 function App() {
   const [step, setStep] = useState('pre');
   const [preResponses, setPreResponses] = useState({});
@@ -80,16 +118,14 @@ function App() {
     return () => clearInterval(id);
   }, [cooldown]);
   // Define blocks: neutral, full_stack, spoon_love
-  const baseBlocks = [
-    cueBlocks.find((b) => b.id === 'neutral'),
-    cueBlocks.find((b) => b.id === 'full_stack'),
-  ];
+  // Define blocks: full_stack (PRNG) and spoon_love (QRNG)
+  const fullStackBlock = cueBlocks.find((b) => b.id === 'full_stack');
   const [blockOrder] = useState([
-    ...baseBlocks,
+    fullStackBlock,
     {
-      ...baseBlocks[1],
+      ...fullStackBlock,
       id: 'spoon_love',
-      showFeedback: baseBlocks[1].showFeedback,
+      showFeedback: fullStackBlock.showFeedback,
     },
   ]);
 
@@ -97,7 +133,7 @@ function App() {
     neutral:
       'This block is a quick check using an internal pseudorandom number generator (no external delay or feedback). Go as fast as you like and pick whatever feels right—this is simply a default performance measurement.',
     full_stack:
-      'This block uses an external Physical Random Number Generator (PRNG). Once you make your choice and before you push the button focus on what you want returned. The PRNG samples a physical event and returns the result. Go slowly. Stay present. Tune into the flow.',
+      'This block uses an external Physical Random Number Generator (PRNG). Go as fast as you like and pick whatever feels right—this is simply a default performance measurement.',
     spoon_love:
       'This block uses an external Quantum Random Number Generator (QRNG), which introduces a long delay. In this trial, you will ALWAYS select “Love” — the aim is not to choose between Love and Bowl, but to bias the QRNG’s decoherence toward the Love outcome more often than Bowl, reaching a statistically significant effect. To do this, harness your emotions and thoughts around the word Love. Before each trial, cue the feeling of Love by recalling the feeling you have of deep connection. Maintain that focused mental representation throughout the QRNG’s decoherence window. Proceed at a steady pace, stay fully attentive during each delay. Go slowly. Stay present. Tune into the flow.',
   };
@@ -455,24 +491,6 @@ function App() {
         </>
       )}
 
-      {step === 'neutral-results' && neutralStats && (
-        <>
-          <h2>Neutral Block Results</h2>
-          <p>
-            <strong>Your accuracy:</strong> {neutralStats.userPercent}
-            %
-          </p>
-          <p>
-            <strong>Ghost accuracy:</strong>{' '}
-            {neutralStats.ghostPercent}%
-          </p>
-          <p>{ratingMessage(neutralStats.userPercent)}</p>
-          <button onClick={() => setStep('breathe')}>
-            Continue to Focused Trials
-          </button>
-        </>
-      )}
-
       {step === 'breathe' && (
         <div className="breathe-step">
           <h2>Get Into The Zone</h2>
@@ -493,15 +511,15 @@ function App() {
           <h2 tabIndex={-1}>Center Yourself for the Final Block</h2>
           <div className="breathing-circle" aria-hidden="true" />
           <p>
-            Take ten deep, slow breaths to calm your mind before the
-            last set of trials.
+            Take ten deep breathes and focus your attention on the
+            emotion of Love.
             <br />
-            Inhale… 1, 2, 3… exhale… 1, 2, 3…
+            Feel it running through your body.
             <br />
-            Let your focus settle.
+            Hear, Smell, Feel Love.
           </p>
-          <button onClick={() => startTrials(2)}>
-            Start Final Trials
+          <button onClick={() => startTrials(1)}>
+            Start Quantum Trials
           </button>
         </div>
       )}
@@ -519,7 +537,7 @@ function App() {
           </p>
           <p>{ratingMessage(fullStackStats.userPercent)}</p>
           <button onClick={() => setStep('breathe-spoon')}>
-            Get Ready For The Final Trial
+            Get Ready For The Quantum Trial
           </button>
         </>
       )}
@@ -531,9 +549,14 @@ function App() {
           </h2>
           <p>{trialInstructions[blockOrder[currentBlockIndex].id]}</p>
           {renderButtonChoices()}
+
           {isLoading && (
             <div role="status" aria-live="polite">
-              Waiting for the quantum RNG…
+              {currentBlock === 'spoon_love'
+                ? 'Waiting for the quantum RNG…'
+                : currentBlock === 'full_stack'
+                ? 'Waiting for the physical RNG…'
+                : 'Waiting…'}
             </div>
           )}
           {lastResult && !isLoading && (
