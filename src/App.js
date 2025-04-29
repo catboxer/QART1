@@ -113,13 +113,14 @@ function App() {
         (g) => g.isCorrect
       ).length;
 
-      const userPercent = (
-        (userCorrect / totalTrialsPerBlock) *
-        100
-      ).toFixed(1);
       // eslint-disable-next-line no-unused-vars
       const ghostPercent = (
         (ghostCorrect / totalTrialsPerBlock) *
+        100
+      ).toFixed(1);
+
+      const userPercent = (
+        (userCorrect / totalTrialsPerBlock) *
         100
       ).toFixed(1);
 
