@@ -1,8 +1,20 @@
-// netlify/functions/anu-qrng.js
 export async function handler(event, context) {
+  const CORS_HEADERS = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Content-Type': 'application/json',
+  };
+
+  if (event.httpMethod === 'OPTIONS') {
+    return {
+      statusCode: 204,
+      headers: CORS_HEADERS,
+    };
+  }
+
   let byte;
 
-  // 1) Try upstream ANU QRNG
   try {
     const upstream = await fetch(
       'https://qrng.anu.edu.au/API/jsonI.php?length=1&type=uint8'
@@ -10,7 +22,6 @@ export async function handler(event, context) {
 
     if (upstream.ok) {
       const text = await upstream.text();
-
       try {
         const json = JSON.parse(text);
         if (Array.isArray(json.data) && json.data.length > 0) {
@@ -30,40 +41,26 @@ export async function handler(event, context) {
     console.warn('ANU QRNG network error:', networkErr);
   }
 
-  // 2) Build the payload
-  let payload;
-  if (typeof byte === 'number') {
-    // Successful quantum result
-    payload = {
-      type: 'uint8',
-      length: 1,
-      data: [byte],
-      success: true,
-      fallback: false,
-    };
-  } else {
-    // Fallback to pseudorandom
-    const randomByte = Math.floor(Math.random() * 256);
-    console.warn(
-      'ANU proxy pseudorandom fallback, byte=',
-      randomByte
-    );
-    payload = {
-      type: 'uint8',
-      length: 1,
-      data: [randomByte],
-      success: false,
-      fallback: true,
-    };
-  }
+  const payload =
+    typeof byte === 'number'
+      ? {
+          type: 'uint8',
+          length: 1,
+          data: [byte],
+          success: true,
+          fallback: false,
+        }
+      : {
+          type: 'uint8',
+          length: 1,
+          data: [Math.floor(Math.random() * 256)],
+          success: false,
+          fallback: true,
+        };
 
-  // 3) Return uniform 200 response
   return {
     statusCode: 200,
-    headers: {
-      'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*',
-    },
+    headers: CORS_HEADERS,
     body: JSON.stringify(payload),
   };
 }
