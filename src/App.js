@@ -3,8 +3,8 @@ import './App.css';
 import { db } from './firebase';
 import { collection, addDoc } from 'firebase/firestore';
 import { preQuestions, cueBlocks, postQuestions } from './questions';
-import { generateThreeIcons, pickRandom } from './utils';
 import confetti from 'canvas-confetti';
+import { generateIconPair, pickRandom } from './utils';
 
 function App() {
   const [step, setStep] = useState('pre');
@@ -22,7 +22,7 @@ function App() {
   const [correctIcon, setCorrectIcon] = useState(null);
   const [showStar, setShowStar] = useState(false);
   const [score, setScore] = useState(0);
-  const totalTrialsPerBlock = 50;
+  const totalTrialsPerBlock = 35;
   const [neutralStats, setNeutralStats] = useState(null);
   const [finalStats, setFinalStats] = useState(null);
 
@@ -32,9 +32,9 @@ function App() {
   };
 
   const startNeutralTrials = () => {
-    const initialOptions = generateThreeIcons();
+    const initialOptions = generateIconPair();
     const initialCorrect = pickRandom(initialOptions);
-    console.log('Neutral block — correct icon:', initialCorrect);
+    // console.log('Neutral block — correct icon:', initialCorrect);
     setCurrentOptions(initialOptions);
     setCorrectIcon(initialCorrect);
     setGhostResults([]);
@@ -46,7 +46,7 @@ function App() {
 
   const startFullStackTrials = () => {
     const nextIndex = currentBlockIndex + 1;
-    const initialOptions = generateThreeIcons();
+    const initialOptions = generateIconPair();
     const initialCorrect = pickRandom(initialOptions);
     console.log('Full Stack block — correct icon:', initialCorrect);
     setCurrentBlockIndex(nextIndex);
@@ -127,7 +127,7 @@ function App() {
       console.log(`✅ ${blockId} User Accuracy:`, userPercent);
       console.log(`👻 ${blockId} Ghost Accuracy:`, ghostPercent);
 
-      if (userPercent > 40) {
+      if (userPercent > 65) {
         confetti({
           particleCount: 150,
           spread: 100,
@@ -146,32 +146,41 @@ function App() {
       return;
     }
 
-    const newOptions = generateThreeIcons();
+    const newOptions = generateIconPair();
     const newCorrect = pickRandom(newOptions);
-    console.log(
-      `${blockOrder[currentBlockIndex].label} block — correct icon:`,
-      newCorrect
-    );
+    if (blockOrder[currentBlockIndex].id === 'full_stack') {
+      console.log('Full Stack block — correct icon:', newCorrect);
+    }
+
     setCurrentOptions(newOptions);
     setCorrectIcon(newCorrect);
     setCurrentTrial((prev) => prev + 1);
   };
-
+  const ratingMessage = (percent) => {
+    const p = parseFloat(percent);
+    if (p <= 50) return 'Expected by chance.';
+    if (p <= 59) return 'Slightly above chance.';
+    if (p <= 69) return 'Notably above chance.';
+    if (p <= 79) return 'Strong result.';
+    return 'Very strong alignment — impressive!';
+  };
   const renderInput = (q, isPost = false) => {
     const onChange = (e) =>
       handleChange(q.id, e.target.value, isPost);
     if (q.type === 'number')
-      return <input type="number" onChange={onChange} />;
+      return <input id={q.id} type="number" onChange={onChange} />;
     if (q.type === 'slider') {
       return (
         <div className="slider-container">
           <span className="slider-label">{q.leftLabel || 'Low'}</span>
           <input
+            id={q.id}
             type="range"
             min={q.min}
             max={q.max}
             onChange={onChange}
             className="slider"
+            aria-labelledby={`label-${q.id}`}
           />
           <span className="slider-label">
             {q.rightLabel || 'High'}
@@ -180,10 +189,10 @@ function App() {
       );
     }
     if (q.type === 'textarea')
-      return <textarea onChange={onChange} />;
+      return <textarea id={q.id} onChange={onChange} />;
     if (q.type === 'select') {
       return (
-        <select onChange={onChange}>
+        <select id={q.id} onChange={onChange}>
           <option value="">Select</option>
           {q.options.map((opt, idx) => (
             <option key={idx}>{opt}</option>
@@ -196,7 +205,9 @@ function App() {
   if (step === 'pre') {
     return (
       <div className="App">
-        <h1>Experiment #1</h1>
+        <main role="main">
+          <h1>Experiment #1</h1>
+        </main>
         <p
           style={{
             maxWidth: '600px',
@@ -204,18 +215,22 @@ function App() {
             paddingBottom: '1rem',
           }}
         >
-          In this experiment, you'll be asked to choose between icons.
-          I'm exploring whether intuition or focus can help people
-          identify a correct, randomly selected icon — more often than
-          chance would suggest. Can the mind can detect an
-          already-determined outcome before it's known — suggesting
-          awareness can align with or "tune into" reality in a subtle
-          but measurable way.
+          In this experiment, you'll be asked to choose between a
+          square and a circle. I'm exploring whether intuition or
+          focus can help people identify a correct, randomly selected
+          icon — more often than chance would suggest. Can the mind
+          can detect an already-determined outcome before it's known —
+          suggesting awareness can align with or "tune into" reality
+          in a subtle but measurable way.
         </p>
         <h2>Pre-Experiment Questions</h2>
         {preQuestions.map((q, index) => (
           <div key={q.id} className="question-block">
-            <label className="question-label">
+            <label
+              id={`label-${q.id}`}
+              htmlFor={q.id}
+              className="question-label"
+            >
               <strong className="question-number">
                 Q{index + 1}.
               </strong>{' '}
@@ -224,7 +239,10 @@ function App() {
             <div className="answer-wrapper">{renderInput(q)}</div>
           </div>
         ))}
-        <button onClick={startNeutralTrials}>
+        <button
+          onClick={startNeutralTrials}
+          aria-label="Begin neutral block trials"
+        >
           Start Neutral Trials
         </button>
       </div>
@@ -240,14 +258,18 @@ function App() {
           <strong>Your accuracy:</strong> {userPercent}%
         </p>
         <p>
-          Since there were 3 icons, guessing randomly would typically
-          give a score of 33.3%.
-          {userPercent > 40
-            ? 'Nice work — you may be picking up on something!'
-            : 'This is within the range of chance, which is expected.'}
-          {/* <strong>Ghost accuracy:</strong> {ghostPercent}% */}
+          Random guessing would score around 50%.
+          <br />
+          {ratingMessage(userPercent)}
         </p>
-        <button onClick={() => setStep('breathe')}>
+        <p>
+          <strong>Ghost accuracy:</strong> {ghostPercent}%
+        </p>
+
+        <button
+          onClick={() => setStep('breathe')}
+          aria-label="Continue to focused trials"
+        >
           Continue to Focused Trials
         </button>
       </div>
@@ -266,13 +288,18 @@ function App() {
           Trust that the answer is already there—your mind just needs
           space to find it.<br></br>
         </p>
-        <button onClick={startFullStackTrials}>I'm Ready</button>
+        <button
+          onClick={startFullStackTrials}
+          aria-label="I am ready."
+        >
+          I'm Ready
+        </button>
       </div>
     );
   }
 
   if (step === 'final-results') {
-    const { userPercent } = finalStats;
+    const { userPercent, ghostPercent } = finalStats;
     return (
       <div className="App">
         <h2>Focused Block Results</h2>
@@ -280,13 +307,17 @@ function App() {
           <strong>Your accuracy:</strong> {userPercent}%
         </p>
         <p>
-          Since there were 3 icons, guessing randomly would typically
-          give a score of 33.3%.
-          {userPercent > 40
-            ? 'Nice work — you may be picking up on something!'
-            : 'This is within the range of chance, which is expected.'}
+          Random guessing would score around 50%.
+          <br />
+          {ratingMessage(userPercent)}
         </p>
-        <button onClick={() => setStep('post')}>
+        <p>
+          <strong>Ghost accuracy:</strong> {ghostPercent}%
+        </p>
+        <button
+          onClick={() => setStep('post')}
+          aria-label="Continue to Post Questions."
+        >
           Continue to Post Questions
         </button>
       </div>
@@ -309,6 +340,7 @@ function App() {
                 key={i}
                 onClick={() => handleTrial(icon)}
                 className="icon-button"
+                aria-label={`Select ${icon.id}`}
               >
                 <span className="icon-symbol">{icon.element}</span>
               </button>
@@ -317,6 +349,7 @@ function App() {
         </div>
         <button
           className="exit-button"
+          aria-label="Exit the study early and submit your selections."
           onClick={async () => {
             const neutralTrials = trialResults.filter(
               (t) => t.block === 'neutral'
@@ -374,7 +407,9 @@ function App() {
         {block.showFeedback && (
           <>
             <h3 style={{ textAlign: 'center' }}>Score: {score}</h3>
-            {showStar && <div className="star-burst">🌟</div>}
+            <div role="status" aria-live="polite">
+              {showStar && <div className="star-burst">🌟</div>}
+            </div>
           </>
         )}
       </div>
@@ -387,7 +422,11 @@ function App() {
         <h2>Post-Experiment Questions</h2>
         {postQuestions.map((q, index) => (
           <div key={q.id} className="question-block">
-            <label className="question-label">
+            <label
+              id={`label-${q.id}`}
+              htmlFor={q.id}
+              className="question-label"
+            >
               <strong className="question-number">
                 Q{index + 1}.
               </strong>{' '}
@@ -399,7 +438,13 @@ function App() {
           </div>
         ))}
         <button
+          aria-label="Submit your post-experiment responses"
           onClick={async () => {
+            const existingRuns =
+              parseInt(localStorage.getItem('experimentRuns'), 10) ||
+              0;
+            const newRunCount = existingRuns + 1;
+            localStorage.setItem('experimentRuns', newRunCount);
             await addDoc(collection(db, 'responses'), {
               preResponses,
               postResponses,
@@ -424,6 +469,7 @@ function App() {
                 ghostAccuracy: finalStats?.ghostPercent,
               },
               timestamp: new Date().toISOString(),
+              experimentRuns: newRunCount,
             });
             alert('Responses saved!');
             setStep('done');
