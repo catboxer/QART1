@@ -1,16 +1,26 @@
-// netlify/functions/random-org-proxy.js
-
 export async function handler(event, context) {
-  // 1️⃣ Grab your key from Netlify env-vars
+  const CORS_HEADERS = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  };
+
+  if (event.httpMethod === 'OPTIONS') {
+    return {
+      statusCode: 204,
+      headers: CORS_HEADERS,
+    };
+  }
+
   const API_KEY = process.env.RANDOM_ORG_API_KEY;
   if (!API_KEY) {
     return {
       statusCode: 500,
+      headers: CORS_HEADERS,
       body: JSON.stringify({ error: 'Missing RANDOM_ORG_API_KEY' }),
     };
   }
 
-  // 2️⃣ Build the JSON-RPC payload
   const payload = {
     jsonrpc: '2.0',
     method: 'generateIntegers',
@@ -25,7 +35,6 @@ export async function handler(event, context) {
   };
 
   try {
-    // 3️⃣ Send it to Random.org
     const res = await fetch(
       'https://api.random.org/json-rpc/4/invoke',
       {
@@ -38,10 +47,9 @@ export async function handler(event, context) {
     const { result } = await res.json();
     const byte = result.random.data[0];
 
-    // 4️⃣ Return the byte
     return {
       statusCode: 200,
-      headers: { 'Access-Control-Allow-Origin': '*' },
+      headers: CORS_HEADERS,
       body: JSON.stringify({
         data: [byte],
         success: true,
@@ -49,11 +57,10 @@ export async function handler(event, context) {
     };
   } catch (err) {
     console.error('Random.org proxy error:', err);
-    // 5️⃣ Fallback if anything goes wrong
     const fallback = Math.floor(Math.random() * 256);
     return {
       statusCode: 200,
-      headers: { 'Access-Control-Allow-Origin': '*' },
+      headers: CORS_HEADERS,
       body: JSON.stringify({
         data: [fallback],
         success: false,
