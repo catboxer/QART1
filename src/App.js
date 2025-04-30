@@ -20,12 +20,12 @@ async function getQuantumRandomSide() {
     );
     const p1 = await res1.json(); // { data: [byte], success: bool, fallback: bool, ... }
     if (p1.success) {
-      console.log('Using ANU QRNG byte:', p1.data[0]);
+      console.log('Using LFDR QRNG byte:', p1.data[0]);
       return byteToChoice(p1.data[0]);
     }
-    console.warn('ANU QRNG proxy failed, falling back');
+    console.warn('LFDR QRNG proxy failed, falling back');
   } catch (err) {
-    console.warn('ANU fetch error, falling back:', err);
+    console.warn('LFDR fetch error, falling back:', err);
   }
 
   // 2) Then try the ANU proxy
@@ -35,12 +35,12 @@ async function getQuantumRandomSide() {
     );
     const p2 = await res2.json(); // same shape
     if (p2.success) {
-      console.log('Using LFDR QRNG bit:', p2.data[0]);
+      console.log('Using ANU QRNG bit:', p2.data[0]);
       return byteToChoice(p2.data[0]);
     }
-    console.warn('LFDR QRNG proxy failed, falling back');
+    console.warn('ANU QRNG proxy failed, falling back');
   } catch (err) {
-    console.warn('LFDR fetch error, falling back:', err);
+    console.warn('ANU fetch error, falling back:', err);
   }
 
   // 3) Then your physical RNG

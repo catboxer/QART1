@@ -6,3 +6,5 @@
 [build.environment]
   NETLIFY_PRODUCTION_BRANCH = "main"
   
+[functions]
+  defaultNodeVersion = "20.x"
