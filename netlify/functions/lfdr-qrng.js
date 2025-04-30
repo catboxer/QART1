@@ -1,5 +1,3 @@
-const fetch = require('node-fetch');
-
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'Content-Type',
