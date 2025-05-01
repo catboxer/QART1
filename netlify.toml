@@ -5,6 +5,7 @@
 
 [build.environment]
   NETLIFY_PRODUCTION_BRANCH = "main"
-  
+  NODE_VERSION = "20.11.0"
+
 [functions]
-  defaultNodeVersion = "20.x"
+  node_bundler = "esbuild"
