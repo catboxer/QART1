@@ -9,3 +9,6 @@
 
 [functions]
   node_bundler = "esbuild"
+
+  [functions."lfdr-qrng"]
+  cache = false
