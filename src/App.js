@@ -9,14 +9,14 @@ function pickRandom(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
-async function getQuantumRandomSide() {
+async function getQuantumRandomSide(trialIndex) {
   // Helper to interpret a byte as 'left'|'right'
   const byteToChoice = (byte) => (byte % 2 === 0 ? 'left' : 'right');
 
   // 1) First try the LFDR proxy
   try {
     const res1 = await fetch(
-      'https://qarttheory.netlify.app/.netlify/functions/lfdr-qrng',
+      `https://qarttheory.netlify.app/.netlify/functions/lfdr-qrng`,
       { cache: 'no-store' }
     );
     const p1 = await res1.json(); // { data: [byte], success: bool, fallback: bool, ... }
