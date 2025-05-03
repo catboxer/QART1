@@ -121,11 +121,14 @@ function App() {
   // Define blocks: full_stack (PRNG) and spoon_love (QRNG)
   const fullStackBlock = cueBlocks.find((b) => b.id === 'full_stack');
   const [blockOrder] = useState([
-    fullStackBlock,
+    {
+      ...fullStackBlock,
+      showFeedback: false, // disable feedback here
+    },
     {
       ...fullStackBlock,
       id: 'spoon_love',
-      showFeedback: fullStackBlock.showFeedback,
+      showFeedback: true, // keep feedback for QRNG block if desired
     },
   ]);
 
@@ -133,9 +136,9 @@ function App() {
     neutral:
       'This block is a quick check using an internal pseudorandom number generator (no external delay or feedback). Go as fast as you like and pick whatever feels right—this is simply a default performance measurement.',
     full_stack:
-      'This block uses an external Physical Random Number Generator (PRNG). Go as fast as you like and pick whatever feels right—this is simply a default performance measurement.',
+      'This block uses an external Physical Random Number Generator (PRNG). Go as fast as you like and pick whatever you think the answer should be—this is simply a default performance measurement.',
     spoon_love:
-      'This block uses an external Quantum Random Number Generator (QRNG), which introduces a long delay. In this trial, you will ALWAYS select “Love” — the aim is not to choose between Love and Bowl, but to bias the QRNG’s decoherence toward the Love outcome more often than Bowl, reaching a statistically significant effect. To do this, harness your emotions and thoughts around the word Love. Before each trial, cue the feeling of Love by recalling the feeling you have of deep connection. Maintain that focused mental representation throughout the QRNG’s decoherence window. Proceed at a steady pace, stay fully attentive during each delay. Go slowly. Stay present. Tune into the flow.',
+      'This block uses a Quantum Random Number Generator (QRNG).<br /><br />Always choose “Love”.<br /><br />Focus on the feeling of Love before each trial and hold it through the moment of choice.<br /><br />Tune in and proceed with intention.',
   };
 
   const choiceLabels = {
@@ -465,18 +468,17 @@ function App() {
         <>
           <h1>Experiment #2: Quantum Binary Choice</h1>
           <p>
-            This experiment explores whether awareness can subtly
-            align with a future quantum event — specifically, the
-            outcome of a QRNG-determined left/right binary. After each
-            selection, the correct side is revealed by the QRNG. The
-            first round includes no feedback. The second provides
-            feedback with stars.
+            Goal: To test whether awareness, when emotionally engaged
+            and focused, can influence which outcome decoheres —
+            within the lawful constraints of probability.
           </p>
           <p>
-            You’ve completed this experiment{' '}
-            <strong>{experimentRuns}</strong>
-            time(s).
+            You may take this test as many times as you like. With
+            practice, you may improve your ability to tune in and
+            influence the outcome.
           </p>
+
+          <p>{`You have completed this experiment ${experimentRuns} time(s).`}</p>
           {preQuestions.map((q, i) => (
             <div key={q.id} className="question-block">
               <label htmlFor={q.id} className="question-label">
@@ -491,7 +493,7 @@ function App() {
         </>
       )}
 
-      {step === 'breathe' && (
+      {/* {step === 'breathe' && (
         <div className="breathe-step">
           <h2>Get Into The Zone</h2>
           <div className="breathing-circle"></div>
@@ -500,23 +502,25 @@ function App() {
             <br />
             Go slowly. Let your body relax.
             <br />
-            Trust that the answer is already there—your mind just
-            needs space to find it.
+            Now, bring to mind someone you love — and let that feeling
+            wash over you. Stay with that sensation for a moment
+            before making your choice.
           </p>
           <button onClick={() => startTrials(1)}>I'm Ready</button>
         </div>
-      )}
+      )} */}
       {step === 'breathe-spoon' && (
         <div className="breathe-step">
-          <h2 tabIndex={-1}>Center Yourself for the Final Block</h2>
+          <h2 tabIndex={-1}>Center Yourself for the Quantum Block</h2>
           <div className="breathing-circle" aria-hidden="true" />
           <p>
-            Take ten deep breathes and focus your attention on the
-            emotion of Love.
+            Take ten deep, slow breaths and let your focus settle.
             <br />
-            Feel it running through your body.
+            Go slowly. Let your body relax.
             <br />
-            Hear, Smell, Feel Love.
+            Now, bring to mind someone you love — and let that feeling
+            wash over you. Stay with that sensation for a moment
+            before making your choice.
           </p>
           <button onClick={() => startTrials(1)}>
             Start Quantum Trials
@@ -547,7 +551,14 @@ function App() {
           <h2>
             Trial {currentTrial + 1} of {totalTrialsPerBlock}
           </h2>
-          <p>{trialInstructions[blockOrder[currentBlockIndex].id]}</p>
+
+          <div
+            dangerouslySetInnerHTML={{
+              __html:
+                trialInstructions[blockOrder[currentBlockIndex].id],
+            }}
+          />
+
           {renderButtonChoices()}
 
           {isLoading && (
@@ -559,34 +570,36 @@ function App() {
                 : 'Waiting…'}
             </div>
           )}
-          {lastResult && !isLoading && (
-            <div
-              className="results-display"
-              role="status"
-              aria-live="polite"
-              aria-atomic="true"
-            >
-              <p>
-                You picked{' '}
-                <strong>{labels[lastResult.selected]}</strong>
-              </p>
-              {currentBlock !== 'neutral' && (
+          {blockOrder[currentBlockIndex].showFeedback &&
+            lastResult &&
+            !isLoading && (
+              <div
+                className="results-display"
+                role="status"
+                aria-live="polite"
+                aria-atomic="true"
+              >
                 <p>
-                  Ghost picked{' '}
-                  <strong>{labels[lastResult.ghostChoice]}</strong>
+                  You picked{' '}
+                  <strong>{labels[lastResult.selected]}</strong>
                 </p>
-              )}
-              <p>
-                Correct answer was{' '}
-                <strong>{labels[lastResult.correct]}</strong>
-              </p>
-              {showStar && (
-                <div className="star-burst" aria-hidden="true">
-                  🌟
-                </div>
-              )}
-            </div>
-          )}
+                {currentBlock !== 'neutral' && (
+                  <p>
+                    Ghost picked{' '}
+                    <strong>{labels[lastResult.ghostChoice]}</strong>
+                  </p>
+                )}
+                <p>
+                  Correct answer was{' '}
+                  <strong>{labels[lastResult.correct]}</strong>
+                </p>
+                {showStar && (
+                  <div className="star-burst" aria-hidden="true">
+                    🌟
+                  </div>
+                )}
+              </div>
+            )}
           <button
             className="exit-button"
             onClick={async () => {
