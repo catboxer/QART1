@@ -16,7 +16,8 @@ async function getQuantumRandomSide() {
   // 1) First try the LFDR proxy
   try {
     const res1 = await fetch(
-      'https://qarttheory.netlify.app/.netlify/functions/lfdr-qrng'
+      'https://qarttheory.netlify.app/.netlify/functions/lfdr-qrng',
+      { cache: 'no-store' }
     );
     const p1 = await res1.json(); // { data: [byte], success: bool, fallback: bool, ... }
     if (p1.success) {
@@ -32,7 +33,8 @@ async function getQuantumRandomSide() {
   // 2) Then try the ANU proxy
   try {
     const res2 = await fetch(
-      'https://qarttheory.netlify.app/.netlify/functions/qrng-proxy'
+      'https://qarttheory.netlify.app/.netlify/functions/qrng-proxy',
+      { cache: 'no-store' }
     );
     const p2 = await res2.json(); // same shape
     if (p2.success) {
@@ -63,7 +65,8 @@ async function getQuantumRandomSide() {
 async function getPhysicalRandomSide() {
   try {
     const res = await fetch(
-      'https://qarttheory.netlify.app/.netlify/functions/random-org-proxy'
+      'https://qarttheory.netlify.app/.netlify/functions/random-org-proxy',
+      { cache: 'no-store' }
     );
     if (!res.ok) {
       throw new Error(`Physical RNG HTTP ${res.status}`);

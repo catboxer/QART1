@@ -22,8 +22,9 @@ exports.handler = async function (event, context) {
     // Add cache-busting timestamp
     const timestamp = Date.now();
     const url = `https://lfdr.de/qrng_api/qrng?length=1&format=BINARY&_=${timestamp}`;
-
+    console.log('LFDR upstream URL:', url);
     const res = await fetch(url, {
+      cache: 'no-store',
       headers: {
         'Cache-Control': 'no-store',
         Pragma: 'no-cache',
@@ -42,7 +43,7 @@ exports.handler = async function (event, context) {
       };
     }
 
-    const { qrn, length } = await res.json();
+    const { qrn } = await res.json();
     const byte = qrn?.charCodeAt(0) ?? 0;
 
     return {

@@ -12,3 +12,8 @@
 
   [functions."lfdr-qrng"]
   cache = false
+  
+[[headers]]
+  for = "/.netlify/functions/lfdr-qrng"
+  [headers.values]
+    Cache-Control = "no-store, max-age=0, must-revalidate"
