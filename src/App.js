@@ -20,6 +20,7 @@ async function getQuantumRandomSide() {
     );
     const p1 = await res1.json(); // { data: [byte], success: bool, fallback: bool, ... }
     if (p1.success) {
+      console.log('LFDR QRNG response:', p1);
       console.log('Using LFDR QRNG byte:', p1.data[0]);
       return byteToChoice(p1.data[0]);
     }
@@ -35,6 +36,7 @@ async function getQuantumRandomSide() {
     );
     const p2 = await res2.json(); // same shape
     if (p2.success) {
+      console.log('ANU QRNG response:', p2);
       console.log('Using ANU QRNG bit:', p2.data[0]);
       return byteToChoice(p2.data[0]);
     }
