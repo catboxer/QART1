@@ -254,18 +254,18 @@ function App() {
       setButtonsDisabled(true);
       setLastResult(null);
 
-      const now = Date.now();
-      const elapsed = now - lastQuantumRef.current;
-      if (elapsed < 60_000) {
-        // Still cooling down
-        setCooldown(Math.ceil((60_000 - elapsed) / 1000));
-        correct = pickRandom(['left', 'right']);
-      } else {
-        lastQuantumRef.current = now;
-        setCooldown(60);
-        correct = await getQuantumRandomSide();
-      }
-
+      // const now = Date.now();
+      // const elapsed = now - lastQuantumRef.current;
+      // if (elapsed < 60_000) {
+      //   // Still cooling down
+      //   setCooldown(Math.ceil((60_000 - elapsed) / 1000));
+      //   correct = pickRandom(['left', 'right']);
+      // } else {
+      //   lastQuantumRef.current = now;
+      //   setCooldown(60);
+      //   correct = await getQuantumRandomSide();
+      // }
+      correct = await getQuantumRandomSide();
       setIsLoading(false);
       setButtonsDisabled(false);
     }
