@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState } from 'react';
 import './App.css';
 import { db } from './firebase';
 import { collection, addDoc } from 'firebase/firestore';
@@ -102,21 +102,21 @@ function App() {
   );
   const [isLoading, setIsLoading] = useState(false);
   // remember when we last fetched from the quantum API
-  const lastQuantumRef = useRef(0);
-  const [cooldown, setCooldown] = useState(0);
-  useEffect(() => {
-    if (cooldown <= 0) return;
-    const id = setInterval(() => {
-      setCooldown((c) => {
-        if (c <= 1) {
-          clearInterval(id);
-          return 0;
-        }
-        return c - 1;
-      });
-    }, 1000);
-    return () => clearInterval(id);
-  }, [cooldown]);
+  // const lastQuantumRef = useRef(0);
+  // const [cooldown, setCooldown] = useState(0);
+  // useEffect(() => {
+  //   if (cooldown <= 0) return;
+  //   const id = setInterval(() => {
+  //     setCooldown((c) => {
+  //       if (c <= 1) {
+  //         clearInterval(id);
+  //         return 0;
+  //       }
+  //       return c - 1;
+  //     });
+  //   }, 1000);
+  //   return () => clearInterval(id);
+  // }, [cooldown]);
   // Define blocks: neutral, full_stack, spoon_love
   // Define blocks: full_stack (PRNG) and spoon_love (QRNG)
   const fullStackBlock = cueBlocks.find((b) => b.id === 'full_stack');
