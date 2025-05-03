@@ -23,22 +23,36 @@ exports.handler = async function (event, context) {
         statusCode: res.status,
         headers: CORS_HEADERS,
         body: JSON.stringify({
+          success: false,
+          fallback: true,
           error: `LFDR HTTP ${res.status}: ${res.statusText}`,
         }),
       };
     }
 
     const { qrn, length } = await res.json();
+    const byte = qrn?.charCodeAt(0) ?? 0;
+
     return {
       statusCode: 200,
       headers: CORS_HEADERS,
-      body: JSON.stringify({ qrn, length }),
+      body: JSON.stringify({
+        data: [byte],
+        success: true,
+        fallback: false,
+        source: 'lfdr',
+        raw: qrn,
+      }),
     };
   } catch (err) {
     return {
       statusCode: 500,
       headers: CORS_HEADERS,
-      body: JSON.stringify({ error: err.message }),
+      body: JSON.stringify({
+        success: false,
+        fallback: true,
+        error: err.message,
+      }),
     };
   }
 };
