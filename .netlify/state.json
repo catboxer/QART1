@@ -1,0 +1,20 @@
+{
+	"geolocation": {
+		"data": {
+			"city": "Portland",
+			"country": {
+				"code": "US",
+				"name": "United States"
+			},
+			"subdivision": {
+				"code": "OR",
+				"name": "Oregon"
+			},
+			"timezone": "America/Los_Angeles",
+			"latitude": 45.5894,
+			"longitude": -122.7401,
+			"postalCode": "97203"
+		},
+		"timestamp": 1746309585857
+	}
+}
