@@ -1,9 +1,12 @@
 export const preQuestions = [
-  { id: 'name', question: 'What is your name?', type: 'text' },
+  {
+    id: 'name',
+    question: 'What is your name?',
+    type: 'text',
+  },
   {
     id: 'email',
-    question:
-      'What is your email? *(optional—only used by research team if your results are unusually high)',
+    question: 'What is your email? *(optional)',
     type: 'email',
   },
   { id: 'age', question: 'What is your age?', type: 'number' },
@@ -101,16 +104,17 @@ export const cueBlocks = [
   {
     id: 'neutral',
     label: 'Neutral',
-    instructions:
-      'As quickly as possible choose the icon that feels right to you.',
+    instructions: `This neutral trial provides a baseline for our experiment—making sure the random number generator (RNG) is working properly and giving you a chance to get used to the task. On each trial you’ll see two icons—a circle and a square. Before they appear, the RNG has already selected one of them. Click the icon you believe was selected by the RNG.`,
     showFeedback: false,
+    trials: 20,
   },
   {
     id: 'full_stack',
     label: 'Performance',
     instructions:
-      'Take a deep breath. Feel what it is to know the answer. Stay present. Tune in. Take your time with each answer. If you match the icon, you’ll receive a gold star.',
+      'This is the performance trial. Take a deep breath. Stay present. Find your rhythm. If you match the icon, you’ll receive a gold star.',
     showFeedback: true,
+    trials: 35,
   },
 ];
 

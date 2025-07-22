@@ -5,8 +5,14 @@ import { collection, addDoc } from 'firebase/firestore';
 import { preQuestions, cueBlocks, postQuestions } from './questions';
 import confetti from 'canvas-confetti';
 import { generateIconPair, pickRandom } from './utils';
-
+import { useEffect } from 'react';
 function App() {
+  useEffect(() => {
+    console.log(
+      '🔥 App mounted  — added name fields:',
+      new Date().toISOString()
+    );
+  }, []);
   const [step, setStep] = useState('pre');
   const [preResponses, setPreResponses] = useState({});
   const [postResponses, setPostResponses] = useState({});
@@ -14,6 +20,7 @@ function App() {
   const [ghostResults, setGhostResults] = useState([]);
   const [currentBlockIndex, setCurrentBlockIndex] = useState(0);
   const [currentTrial, setCurrentTrial] = useState(0);
+  const [primeNeutral, setPrimeNeutral] = useState(false);
   const [blockOrder] = useState([
     cueBlocks.find((b) => b.id === 'neutral'),
     cueBlocks.find((b) => b.id === 'full_stack'),
@@ -22,7 +29,6 @@ function App() {
   const [correctIcon, setCorrectIcon] = useState(null);
   const [showStar, setShowStar] = useState(false);
   const [score, setScore] = useState(0);
-  const totalTrialsPerBlock = 35;
   const [neutralStats, setNeutralStats] = useState(null);
   const [finalStats, setFinalStats] = useState(null);
 
@@ -32,6 +38,8 @@ function App() {
   };
 
   const startNeutralTrials = () => {
+    // 50% of the time we’ll prime
+    setPrimeNeutral(Math.random() < 0.5);
     const initialOptions = generateIconPair();
     const initialCorrect = pickRandom(initialOptions);
     // console.log('Neutral block — correct icon:', initialCorrect);
@@ -60,6 +68,7 @@ function App() {
   const handleTrial = (selected) => {
     const isCorrect = selected.id === correctIcon.id;
     const currentBlock = blockOrder[currentBlockIndex];
+    const totalTrials = currentBlock.trials;
 
     if (currentBlock.showFeedback && isCorrect) {
       setScore((prev) => prev + 1);
@@ -96,7 +105,7 @@ function App() {
     ];
     setGhostResults(updatedGhostResults);
 
-    if (currentTrial + 1 === totalTrialsPerBlock) {
+    if (currentTrial + 1 === totalTrials) {
       const blockId = currentBlock.id;
 
       const blockTrialResults = updatedTrialResults.filter(
@@ -113,21 +122,22 @@ function App() {
         (g) => g.isCorrect
       ).length;
 
-      // eslint-disable-next-line no-unused-vars
-      const ghostPercent = (
-        (ghostCorrect / totalTrialsPerBlock) *
-        100
-      ).toFixed(1);
+      let userPercent = ((userCorrect / totalTrials) * 100).toFixed(
+        1
+      );
+      if (blockId === 'neutral' && primeNeutral) {
+        userPercent = (Math.random() * (100 - 69) + 69).toFixed(1);
+      }
 
-      const userPercent = (
-        (userCorrect / totalTrialsPerBlock) *
+      const ghostPercent = (
+        (ghostCorrect / totalTrials) *
         100
       ).toFixed(1);
 
       console.log(`✅ ${blockId} User Accuracy:`, userPercent);
       console.log(`👻 ${blockId} Ghost Accuracy:`, ghostPercent);
 
-      if (userPercent > 65) {
+      if (parseFloat(userPercent) > 65) {
         confetti({
           particleCount: 150,
           spread: 100,
@@ -136,7 +146,11 @@ function App() {
       }
 
       if (currentBlockIndex === 0) {
-        setNeutralStats({ userPercent, ghostPercent });
+        setNeutralStats({
+          userPercent,
+          ghostPercent,
+          primed: primeNeutral,
+        });
         setStep('neutral-results');
       } else {
         setFinalStats({ userPercent, ghostPercent });
@@ -145,7 +159,7 @@ function App() {
 
       return;
     }
-
+    // otherwise, prepare next trial
     const newOptions = generateIconPair();
     const newCorrect = pickRandom(newOptions);
     if (blockOrder[currentBlockIndex].id === 'full_stack') {
@@ -167,8 +181,18 @@ function App() {
   const renderInput = (q, isPost = false) => {
     const onChange = (e) =>
       handleChange(q.id, e.target.value, isPost);
-    if (q.type === 'number')
-      return <input id={q.id} type="number" onChange={onChange} />;
+
+    if (['text', 'email', 'number'].includes(q.type)) {
+      return (
+        <input
+          id={q.id}
+          type={q.type}
+          onChange={onChange}
+          value={(isPost ? postResponses : preResponses)[q.id] || ''}
+        />
+      );
+    }
+
     if (q.type === 'slider') {
       return (
         <div className="slider-container">
@@ -188,18 +212,32 @@ function App() {
         </div>
       );
     }
-    if (q.type === 'textarea')
-      return <textarea id={q.id} onChange={onChange} />;
+
+    if (q.type === 'textarea') {
+      return (
+        <textarea
+          id={q.id}
+          onChange={onChange}
+          value={(isPost ? postResponses : preResponses)[q.id] || ''}
+        />
+      );
+    }
+
     if (q.type === 'select') {
       return (
         <select id={q.id} onChange={onChange}>
           <option value="">Select</option>
           {q.options.map((opt, idx) => (
-            <option key={idx}>{opt}</option>
+            <option key={idx} value={opt}>
+              {opt}
+            </option>
           ))}
         </select>
       );
     }
+
+    // in case of an unknown type
+    return null;
   };
 
   if (step === 'pre') {
@@ -208,21 +246,46 @@ function App() {
         <main role="main">
           <h1>Experiment #1</h1>
         </main>
-        <p
+        {/* ——— Instructions block ——— */}
+        <div
+          className="instructions"
           style={{
             maxWidth: '600px',
             margin: '0 auto',
             paddingBottom: '1rem',
           }}
         >
-          In this experiment, you'll be asked to choose between a
-          square and a circle. I'm exploring whether intuition or
-          focus can help people identify a correct, randomly selected
-          icon — more often than chance would suggest. Can the mind
-          can detect an already-determined outcome before it's known —
-          suggesting awareness can align with or "tune into" reality
-          in a subtle but measurable way.
-        </p>
+          <h2>How it works</h2>
+          <p>
+            On each trial you’ll see two icons—a circle and a square.
+            Before they appear, a random number generator (RNG) has
+            already picked one of them.
+          </p>
+
+          <h2>Your task</h2>
+          <ol>
+            <li>
+              <strong>Trust your first impression.</strong> Click the
+              shape you believe the RNG selected.
+            </li>
+            <li>
+              <strong>No “right” strategy.</strong> Go with your gut.
+            </li>
+            <li>
+              <strong>See your score.</strong> After each block you’ll
+              see your accuracy. Chance is around 50%. I am exploring
+              whether intuition or focus can help you beat
+              chance—suggesting your mind can subtly “tune in” to a
+              preset outcome.
+            </li>
+          </ol>
+
+          <p>
+            Good luck, and remember: there’s no wrong answer—just
+            follow whatever feels right!
+          </p>
+        </div>
+        {/* ———————————————— */}
         <h2>Pre-Experiment Questions</h2>
         {preQuestions.map((q, index) => (
           <div key={q.id} className="question-block">
@@ -326,11 +389,12 @@ function App() {
 
   if (step === 'trials') {
     const block = blockOrder[currentBlockIndex];
+    const totalTrials = block.trials;
     return (
       <div className="App">
         <h2>
           {block.label} Block — Trial {currentTrial + 1} of{' '}
-          {totalTrialsPerBlock}
+          {totalTrials}
         </h2>
         <p>{block.instructions}</p>
         <div className="icon-options-wrapper">
@@ -372,7 +436,12 @@ function App() {
                 ? ((correct / results.length) * 100).toFixed(1)
                 : null;
             };
-            await addDoc(collection(db, 'responses'), {
+            // await addDoc(collection(db, 'responses'), {
+            // 1️⃣ Get and log the exact path you’re writing to
+            const responsesRef = collection(db, 'responses');
+            console.log('⛓️ Writing to:', responsesRef.path);
+            // 2️⃣ Then actually write
+            const docSnap = await addDoc(responsesRef, {
               preResponses,
               postResponses,
               neutral: {
@@ -384,6 +453,7 @@ function App() {
                 ghostAccuracy:
                   neutralStats?.ghostPercent ||
                   safeAccuracy(neutralGhosts),
+                primed: primeNeutral,
               },
               full_stack: {
                 trialResults: fullTrials,
@@ -397,7 +467,10 @@ function App() {
               timestamp: new Date().toISOString(),
               exitedEarly: true,
             });
-
+            console.log(
+              '✅ Firestore write succeeded, doc ID =',
+              docSnap.id
+            );
             alert('Your progress was saved.');
             setStep('done');
           }}
@@ -457,6 +530,7 @@ function App() {
                 ),
                 accuracy: neutralStats?.userPercent,
                 ghostAccuracy: neutralStats?.ghostPercent,
+                primed: primeNeutral,
               },
               full_stack: {
                 trialResults: trialResults.filter(
