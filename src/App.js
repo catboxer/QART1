@@ -281,8 +281,8 @@ function App() {
           </ol>
 
           <p>
-            Good luck, and remember: there’s no wrong answer—just
-            follow whatever feels right!
+            Good luck, and remember: there’s no wrong answer—just do
+            whatever feels right!
           </p>
         </div>
         {/* ———————————————— */}
