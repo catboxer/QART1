@@ -1263,7 +1263,7 @@ function MainApp() {
           <h2 tabIndex={-1}>Center Yourself for the Quantum Block</h2>
           <div className="breathing-circle" aria-hidden="true" />
           <p>
-            Take ten deep, slow breaths and let your focus settle.
+            Take five deep, slow breaths and let your focus settle.
             <br />
             When ready, direct all attention to the word{' '}
             <strong>RIGHT</strong>, then press the button once.
