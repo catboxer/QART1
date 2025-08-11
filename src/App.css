@@ -1,88 +1,240 @@
-/* === Global Styles === */
+/* =========================
+   Design Tokens
+   ========================= */
+:root {
+  --bg: #f5f7fa;
+  --text: #2b2b2b;
+  --heading: #222;
+  --muted: #666;
+
+  --primary: #28a745;
+  --primary-hover: #218838;
+  --primary-dim: #1e7a1e;
+
+  --danger: #e74c3c;
+
+  --border: #ccc;
+  --card: #fff;
+
+  --radius-lg: 12px;
+  --radius-md: 10px;
+  --radius-sm: 8px;
+
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.15);
+
+  --focus: #1976d2;
+
+  --missing-outline: #f7b3b3;
+  --missing-bg: #fff6f6;
+  --missing-text: #b00020;
+  --hint-text: #a40000;
+
+  --anim-fast: 0.2s ease;
+  --anim-med: 0.25s ease;
+}
+
+/* =========================
+   Global
+   ========================= */
+* {
+  box-sizing: border-box;
+}
+html,
 body {
-  font-family: 'Segoe UI', Roboto, sans-serif;
-  background-color: #f5f7fa;
-  color: #2b2b2b;
+  height: 100%;
+}
+body {
   margin: 0;
   padding: 2rem;
+  font-family: 'Segoe UI', Roboto, Arial, Helvetica, sans-serif;
+  background: var(--bg);
+  color: var(--text);
 }
 
 .App {
   max-width: 700px;
-  margin: auto;
+  margin: 0 auto;
 }
 
-/* === Headings === */
+/* Headings */
+h1 {
+  margin: 0 0 1rem;
+  font-size: 2rem;
+  color: var(--heading);
+}
 h2 {
   font-size: 2rem;
   color: #333;
   text-align: left;
-  margin-bottom: 2rem;
+  margin: 1.5rem 0 1.25rem;
 }
 
-/* === Question Layout === */
+/* =========================
+   Buttons
+   ========================= */
+button {
+  display: block;
+  margin: 2rem auto 1rem;
+  padding: 1rem 2rem;
+  font-size: 1.1rem;
+  border: none;
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition: background var(--anim-med), transform 0.05s ease,
+    opacity var(--anim-fast), filter var(--anim-fast);
+  color: #fff;
+  background: var(--primary);
+}
+@media (hover: hover) {
+  button:hover {
+    background: var(--primary-hover);
+  }
+}
+button:active {
+  transform: scale(0.98);
+}
+
+.primary-btn {
+  background: var(--primary);
+}
+@media (hover: hover) {
+  .primary-btn:hover {
+    background: var(--primary-hover);
+  }
+}
+
+.secondary-btn {
+  background: #f0f0f0;
+  color: #333;
+}
+@media (hover: hover) {
+  .secondary-btn:hover {
+    background: #e8e8e8;
+  }
+}
+
+/* Global disabled styling — but NOT for the big RIGHT .icon-button */
+button:disabled:not(.icon-button),
+button[aria-disabled='true']:not(.icon-button),
+.primary-btn:disabled,
+.primary-btn[aria-disabled='true'],
+.secondary-btn:disabled,
+.secondary-btn[aria-disabled='true'] {
+  opacity: 0.5;
+  cursor: not-allowed;
+  filter: grayscale(100%);
+}
+
+.exit-button {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #f8f8f8;
+  color: #333;
+  border: 1px solid var(--border);
+  padding: 8px 14px;
+  border-radius: 20px;
+  font-size: 1rem;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: all var(--anim-fast);
+  z-index: 9999;
+}
+@media (hover: hover) {
+  .exit-button:hover {
+    background: var(--danger);
+    color: #fff;
+    border-color: var(--danger);
+  }
+}
+
+/* =========================
+   Focus
+   ========================= */
+:focus {
+  outline: none;
+}
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* =========================
+   Question Layout & Inputs
+   ========================= */
 .question-block {
-  margin-bottom: 3.5rem;
+  margin-bottom: 2.25rem;
   text-align: left;
 }
-
 .question-label {
   font-weight: 600;
   font-size: 1.1rem;
   display: block;
   margin-bottom: 0.6rem;
-  color: #222;
+  color: var(--heading);
 }
-
 .question-number {
   color: #444;
   margin-right: 0.4rem;
   font-weight: bold;
 }
 
-/* === Input Fields === */
-.answer-wrapper input[type='number'] {
-  width: 80px !important;
-  padding: 0.4rem;
+.number-input,
+.textarea-input,
+.text-input,
+.select-input {
   font-size: 1rem;
-  border-radius: 6px;
-  border: 1px solid #ccc;
-  box-sizing: border-box;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--card);
 }
 
-.answer-wrapper textarea {
+.number-input {
+  width: 90px;
+  padding: 0.5rem;
+}
+.textarea-input {
   width: 100%;
   max-width: 600px;
   height: 120px;
   padding: 0.6rem;
-  font-size: 1rem;
-  border-radius: 6px;
-  border: 1px solid #ccc;
   resize: vertical;
-  box-sizing: border-box;
 }
-.answer-wrapper input[type='text'],
+.text-input,
 .answer-wrapper input[type='email'] {
-  width: 50%;
+  width: 100%;
   max-width: 600px;
-  padding: 0.4rem;
-  font-size: 1rem;
-  border-radius: 6px;
-  border: 1px solid #ccc;
-  box-sizing: border-box;
+  padding: 0.5rem 0.6rem;
 }
-
-.answer-wrapper select {
-  width: auto;
+.select-input {
+  width: 100%;
   max-width: 300px;
-  padding: 0.4rem;
-  font-size: 1rem;
-  border-radius: 6px;
-  border: 1px solid #ccc;
-  box-sizing: border-box;
+  padding: 0.5rem 0.6rem;
 }
 
-/* === Sliders === */
+.question-block.missing {
+  outline: 2px solid var(--missing-outline);
+  background: var(--missing-bg);
+  border-radius: 6px;
+}
+.question-block.missing .question-label {
+  color: var(--missing-text);
+}
+.question-block.missing .answer-wrapper {
+  box-shadow: inset 0 0 0 2px rgba(176, 0, 32, 0.08);
+}
+.field-hint {
+  font-size: 12px;
+  margin-top: 4px;
+  color: var(--hint-text);
+}
+
+/* =========================
+   Sliders
+   ========================= */
 .slider-container {
   display: flex;
   align-items: center;
@@ -90,14 +242,12 @@ h2 {
   margin-top: 0.4rem;
   max-width: 400px;
 }
-
 .slider-label {
   font-size: 0.85rem;
-  color: #666;
+  color: var(--muted);
   width: 80px;
   text-align: center;
 }
-
 .slider {
   flex-grow: 1;
 }
@@ -111,8 +261,6 @@ input[type='range'] {
   outline: none;
   margin: 0;
 }
-/* === Text & Email Inputs === */
-
 input[type='range']::-webkit-slider-thumb {
   -webkit-appearance: none;
   width: 20px;
@@ -122,99 +270,184 @@ input[type='range']::-webkit-slider-thumb {
   border: 2px solid white;
   cursor: pointer;
   box-shadow: 0 0 4px rgba(0, 0, 0, 0.2);
-  transition: background 0.3s ease;
+  transition: background var(--anim-med);
+}
+@media (hover: hover) {
+  input[type='range']::-webkit-slider-thumb:hover {
+    background: #005ecb;
+  }
 }
 
-input[type='range']::-webkit-slider-thumb:hover {
-  background: #005ecb;
-}
-
-/* === Buttons === */
-button {
-  display: block;
-  margin: 3rem auto 1rem auto;
-  padding: 1rem 2rem;
-  font-size: 1.2rem;
-  background-color: #28a745;
-  color: white;
-  border: none;
-  border-radius: 10px;
-  cursor: pointer;
-  transition: background 0.3s ease;
-}
-
-button:hover {
-  background-color: #218838;
-}
-
-/* === Focus Outline === */
-:focus {
-  outline: none;
-}
-
-body.user-is-tabbing button:focus,
-body.user-is-tabbing input:focus,
-body.user-is-tabbing select:focus,
-body.user-is-tabbing textarea:focus,
-body.user-is-tabbing .icon-button:focus {
-  outline: 2px solid #1976d2;
-  outline-offset: 2px;
-}
-
-/* === Left/Right Buttons === */
+/* =========================
+   RIGHT Button + Trial UI
+   ========================= */
 .icon-options-wrapper {
   display: flex;
   justify-content: center;
-  gap: 2rem;
-  margin-top: 2rem;
+  margin-top: 1rem;
 }
-
+/* =========================
+   RIGHT Button + Trial UI
+   ========================= */
+.icon-options-wrapper {
+  display: flex;
+  justify-content: center;
+  margin-top: 1rem;
+}
 .icon-options {
   display: flex;
+  justify-content: center;
+  align-items: stretch;
   gap: 2rem;
-}
-.icon-options.large-buttons .icon-button {
-  width: 35vw;
-  height: 35vh;
-  font-size: 2rem;
+  flex-wrap: wrap;
 }
 
 .icon-button {
-  font-size: 1.5rem;
-  padding: 1.2rem 2.5rem;
-  background-color: #ffffff;
-  border: 2px solid #ccc;
-  border-radius: 12px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  background: #fff;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-lg);
   cursor: pointer;
-  transition: background-color 0.2s ease, transform 0.1s ease;
-  min-width: 100px;
+  font-family: Arial, Helvetica, sans-serif;
+  font-weight: 700;
+  color: #000;
+  width: 16rem;
+  aspect-ratio: 1 / 1;
+  font-size: 2rem;
+  padding: 1rem;
+  position: relative;
+  overflow: hidden;
+  transition: background-color 0.2s ease-in; /* smooth color shift only */
 }
-/* Default state: text hidden until trial is ready */
-.icon-options.text-hidden .icon-button {
-  color: white;
+@media (hover: hover) {
+  .icon-button:hover {
+    background-color: #eef6ff;
+  }
 }
-
-/* Text becomes visible when input is enabled */
-.icon-options.text-visible .icon-button {
-  color: black;
-}
-
-.icon-button:hover {
-  background-color: #eef6ff;
-}
-
 .icon-button:active {
   transform: scale(0.97);
 }
 
-/* === Star Burst === */
+/* Prevent disabled from going gray (lock to our colors) */
+.icon-button:disabled {
+  background-color: green; /* match normal */
+  color: #fff;
+  opacity: 1;
+  filter: none; /* prevent gray */
+  cursor: not-allowed;
+}
+
+/* Large variant = the big RIGHT button base */
+.icon-options.large-buttons .icon-button {
+  width: 18rem;
+  font-size: 2.5rem;
+  background-color: #4cd964;
+  color: #000; /* keep high contrast */
+}
+
+/* Hide/show text while disabled via your logic */
+.icon-options.text-hidden .icon-button {
+  color: inherit; /* keep label visible */
+  pointer-events: none;
+}
+
+.icon-options.text-visible .icon-button {
+  /* no color override; keep button's own color */
+}
+
+/* =========================
+   Fetching state — lighter green + text glow only
+   ========================= */
+
+/* Text glow (no movement) */
+@keyframes text-glow {
+  from {
+    text-shadow: 0 0 4px rgba(255, 255, 255, 0.5);
+  }
+  to {
+    text-shadow: 0 0 12px rgba(255, 255, 255, 0.9);
+  }
+}
+
+/* Ensure fetching style wins even while disabled */
+.icon-options.large-buttons .icon-button.is-fetching,
+.icon-options.large-buttons .icon-button.is-fetching:disabled {
+  background-color: green; /* lighter green */
+  color: #fff;
+}
+
+/* Keep same color on hover while fetching */
+.icon-options.large-buttons .icon-button.is-fetching:hover,
+.icon-options.large-buttons .icon-button.is-fetching:disabled:hover {
+  background-color: green;
+}
+
+/* Glow the label only */
+.icon-options.large-buttons .icon-button.is-fetching .btn-label,
+.icon-options.large-buttons
+  .icon-button.is-fetching:disabled
+  .btn-label {
+  animation: text-glow 1s ease-in-out infinite alternate;
+}
+
+/* Reduced-motion: keep readable static glow */
+@media (prefers-reduced-motion: reduce) {
+  .icon-options.large-buttons .icon-button.is-fetching .btn-label,
+  .icon-options.large-buttons
+    .icon-button.is-fetching:disabled
+    .btn-label {
+    animation: none;
+    text-shadow: 0 0 6px rgba(255, 255, 255, 0.7);
+  }
+}
+
+/* =========================
+   Trial layout
+   ========================= */
+.trial-ui {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.top-feedback-slot {
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.bottom-feedback-slot {
+  margin-top: 96px;
+  min-height: 96px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  text-align: center;
+}
+.status-line,
+.aligned-line,
+.score-line {
+  margin: 4px 0;
+}
+
+/* Button label base state */
+.icon-button .btn-label {
+  display: inline-block;
+  transform-origin: center;
+}
+
+/* =========================
+   Star burst
+   ========================= */
 .star-burst {
   font-size: 2.5rem;
   text-align: center;
   animation: popstar 0.8s ease-in-out;
-  margin-top: 1rem;
+  margin-top: 0.6rem;
 }
-
 @keyframes popstar {
   0% {
     transform: scale(0.5) rotate(0deg);
@@ -229,12 +462,22 @@ body.user-is-tabbing .icon-button:focus {
     opacity: 0;
   }
 }
+@media (prefers-reduced-motion: reduce) {
+  .star-burst {
+    animation: none;
+    opacity: 1;
+  }
+}
+
+/* =========================
+   Breathing step
+   ========================= */
 .breathing-circle {
   width: 100px;
   height: 100px;
   margin: 2rem auto;
   border-radius: 50%;
-  background-color: #aee;
+  background: #aee;
   animation: breathe 7s ease-in-out infinite;
 }
 @keyframes breathe {
@@ -251,71 +494,119 @@ body.user-is-tabbing .icon-button:focus {
     opacity: 0.7;
   }
 }
+@media (prefers-reduced-motion: reduce) {
+  .breathing-circle {
+    animation: none;
+  }
+}
+
 .breathe-step {
   display: flex;
   flex-direction: column;
-  align-items: center; /* ✅ center horizontally */
+  align-items: center;
   text-align: center;
   max-width: 600px;
   margin: 0 auto;
 }
-
 .breathe-step p {
   max-width: 500px;
-  margin-top: 0.5rem;
-  margin-bottom: 1rem;
+  margin: 0.5rem 0 1rem;
   font-size: 1.1rem;
   line-height: 1.6;
-}
-
-.breathe-step button {
-  font-size: 1rem;
-  padding: 0.75rem 1.5rem;
-  background-color: #5cdb95;
-  border: none;
-  border-radius: 8px;
-  cursor: pointer;
 }
 .breathe-step h2 {
   width: 100%;
   text-align: center;
 }
-.exit-button {
-  position: fixed;
-  bottom: 20px;
-  right: 20px;
+
+/* =========================
+   Save error banner
+   ========================= */
+.save-error-banner {
+  background: #fee;
+  border: 1px solid #f99;
+  padding: 12px;
+  margin: 0 0 12px 0;
+  border-radius: var(--radius-sm);
+}
+.save-error-banner p {
+  margin: 0 0 8px 0;
+}
+.save-error-actions {
   display: flex;
-  align-items: center;
   gap: 8px;
-  background-color: #f8f8f8;
-  border: 1px solid #ccc;
-  padding: 8px 14px;
-  border-radius: 20px;
-  font-size: 1rem;
-  color: #333;
-  cursor: pointer;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-  transition: all 0.2s ease;
-  z-index: 9999;
+  flex-wrap: wrap;
 }
 
-.exit-button:hover {
-  background-color: #e74c3c;
-  color: #fff;
-  border-color: #e74c3c;
-}
-
-.exit-icon {
-  font-size: 1.4rem;
-}
-
-.exit-text {
-  font-weight: 500;
-}
+/* =========================
+   Misc
+   ========================= */
 .status-placeholder {
   min-height: 1.2em;
 }
 .results-display {
-  /* e.g. 6em → 7em to cover the extra line */
   min-height: 7em;
+}
+
+/* =========================
+   Responsive
+   ========================= */
+@media (max-width: 900px) {
+  body {
+    padding: 1.5rem;
+  }
+  .icon-options.large-buttons .icon-button {
+    width: 16rem;
+    font-size: 2.2rem;
+  }
+}
+@media (max-width: 600px) {
+  body {
+    padding: 1rem;
+  }
+  .icon-options {
+    gap: 1rem;
+  }
+  .icon-button,
+  .icon-options.large-buttons .icon-button {
+    width: 42vw;
+    max-width: 260px;
+    font-size: 1.6rem;
+    padding: 0.85rem;
+  }
+  h2 {
+    font-size: 1.6rem;
+  }
+  button {
+    font-size: 1rem;
+    padding: 0.8rem 1.2rem;
+  }
+}
+@media (max-width: 400px) {
+  .icon-options {
+    flex-direction: column;
+    align-items: center;
+  }
+  .icon-button,
+  .icon-options.large-buttons .icon-button {
+    width: 85vw;
+    max-width: none;
+    font-size: 1.5rem;
+    padding: 0.9rem;
+  }
+}
+/* Soft fade for the loading line (no looping animation) */
+.status-line {
+  opacity: 0;
+  transition: opacity 180ms ease-in;
+}
+.status-line.show {
+  opacity: 1;
+}
+
+/* Reduce even this tiny motion if user prefers */
+@media (prefers-reduced-motion: reduce) {
+  .status-line {
+    transition: none;
+  }
 }

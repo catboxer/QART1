@@ -17,3 +17,8 @@
   for = "/.netlify/functions/lfdr-qrng"
   [headers.values]
     Cache-Control = "no-store, max-age=0, must-revalidate"
+[dev]
+command    = "npm start"   # or vite/dev cmd
+targetPort = 3000          # your framework port
+port       = 8888          # open this in the browser
+

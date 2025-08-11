@@ -1,12 +1,18 @@
+// ——— PRE ———
 export const preQuestions = [
-  { id: 'name', question: 'What is your name?', type: 'text' },
+  //   { id: 'name', question: 'What is your name?', type: 'text' },
+  // {
+  //   id: 'email',
+  //   question:
+  //     'What is your email? *(optional—only used by research team if your results are unusually high)',
+  //   type: 'email',
+  // },
   {
-    id: 'email',
-    question:
-      'What is your email? *(optional—only used by research team if your results are unusually high)',
-    type: 'email',
+    id: 'age',
+    question: 'What is your age?',
+    type: 'number',
+    min: 18,
   },
-  { id: 'age', question: 'What is your age?', type: 'number' },
   {
     id: 'gender',
     question: 'Gender (optional):',
@@ -76,43 +82,60 @@ export const preQuestions = [
     leftLabel: 'Foggy',
     rightLabel: 'Crystal clear',
   },
-  {
-    id: 'emotionNow',
-    question:
-      'Right now, how emotionally alive or connected do you feel?',
-    type: 'slider',
-    min: 0,
-    max: 10,
-    leftLabel: 'Numb',
-    rightLabel: 'Very alive',
-  },
-  {
-    id: 'energyNow',
-    question: 'Right now, how alert or energized do you feel?',
-    type: 'slider',
-    min: 0,
-    max: 10,
-    leftLabel: 'Exhausted',
-    rightLabel: 'Energized',
-  },
 ];
 
+// ——— BLOCK METADATA ———
 export const cueBlocks = [
   {
-    id: 'neutral',
-    label: 'Neutral',
+    id: 'full_stack',
+    label: 'Practice Baseline',
     instructions:
-      'As quickly as possible choose the icon that feels right to you.',
+      'Press RIGHT once per trial. Outcome comes from a physical RNG. No per-trial feedback.',
     showFeedback: false,
   },
   {
-    id: 'full_stack',
-    label: 'Performance',
+    id: 'spoon_love',
+    label: 'Quantum',
     instructions:
-      'Take a deep breath. Feel what it is to know the answer. Stay present. Tune in. Take your time with each answer. If you match the icon, you’ll receive a gold star.',
+      'Focus on RIGHT, press RIGHT once. Outcome comes from a quantum RNG. Star shows when aligned.',
     showFeedback: true,
   },
 ];
+
+// ——— MID (between blocks) ———
+export const midQuestions = [
+  {
+    id: 'confidence',
+    type: 'slider',
+    min: 0,
+    max: 100,
+    leftLabel: 'Not at all',
+    rightLabel: 'Extremely',
+    question:
+      'How confident are you that you can nudge above 50% (chance) the quantum outcome toward RIGHT in the next block?',
+  },
+  {
+    id: 'knowledge',
+    type: 'slider',
+    min: 0,
+    max: 100,
+    leftLabel: 'Not at all',
+    rightLabel: 'Extremely',
+    question: 'How confident are you that you know what to do?',
+  },
+  {
+    id: 'expectation_pct',
+    type: 'slider',
+    min: 0,
+    max: 100,
+    leftLabel: '0%',
+    rightLabel: '100%',
+    question:
+      'What percentage do you expect to achieve in the quantum block?',
+  },
+];
+
+// ——— POST ———
 
 export const postQuestions = [
   {
@@ -128,7 +151,7 @@ export const postQuestions = [
   {
     id: 'calmLevel',
     question:
-      'How calm did you feel? (1 = not at all, 10 = extremely calm',
+      'How calm did you feel? (1 = not at all, 10 = extremely calm)',
     type: 'slider',
     min: 1,
     max: 10,
@@ -136,14 +159,19 @@ export const postQuestions = [
     rightLabel: 'Extremely calm',
   },
   {
-    id: 'stateEffect',
+    id: 'confidenceLevel',
     question:
-      'Describe anything you noticed about how your state affected your ability to choose.',
-    type: 'textarea',
+      'How confident did you feel that you were nudging the results? (1 = not at all, 10 = extremely confident)',
+    type: 'slider',
+    min: 1,
+    max: 10,
+    leftLabel: 'Not at all',
+    rightLabel: 'Extremely confident',
   },
   {
     id: 'finalThoughts',
-    question: "Any final thoughts or feedback you'd like to share?",
+    question:
+      "Any final thoughts or feedback you'd like to share? (optional)",
     type: 'textarea',
   },
 ];

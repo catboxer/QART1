@@ -25,3 +25,6 @@ firestore.rules
 qartexperiment1-firebase-adminsdk-fbsvc-800e7fc19f.json
 # Local Netlify folder
 .netlify
+# .gitignore
+.env
+.env.*
