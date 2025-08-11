@@ -1,24 +1,9 @@
 [build]
-  command = "npm run build"
-  publish = "build"
-  functions = "netlify/functions"
+  command = "bash scripts/build_all.sh"
+  publish = "_site"
 
-[build.environment]
-  NETLIFY_PRODUCTION_BRANCH = "main"
-  NODE_VERSION = "20.11.0"
+[context.production]
+  command = "bash scripts/build_all.sh"
 
-[functions]
-  node_bundler = "esbuild"
-
-  [functions."lfdr-qrng"]
-  cache = false
-  
-[[headers]]
-  for = "/.netlify/functions/lfdr-qrng"
-  [headers.values]
-    Cache-Control = "no-store, max-age=0, must-revalidate"
-[dev]
-command    = "npm start"   # or vite/dev cmd
-targetPort = 3000          # your framework port
-port       = 8888          # open this in the browser
-
+[context.deploy-preview]
+  command = "bash scripts/build_all.sh"
