@@ -59,8 +59,12 @@ for exp_path in "${EXP_DIR}"/*; do
   # build if package.json + build script exist
   if [ -f "${exp_path}/package.json" ]; then
     if grep -q '"build"' "${exp_path}/package.json"; then
-      echo "Running npm ci && npm run build in ${exp_name}"
-      ( cd "${exp_path}" && npm ci && npm run build )
+      # prefer ci when lockfile exists; otherwise install
+PKG_CMD="npm install --no-audit --no-fund"
+[ -f "${exp_path}/package-lock.json" ] && PKG_CMD="npm ci --no-audit --no-fund"
+
+echo "Running ${PKG_CMD} && npm run build in ${exp_name}"
+( cd "${exp_path}" && ${PKG_CMD} && npm run build )
     else
       echo "No \"build\" script in ${exp_name}/package.json; will copy files as-is."
     fi
