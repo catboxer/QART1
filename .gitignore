@@ -28,3 +28,11 @@ qartexperiment1-firebase-adminsdk-fbsvc-800e7fc19f.json
 # .gitignore
 .env
 .env.*
+
+# Netlify build output
+_site/
+
+# Node stuff inside experiments
+experiments/*/node_modules/
+experiments/*/dist/
+experiments/*/build/
