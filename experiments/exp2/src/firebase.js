@@ -33,9 +33,18 @@ export { db };
 
 // Set persistence (no top-level await; use promise form)
 // Try local; if that fails (e.g., privacy mode), fall back to session.
-setPersistence(auth, browserLocalPersistence).catch(() =>
-  setPersistence(auth, browserSessionPersistence).catch(() => {})
-);
+// Make persistence a promise we can await before any sign-in.
+// Try local; if that fails (e.g., privacy mode), fall back to session.
+const persistenceReady = setPersistence(
+  auth,
+  browserLocalPersistence
+).catch(async () => {
+  try {
+    await setPersistence(auth, browserSessionPersistence);
+  } catch {
+    // ignore — we'll still proceed, but auth may not persist across reloads
+  }
+});
 
 /**
  * Waits until there is a Firebase user. If none, signs in anonymously.
@@ -52,24 +61,30 @@ export async function signInWithEmailPassword(email, password) {
   return cred.user; // contains uid, email, displayName, etc.
 }
 
-export function ensureSignedIn() {
+export async function ensureSignedIn() {
+  // Ensure persistence is set BEFORE we decide to sign in
+  await persistenceReady;
+
+  // If a user already exists (from a prior visit), use it
+  if (auth.currentUser) return auth.currentUser;
+
+  // Otherwise create ONE anonymous user
+  await signInAnonymously(auth);
+
+  // Wait for the user object to be ready
   return new Promise((resolve, reject) => {
-    const unsub = onAuthStateChanged(
+    const off = onAuthStateChanged(
       auth,
-      async (user) => {
-        try {
-          if (!user) {
-            await signInAnonymously(auth);
-            return; // onAuthStateChanged will fire again with the new user
-          }
-          unsub();
-          resolve(user);
-        } catch (e) {
-          unsub();
-          reject(e);
-        }
+      (u) => {
+        if (!u) return;
+        off();
+        resolve(u);
       },
       reject
     );
   });
+}
+
+if (typeof window !== 'undefined') {
+  window._auth = auth; // Now you can run: window._auth.currentUser?.uid
 }

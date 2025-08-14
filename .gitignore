@@ -36,3 +36,4 @@ _site/
 experiments/*/node_modules/
 experiments/*/dist/
 experiments/*/build/
+.env

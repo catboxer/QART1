@@ -12,6 +12,7 @@ import {
   setDoc,
   updateDoc,
   serverTimestamp,
+  increment,
 } from 'firebase/firestore';
 
 import {
@@ -19,12 +20,15 @@ import {
   cueBlocks,
   midQuestions,
   postQuestions,
+  buildIssueMailto,
 } from './questions';
 import confetti from 'canvas-confetti';
 
 // ---------- helpers ----------
 const randomInt = (min, max) =>
   Math.floor(Math.random() * (max - min + 1)) + min;
+const getBlock = (id) => cueBlocks.find((b) => b.id === id);
+const getLabel = (id) => getBlock(id)?.buttonLabel || 'RIGHT';
 
 // consider a question "answered" if it has a non-empty value in the responses map
 const isAnswered = (q, responses) => {
@@ -100,9 +104,6 @@ async function getPrngPairOrThrow(retries = 2, backoffMs = 250) {
 }
 
 // ---- QRNG client: one call → two bytes (primary+ghost) with retries ----
-/* ===== Simple QRNG client (ONE call → TWO bytes) ===== */
-/* We let the Netlify function decide provider (Outshift/LFDR) and only use ANU as last-resort. */
-
 async function getQuantumPairOrThrow(retries = 2, backoffMs = 250) {
   const make = () =>
     fetch(
@@ -162,28 +163,52 @@ function fireConfettiSafely() {
 }
 
 function MainApp() {
-  // ----- ensure we’re signed in ANONYMOUSLY before anything else -----
+  // ----- participant profile (demographics stored once) -----
+  const [profile, setProfile] = useState(undefined); // undefined = loading, null = first run, object = returning user
   useEffect(() => {
+    let cancelled = false;
+
     (async () => {
       try {
-        await ensureSignedIn();
+        // 1) Ensure we are signed in (awaits persistence; creates anon user if none)
+        const user = await ensureSignedIn();
+        if (!user || cancelled) return;
+
+        // 2) Read this UID's participant profile
+        const ref = doc(db, 'participants', user.uid);
+        try {
+          const snap = await getDoc(ref);
+          if (!cancelled) {
+            setProfile(snap.exists() ? snap.data() : null);
+          }
+        } catch (err) {
+          // If a read fails due to timing/rules, treat as first run (no crash)
+          if (!cancelled) {
+            console.warn(
+              '[profile] read failed, treating as first run:',
+              err
+            );
+            setProfile(null);
+          }
+        }
       } catch (err) {
-        console.warn('Anonymous sign-in failed:', err);
+        // If sign-in itself fails (e.g., very strict privacy), still allow first run
+        if (!cancelled) {
+          console.warn(
+            '[auth] ensureSignedIn failed, treating as first run:',
+            err
+          );
+          setProfile(null);
+        }
       }
     })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  // ----- participant profile (demographics stored once) -----
-  const [profile, setProfile] = React.useState(undefined); // undefined = loading, null = first run, object = returning user
-  React.useEffect(() => {
-    const unsub = auth.onAuthStateChanged(async (user) => {
-      if (!user) return;
-      const ref = doc(db, 'participants', user.uid);
-      const snap = await getDoc(ref);
-      setProfile(snap.exists() ? snap.data() : null);
-    });
-    return () => unsub();
-  }, []);
+  const hasDemographics = !!(profile && profile.demographics);
 
   // ----- session / version -----
   const [sessionId] = useState(() => {
@@ -227,16 +252,6 @@ function MainApp() {
   const [buttonsDisabled, setButtonsDisabled] = useState(false);
   const [fullStackStats, setFullStackStats] = useState(null);
   const [spoonLoveStats, setSpoonLoveStats] = useState(null);
-  const [experimentRuns, setExperimentRuns] = useState(() => {
-    try {
-      return parseInt(
-        localStorage.getItem('experimentRuns') || '0',
-        10
-      );
-    } catch {
-      return 0;
-    }
-  });
   const [isLoading, setIsLoading] = useState(false);
   const inFlightRef = useRef(false);
 
@@ -252,24 +267,25 @@ function MainApp() {
     { ...fullStackBlock, id: 'full_stack', showFeedback: true },
     { ...spoonLoveBlock, id: 'spoon_love', showFeedback: true },
   ]);
-  const trialsPerBlock = { full_stack: 20, spoon_love: 50 };
+  const trialsPerBlock = { full_stack: 30, spoon_love: 100 };
   const currentBlock = blockOrder[currentBlockIndex].id;
+  const currentBlockObj = blockOrder[currentBlockIndex];
   const totalTrialsPerBlock = trialsPerBlock[currentBlock];
 
   // prime assignment (display boost)
   const [isHighPrime] = useState(() => Math.random() < 0.5);
   const BOOST_MIN = 5;
   const BOOST_MAX = 15;
-  const FLOOR = 66;
+  const FLOOR = 60;
 
   // Confetti thresholds
-  const CONFETTI_THRESHOLD_BASELINE = 60;
-  const CONFETTI_THRESHOLD_QUANTUM = 60;
+  const CONFETTI_THRESHOLD_BASELINE = 56;
+  const CONFETTI_THRESHOLD_QUANTUM = 56;
 
   // --- Feedback switches per block (live score unblocked for both) ---
   const FB = {
     full_stack: { STAR: false, ALIGNED_TEXT: false, SCORE: false },
-    spoon_love: { STAR: true, ALIGNED_TEXT: false, SCORE: false },
+    spoon_love: { STAR: false, ALIGNED_TEXT: false, SCORE: false },
   };
 
   // --- Feedback on early exit ---
@@ -283,28 +299,6 @@ function MainApp() {
     };
   }, []);
 
-  // ----- instructions -----
-  const trialInstructions = {
-    full_stack: `
-      <h2>Baseline Block</h2>
-      <ul>
-        <li>Focus all your attention on one word—<strong>RIGHT</strong>—then press the <strong>RIGHT</strong> button once.</li>
-        <li>The system will draw from a physical RNG.</li>
-        <li>The word <strong>RIGHT</strong> will turn black when it is ready to be pushed again.</li>
-      </ul>
-    `,
-    spoon_love: `
-      <h2>Main Experiment Block</h2>
-      <ul>
-        <li>Focus all your attention on one word—<strong>RIGHT</strong>—then press the <strong>RIGHT</strong> button once.</li>
-        <li>The system will draw from a quantum RNG.</li>
-        <li>If the outcome is Aligned, you'll see a gold star.</li>
-        <li>The word <strong>RIGHT</strong> will turn black when it is ready to be pushed again.</li>
-        <li>If the network hiccups, press again.</li>
-      </ul>
-    `,
-  };
-
   // ----- forms -----
   const handleChange = (id, value, bucket = 'pre') => {
     const setMap = {
@@ -317,9 +311,10 @@ function MainApp() {
   };
 
   const filteredPreQuestions = useMemo(
-    () => preQuestions.filter(filterOutPII),
-    []
+    () => (hasDemographics ? [] : preQuestions.filter(filterOutPII)),
+    [hasDemographics]
   );
+
   const filteredPostQuestions = useMemo(
     () => postQuestions.filter(filterOutPII),
     []
@@ -419,7 +414,6 @@ function MainApp() {
 
   // ----- save profile once (first run) -----
   async function saveProfileIfNeeded(preResponses) {
-    // ensure auth exists before profile writes
     await ensureSignedIn();
     const uid = auth.currentUser?.uid;
     if (!uid) return;
@@ -430,11 +424,13 @@ function MainApp() {
     if (snap.exists()) {
       await updateDoc(ref, {
         demographics,
+        demographics_version: 'v1',
         updated_at: serverTimestamp(),
       });
     } else {
       await setDoc(ref, {
         demographics,
+        demographics_version: 'v1',
         created_at: serverTimestamp(),
         updated_at: serverTimestamp(),
         profile_version: 1,
@@ -451,13 +447,9 @@ function MainApp() {
     setStep('trials');
   };
 
-  // ----- one big RIGHT button -----
+  // ----- one big PRIMARY button -----
   const renderRightButton = () => (
-    <div
-      className="icon-options-wrapper"
-      role="group"
-      aria-label="Right button"
-    >
+    <div className="icon-options-wrapper">
       <div
         className={`icon-options large-buttons ${
           buttonsDisabled ? 'text-hidden' : 'text-visible'
@@ -466,12 +458,14 @@ function MainApp() {
         <button
           type="button"
           className={`icon-button ${isLoading ? 'is-fetching' : ''}`}
-          onClick={() => handleTrial()}
-          aria-label="Choose RIGHT"
-          aria-busy={isLoading ? 'true' : 'false'}
+          onPointerDown={handlePressStart}
+          onPointerUp={handlePressEnd}
+          onPointerCancel={() => (pressStartRef.current = null)}
           disabled={isLoading || buttonsDisabled}
         >
-          <span className="btn-label">RIGHT</span>
+          <span className="btn-label">
+            {getLabel(currentBlockObj.id)}
+          </span>
         </button>
       </div>
     </div>
@@ -492,8 +486,27 @@ function MainApp() {
     };
   }, [trialResults, currentBlock]);
 
+  // --- Press/hold tracking ---
+  const pressStartRef = useRef(null);
+  const handlePressStart = (e) => {
+    try {
+      if (e && e.pointerType)
+        e.currentTarget.setPointerCapture?.(e.pointerId);
+    } catch {}
+    pressStartRef.current = performance.now();
+  };
+  const handlePressEnd = async () => {
+    const t0 = pressStartRef.current;
+    const t1 = performance.now();
+    pressStartRef.current = null;
+    const holdDurationMs = Number.isFinite(t0)
+      ? Math.max(0, t1 - t0)
+      : null;
+    await handleTrial(holdDurationMs);
+  };
+
   // ----- per-trial handler -----
-  const handleTrial = async () => {
+  const handleTrial = async (holdDurationMs = null) => {
     if (inFlightRef.current) return;
     inFlightRef.current = true;
 
@@ -502,7 +515,8 @@ function MainApp() {
     setIsLoading(true);
     setButtonsDisabled(true);
     setLastResult(null);
-    const press_ts = new Date().toISOString();
+    const press_start_ts = new Date().toISOString();
+    let press_release_ts = null;
 
     let rng = null;
 
@@ -607,6 +621,7 @@ function MainApp() {
           return;
         }
       }
+      press_release_ts = new Date().toISOString();
 
       // ----- score + display (same rule for BOTH blocks) -----
       const matched = rng.qrng_code === 2 ? 1 : 0; // RIGHT = hit
@@ -619,7 +634,10 @@ function MainApp() {
         condition: isHighPrime ? 'primed' : 'control',
         block_type: block.id,
         trial_index: currentTrial + 1,
-        press_time: press_ts,
+        press_time: press_start_ts,
+        press_start_ts,
+        press_release_ts,
+        hold_duration_ms: holdDurationMs,
         rng_source: rng.source,
         raw_byte: rng.rawByte ?? null,
         qrng_code: rng.qrng_code,
@@ -632,10 +650,8 @@ function MainApp() {
           rng.ghost_qrng_code != null && rng.ghost_qrng_code === 2
             ? 1
             : 0,
-
         pair_rule: rng.pair_rule,
         primary_pos: rng.primary_pos,
-
         matched,
       };
 
@@ -702,6 +718,9 @@ function MainApp() {
     block_type: r.block_type,
     trial_index: r.trial_index,
     press_time: r.press_time,
+    press_start_ts: r.press_start_ts ?? r.press_time ?? null,
+    press_release_ts: r.press_release_ts ?? null,
+    hold_duration_ms: r.hold_duration_ms ?? null,
 
     // primary (subject) fields
     qrng_code: r.qrng_code, // 1=LEFT, 2=RIGHT
@@ -729,7 +748,6 @@ function MainApp() {
 
     const devNotify = (msg) => {
       if (process.env.NODE_ENV !== 'production') {
-        // visible during local/dev testing only
         try {
           alert(msg);
         } catch (_) {}
@@ -737,19 +755,6 @@ function MainApp() {
         console.warn(msg);
       }
     };
-
-    let runs = 0;
-    try {
-      runs = parseInt(
-        localStorage.getItem('experimentRuns') || '0',
-        10
-      );
-    } catch {}
-    const newRuns = exitedEarly ? runs : runs + 1;
-    try {
-      localStorage.setItem('experimentRuns', String(newRuns));
-    } catch {}
-    setExperimentRuns(newRuns);
 
     // Split trials by block
     const fsTrials = trialResults.filter(
@@ -871,7 +876,6 @@ function MainApp() {
         },
       },
 
-      experimentRuns: newRuns,
       exitedEarly,
       exit_reason: exitedEarly
         ? earlyExitInfo?.reason || 'unspecified'
@@ -940,6 +944,37 @@ function MainApp() {
       devNotify('Main save failed. See console for details.');
       throw e;
     }
+
+    // (3) Increment runs on the participant document + bump UI immediately
+    try {
+      const uid = auth.currentUser?.uid;
+      if (uid) {
+        const partRef = doc(db, 'participants', uid);
+        await setDoc(
+          partRef,
+          {
+            has_run: true,
+            runs: increment(exitedEarly ? 0 : 1), // don’t count early exits, if you prefer
+            updated_at: serverTimestamp(),
+            last_run_at: serverTimestamp(),
+          },
+          { merge: true }
+        );
+
+        // ✅ Reflect the increment locally so the on-screen counter bumps immediately
+        setProfile((prev) => {
+          if (!prev) return prev; // leave undefined (loading) or null (first run) as-is
+          const bump = exitedEarly ? 0 : 1;
+          return {
+            ...prev,
+            has_run: true,
+            runs: (prev.runs ?? 0) + bump,
+          };
+        });
+      }
+    } catch (e) {
+      console.warn('Participant runs update failed:', e);
+    }
   };
 
   const ratingMessage = (percent) => {
@@ -952,6 +987,30 @@ function MainApp() {
   };
 
   return (
+    // <>
+    //   {process.env.NODE_ENV !== 'production' && (
+    //     <div
+    //       style={{
+    //         position: 'sticky',
+    //         top: 0,
+    //         zIndex: 9999,
+    //         background: '#111',
+    //         color: '#fff',
+    //         padding: '6px 10px',
+    //         fontFamily: 'monospace',
+    //         fontSize: 12,
+    //       }}
+    //     >
+    //       UID: {auth.currentUser?.uid || '—'} | persistence:{' '}
+    //       {window.__authPersistence || '—'} | hasDemo:{' '}
+    //       {profile?.demographics
+    //         ? 'Y'
+    //         : profile === undefined
+    //         ? '…'
+    //         : 'N'}
+    //     </div>
+    //   )}
+
     <div className="App" role="main" id="main">
       {/* consent gate */}
       {step === 'consent' && (
@@ -961,7 +1020,7 @@ function MainApp() {
             This study examines how focused attention relates to
             outcomes from a random process. You will press a button
             across multiple short trials and answer brief questions
-            (5–10 minutes).
+            (15-45 minutes).
           </p>
           <p>
             <strong>Important:</strong> To preserve the scientific
@@ -977,15 +1036,19 @@ function MainApp() {
             <li>
               We store anonymous trial data (button presses, random
               outcomes, timestamps) and questionnaire answers in
-              Google Firestore (USA). We store responses indefinitely
-              for research replication. Hosting providers may log IPs
-              for security; we do not add IPs to the study database.
+              Google Firestore (USA).
+            </li>
+            <li>
+              We store responses indefinitely for research
+              replication. Hosting providers may log IPs for security;
+              we do not add IPs to the study database.
             </li>
             <li>
               Contact:{' '}
               <a href="mailto:h@whatthequark.com">
                 h@whatthequark.com
-              </a>
+              </a>{' '}
+              with any questions or concerns.
             </li>
           </ul>
 
@@ -1009,7 +1072,9 @@ function MainApp() {
           </label>
 
           {(() => {
-            const canContinue = consent18 && consentAgree;
+            const canContinue =
+              consent18 && consentAgree && profile !== undefined;
+
             return (
               <>
                 {!canContinue ? (
@@ -1021,7 +1086,9 @@ function MainApp() {
                       marginTop: 8,
                     }}
                   >
-                    Check both boxes to continue.
+                    {profile === undefined
+                      ? 'Loading your profile…'
+                      : 'Check both boxes to continue.'}
                   </p>
                 ) : null}
 
@@ -1032,14 +1099,15 @@ function MainApp() {
                   disabled={!canContinue}
                   aria-disabled={!canContinue}
                   onClick={() => {
-                    if (profile === undefined) {
-                      // still loading profile; be safe and show pre page
-                      setStep('pre');
-                    } else if (profile) {
-                      // returning user → skip pre page and jump right into trials
+                    // profile is loaded because the button is disabled until then
+                    if (
+                      profile?.demographics &&
+                      profile?.demographics_version === 'v1'
+                    ) {
+                      // returning UID with submitted pre → skip pre page
                       startTrials(0);
                     } else {
-                      // first run → collect pre questions
+                      // first run or abandoned pre → ask pre again
                       setStep('pre');
                     }
                   }}
@@ -1099,21 +1167,81 @@ function MainApp() {
               hidden in the averages of many people’s results.
             </li>
           </ul>
-          <ol>
-            <li>
-              <strong>Baseline Block</strong> (20 trials): press the{' '}
-              <strong>RIGHT</strong> button; outcome comes from a{' '}
-              <em>physical RNG</em>. Your score will be displayed at
-              the end.
-            </li>
-            <li>
-              <strong>Main Quantum Block</strong> (50 trials): press
-              the <strong>RIGHT</strong> button; outcome comes from a{' '}
-              <em>quantum RNG.</em> If the outcome matches, you’ll see
-              a gold star. Your score will be displayed at the end.
-            </li>
-          </ol>
-          <p>{`You have completed this experiment ${experimentRuns} time(s).`}</p>
+
+          <details className="expander">
+            <summary>How scoring works (tap to expand)</summary>
+            <div>
+              <p>Over 100 trials:</p>
+              <ul>
+                <li>
+                  By pure chance, you’d expect about{' '}
+                  <strong>50 hits</strong> (50%).
+                </li>
+                <li>
+                  The natural variation (“standard deviation”) is
+                  about <strong>5 hits</strong>.
+                </li>
+                <li>
+                  Scoring <strong>55 or more</strong> is above 1
+                  standard deviation — happens only about 16% of the
+                  time by luck alone.
+                </li>
+                <li>
+                  Scoring <strong>60 or more</strong> is about 2
+                  standard deviations above chance — unusual when the
+                  RNG is truly random.
+                </li>
+                <li>
+                  Scoring <strong>45 or fewer</strong> is also 1
+                  standard deviation away, and{' '}
+                  <strong>40 or fewer</strong> is 2 standard
+                  deviations — equally unusual, just in the other
+                  direction.
+                </li>
+                <li>
+                  Very low scores (like around 33%) are just as rare
+                  as very high scores (like around 67%) — both mean
+                  you got an unusual result, not that you “did badly.”
+                </li>
+              </ul>
+              <p>
+                In short: 50% is average, 55+ or 45− is better/worse
+                than chance, and 60+ or 40− is rare in either
+                direction.
+              </p>
+            </div>
+          </details>
+
+          <details
+            className="expander"
+            style={{ marginTop: '0.75rem' }}
+          >
+            <summary>
+              What you’ll do in each block (tap to expand)
+            </summary>
+            <ol>
+              <li>
+                <strong>Baseline Block</strong> (
+                {trialsPerBlock.full_stack} trials): press the{' '}
+                <strong>{getLabel('full_stack')}</strong> button;
+                outcome comes from a <em>physical RNG.</em> Your score
+                will be displayed at the end.
+              </li>
+              <li>
+                <strong>Main Quantum Block</strong> (
+                {trialsPerBlock.spoon_love} trials): press the{' '}
+                <strong>{getLabel('spoon_love')}</strong> button;
+                outcome comes from a <em>quantum RNG.</em> Your score
+                will be displayed at the end.
+              </li>
+            </ol>
+          </details>
+
+          <p>
+            You have completed this experiment{' '}
+            {profile === undefined ? '…' : String(profile?.runs ?? 0)}{' '}
+            time(s).
+          </p>
 
           {filteredPreQuestions.map((q, i) => {
             const error = showPreMissing
@@ -1154,7 +1282,7 @@ function MainApp() {
               }
               setShowPreMissing(false);
               await saveProfileIfNeeded(preResponses);
-              startTrials(0);
+              setStep('breathe-fullstack'); // go to the new instruction screen
             };
 
             return (
@@ -1196,7 +1324,16 @@ function MainApp() {
             <strong>Your score:</strong> {fullStackStats.userPercent}%
           </p>
           <p>{ratingMessage(fullStackStats.userPercent)}</p>
-
+          <div
+            dangerouslySetInnerHTML={{
+              __html: (
+                fullStackBlock.resultsMessage || ''
+              ).replaceAll(
+                '{{WORD}}',
+                fullStackBlock.buttonLabel || 'RIGHT'
+              ),
+            }}
+          />
           {midQuestions.map((q, i) => (
             <div
               key={q.id}
@@ -1258,16 +1395,40 @@ function MainApp() {
         </>
       )}
 
+      {step === 'breathe-fullstack' && (
+        <div className="breathe-step">
+          <div className="breathing-circle" aria-hidden="true" />
+          <div
+            className="instructions"
+            dangerouslySetInnerHTML={{
+              __html: (
+                fullStackBlock.preInstructions || ''
+              ).replaceAll(
+                '{{WORD}}',
+                fullStackBlock.buttonLabel || 'RIGHT'
+              ),
+            }}
+          />
+          <button onClick={() => startTrials(0)}>
+            Start Baseline Trials
+          </button>
+        </div>
+      )}
+
       {step === 'breathe-spoon' && (
         <div className="breathe-step">
-          <h2 tabIndex={-1}>Center Yourself for the Quantum Block</h2>
           <div className="breathing-circle" aria-hidden="true" />
-          <p>
-            Take five deep, slow breaths and let your focus settle.
-            <br />
-            When ready, direct all attention to the word{' '}
-            <strong>RIGHT</strong>, then press the button once.
-          </p>
+          <div
+            className="instructions"
+            dangerouslySetInnerHTML={{
+              __html: (
+                spoonLoveBlock.preInstructions || ''
+              ).replaceAll(
+                '{{WORD}}',
+                spoonLoveBlock.buttonLabel || 'RIGHT'
+              ),
+            }}
+          />
           <button onClick={() => startTrials(1)}>
             Start Quantum Trials
           </button>
@@ -1281,9 +1442,17 @@ function MainApp() {
           </h2>
 
           <div
+            className="instructions"
             dangerouslySetInnerHTML={{
-              __html:
-                trialInstructions[blockOrder[currentBlockIndex].id],
+              __html: (currentBlockObj.trialInstructions || '')
+                .replaceAll(
+                  '{{WORD}}',
+                  getLabel ? getLabel(currentBlockObj.id) : 'Primary'
+                )
+                .replaceAll(
+                  '{{ISSUE_MAILTO}}',
+                  buildIssueMailto(sessionId)
+                ),
             }}
           />
 
@@ -1307,11 +1476,7 @@ function MainApp() {
             {/* Visual-only loading text; results announced when they change */}
             <div className="bottom-feedback-slot" aria-live="polite">
               {isLoading ? (
-                <div
-                  role="status"
-                  className="status-line show"
-                  aria-hidden="true"
-                >
+                <div role="status" className="status-line show">
                   {currentBlock === 'spoon_love'
                     ? 'Waiting for the quantum RNG…'
                     : currentBlock === 'full_stack'
@@ -1478,6 +1643,59 @@ function MainApp() {
             <strong>Your Score:</strong> {spoonLoveStats.userPercent}%
           </p>
           <p>{ratingMessage(spoonLoveStats.userPercent)}</p>
+          <details className="expander">
+            <summary>How scoring works (tap to expand)</summary>
+            <div>
+              <p>Over 100 trials:</p>
+              <ul>
+                <li>
+                  By pure chance, you’d expect about{' '}
+                  <strong>50 hits</strong> (50%).
+                </li>
+                <li>
+                  The natural variation (“standard deviation”) is
+                  about <strong>5 hits</strong>.
+                </li>
+                <li>
+                  Scoring <strong>55 or more</strong> is above 1
+                  standard deviation — happens only about 16% of the
+                  time by luck alone.
+                </li>
+                <li>
+                  Scoring <strong>60 or more</strong> is about 2
+                  standard deviations above chance — unusual when the
+                  RNG is truly random.
+                </li>
+                <li>
+                  Scoring <strong>45 or fewer</strong> is also 1
+                  standard deviation away, and{' '}
+                  <strong>40 or fewer</strong> is 2 standard
+                  deviations — equally unusual, just in the other
+                  direction.
+                </li>
+                <li>
+                  Very low scores (like around 33%) are just as rare
+                  as very high scores (like around 67%) — both mean
+                  you got an unusual result, not that you “did badly.”
+                </li>
+              </ul>
+              <p>
+                In short: 50% is average, 55+ or 45− is better/worse
+                than chance, and 60+ or 40− is rare in either
+                direction.
+              </p>
+            </div>
+          </details>
+          <div
+            dangerouslySetInnerHTML={{
+              __html: (
+                spoonLoveBlock.resultsMessage || ''
+              ).replaceAll(
+                '{{WORD}}',
+                spoonLoveBlock.buttonLabel || 'RIGHT'
+              ),
+            }}
+          />
           <button onClick={() => setStep('post')}>
             Continue to Post-Experiment Questions
           </button>
@@ -1574,6 +1792,13 @@ function MainApp() {
               closes.
             </li>
           </ul>
+          <button
+            onClick={() => window.location.reload()}
+            className="secondary-btn"
+            style={{ display: 'inline-block', marginTop: '1em' }}
+          >
+            Run It Again
+          </button>
           <div className="cta-row">
             <a
               className="secondary-btn"
@@ -1585,6 +1810,7 @@ function MainApp() {
         </>
       )}
     </div>
+    // </>
   );
 }
 

@@ -7,3 +7,9 @@
 
 [context.deploy-preview]
   command = "bash scripts/build_all.sh"
+[dev]
+  port = 8888
+  targetPort = 3000
+  functions = "netlify/functions"
+  # You can change this line when you switch experiments:
+  command = "npm start --prefix experiments/exp2"

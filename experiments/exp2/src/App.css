@@ -610,3 +610,39 @@ input[type='range']::-webkit-slider-thumb {
     transition: none;
   }
 }
+.expander {
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  background: #fafafa;
+}
+.expander > summary {
+  cursor: pointer;
+  font-weight: 600;
+  list-style: none;
+}
+.expander[open] {
+  background: #f6f6f6;
+}
+.expander > summary::-webkit-details-marker {
+  display: none;
+}
+/* Left-align list + "why" block inside .instructions, even if parent is centered */
+.instructions ul,
+.instructions .why-this-matters,
+.instructions .why-this-matters p {
+  text-align: left !important;
+}
+
+/* Shrink the "why" block text reliably */
+.instructions .why-this-matters,
+.instructions .why-this-matters * {
+  font-size: 0.9rem !important; /* root-relative; consistent */
+  line-height: 1.45;
+}
+
+/* Optional: tidy spacing and width */
+.instructions .why-this-matters {
+  display: inline-block;
+  margin: 1em auto 0 auto; /* centers the block, left-aligns text */
+}

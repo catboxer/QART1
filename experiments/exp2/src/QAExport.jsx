@@ -140,7 +140,108 @@ function MiniBars({ pctPrimary, pctGhost }) {
   );
 }
 
+/* ==== NEW: tiny helpers for hold charts ==== */
+function RBadge({ label, r }) {
+  const tone = '#555';
+  return (
+    <div
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 8,
+        marginRight: 12,
+      }}
+    >
+      <span style={{ minWidth: 210 }}>{label}</span>
+      <span
+        style={{
+          padding: '4px 8px',
+          borderRadius: 6,
+          background: tone,
+          color: '#fff',
+          fontVariantNumeric: 'tabular-nums',
+        }}
+      >
+        r = {Number.isFinite(r) ? r.toFixed(3) : '—'}
+      </span>
+    </div>
+  );
+}
+
+function HoldQuartileChart({ title, holdReport }) {
+  if (!holdReport) return null;
+  const data = (holdReport.quartiles || []).map((q) => ({
+    label: q.label,
+    value: q.pct ?? 0,
+  }));
+  return (
+    <div>
+      <BarChart title={title} data={data} />
+      <div
+        style={{
+          display: 'flex',
+          gap: 12,
+          alignItems: 'center',
+          flexWrap: 'wrap',
+        }}
+      >
+        <PBadge
+          label="Hi vs Lo (Q4 vs Q1) — two-prop"
+          p={holdReport.hiVsLo?.p ?? NaN}
+        />
+        <RBadge
+          label="Pearson r (ms ↔ right)"
+          r={holdReport.pearson}
+        />
+        <div
+          style={{
+            padding: '6px 10px',
+            border: '1px solid #eee',
+            borderRadius: 6,
+            background: '#fafafa',
+            fontSize: 12,
+          }}
+          title="Quartile cutoffs for hold_duration_ms"
+        >
+          n={holdReport.nTrials} &nbsp;|&nbsp; cutoffs ms:&nbsp; Q1≤
+          {Math.round(holdReport.qCutoffsMs.q1)},&nbsp; Q2≤
+          {Math.round(holdReport.qCutoffsMs.q2)},&nbsp; Q3≤
+          {Math.round(holdReport.qCutoffsMs.q3)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ---------------- small math helpers ---------------- */
+function pearsonR(xs, ys) {
+  const n = Math.min(xs.length, ys.length);
+  if (n < 3) return null;
+  let sx = 0,
+    sy = 0,
+    sxx = 0,
+    syy = 0,
+    sxy = 0,
+    k = 0;
+  for (let i = 0; i < n; i++) {
+    const x = xs[i],
+      y = ys[i];
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    sx += x;
+    sy += y;
+    sxx += x * x;
+    syy += y * y;
+    sxy += x * y;
+    k++;
+  }
+  if (k < 3) return null;
+  const cov = sxy - (sx * sy) / k;
+  const vx = sxx - (sx * sx) / k;
+  const vy = syy - (sy * sy) / k;
+  const denom = Math.sqrt(vx * vy);
+  return denom ? cov / denom : null;
+}
+
 function erfApprox(z) {
   const sign = z < 0 ? -1 : 1;
   z = Math.abs(z);
@@ -594,6 +695,118 @@ function parityPct(trials, rawField) {
   }
   return { n, pctOdd: n ? (100 * odd) / n : null };
 }
+/* ==== NEW: hold-duration vs accuracy helpers ==== */
+function quantile(sortedNums, q) {
+  if (!sortedNums.length) return null;
+  const pos = (sortedNums.length - 1) * q;
+  const base = Math.floor(pos);
+  const rest = pos - base;
+  if (sortedNums[base + 1] !== undefined) {
+    return (
+      sortedNums[base] +
+      rest * (sortedNums[base + 1] - sortedNums[base])
+    );
+  } else {
+    return sortedNums[base];
+  }
+}
+
+// Simple Pearson r on raw arrays (0/1 right vs ms)
+function pearsonR_num(xs, ys) {
+  const n = Math.min(xs.length, ys.length);
+  if (n < 3) return null;
+  let sx = 0,
+    sy = 0,
+    sxx = 0,
+    syy = 0,
+    sxy = 0,
+    k = 0;
+  for (let i = 0; i < n; i++) {
+    const x = xs[i],
+      y = ys[i];
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    sx += x;
+    sy += y;
+    sxx += x * x;
+    syy += y * y;
+    sxy += x * y;
+    k++;
+  }
+  if (k < 3) return null;
+  const cov = sxy - (sx * sy) / k;
+  const vx = sxx - (sx * sx) / k;
+  const vy = syy - (sy * sy) / k;
+  const denom = Math.sqrt(vx * vy);
+  return denom ? cov / denom : null;
+}
+
+function computeHoldReport(
+  trials,
+  {
+    holdField = 'hold_duration_ms',
+    rightField = 'primary_is_right',
+  } = {}
+) {
+  const rows = [];
+  for (const t of trials || []) {
+    const ms = Number(t?.[holdField]);
+    const right = Number(t?.[rightField]) === 1 ? 1 : 0;
+    if (Number.isFinite(ms) && (right === 0 || right === 1)) {
+      rows.push({ ms, right });
+    }
+  }
+  if (rows.length < 20) return null; // need some data
+
+  // Quartile cutoffs
+  const holdsSorted = rows.map((r) => r.ms).sort((a, b) => a - b);
+  const q1 = quantile(holdsSorted, 0.25);
+  const q2 = quantile(holdsSorted, 0.5);
+  const q3 = quantile(holdsSorted, 0.75);
+
+  const bins = [
+    { label: 'Q1 (fastest)', hits: 0, n: 0, pred: (ms) => ms <= q1 },
+    { label: 'Q2', hits: 0, n: 0, pred: (ms) => ms > q1 && ms <= q2 },
+    { label: 'Q3', hits: 0, n: 0, pred: (ms) => ms > q2 && ms <= q3 },
+    { label: 'Q4 (slowest)', hits: 0, n: 0, pred: (ms) => ms > q3 },
+  ];
+  for (const r of rows) {
+    for (const b of bins)
+      if (b.pred(r.ms)) {
+        b.n++;
+        b.hits += r.right;
+        break;
+      }
+  }
+  const quartiles = bins.map((b) => ({
+    label: b.label,
+    n: b.n,
+    pct: b.n ? (100 * b.hits) / b.n : null,
+  }));
+
+  // Hi vs Lo (top vs bottom quartile), 2-prop test
+  const hi = bins[3]; // Q4
+  const lo = bins[0]; // Q1
+  const pHiLo = twoSidedP_fromCounts(hi.hits, hi.n, lo.hits, lo.n);
+
+  // Pearson r between ms and right (0/1)
+  const xs = rows.map((r) => r.ms);
+  const ys = rows.map((r) => r.right);
+  const r = pearsonR_num(xs, ys);
+
+  return {
+    quartiles,
+    hiVsLo: {
+      kHi: hi.hits,
+      nHi: hi.n,
+      kLo: lo.hits,
+      nLo: lo.n,
+      p: pHiLo,
+    },
+    pearson: r,
+    nTrials: rows.length,
+    qCutoffsMs: { q1, q2, q3 },
+  };
+}
 
 /* ==== NEW: early-exit helpers ==== */
 const getBaselineTrials = (doc) =>
@@ -677,6 +890,11 @@ export default function QAExport() {
     completers: 0,
     nonCompleters: 0,
     exitBreakdown: [],
+  });
+  // Hold-duration analyses (QRNG): { primary, ghost }
+  const [holdQRNG, setHoldQRNG] = useState({
+    primary: null,
+    ghost: null,
   });
 
   // 🔐 Sign in anonymously
@@ -1036,9 +1254,70 @@ export default function QAExport() {
     setReportQRNG(rQRNG);
     setReportQRNGPrimed(rPrimed);
     setReportQRNGUnprimed(rUnprimed);
-
     setAbPvals(primingABPvals(rPrimed, rUnprimed));
     setAbPvalsPRNG(primingABPvals(rPRNGPrimed, rPRNGUnprimed));
+
+    // --- Correlation: mean hold (ms) vs % RIGHT per session (QRNG) ---
+    try {
+      const rowsForCorr = [];
+      for (const d of all) {
+        const trials = (d?.spoon_love?.trialResults || []).filter(
+          Boolean
+        );
+        if (!trials.length) continue;
+
+        const rights = trials.reduce(
+          (a, t) => a + (Number(t?.primary_is_right) === 1 ? 1 : 0),
+          0
+        );
+        const pctRight = (100 * rights) / trials.length;
+
+        const holds = trials
+          .map((t) => Number(t?.hold_duration_ms))
+          .filter(Number.isFinite);
+
+        if (!holds.length) continue;
+        const meanHold =
+          holds.reduce((a, b) => a + b, 0) / holds.length;
+
+        rowsForCorr.push({ meanHold, pctRight });
+      }
+      const xs = rowsForCorr.map((r) => r.meanHold);
+      const ys = rowsForCorr.map((r) => r.pctRight);
+      const rHoldVsScore = pearsonR(xs, ys);
+
+      // Keep it in qaDebug and log it
+      setQaDebug((prev) => ({ ...(prev || {}), rHoldVsScore }));
+      if (rHoldVsScore != null) {
+        console.log(
+          '[QA] Corr(mean hold ms, %RIGHT) =',
+          rHoldVsScore.toFixed(3)
+        );
+      }
+    } catch (e) {
+      console.warn('Hold-vs-score correlation failed:', e);
+    }
+
+    // --- NEW: trial-level hold-duration vs accuracy (QRNG) ---
+    try {
+      const allQRNGTrials = all
+        .flatMap((d) => d?.spoon_love?.trialResults || [])
+        .filter(Boolean);
+
+      const primaryHold = computeHoldReport(allQRNGTrials, {
+        holdField: 'hold_duration_ms',
+        rightField: 'primary_is_right',
+      });
+      const ghostHold = computeHoldReport(allQRNGTrials, {
+        holdField: 'hold_duration_ms',
+        rightField: 'ghost_is_right',
+      });
+
+      setHoldQRNG({ primary: primaryHold, ghost: ghostHold });
+    } catch (e) {
+      console.warn('Hold report build failed:', e);
+      setHoldQRNG({ primary: null, ghost: null });
+    }
   };
 
   const downloadJSON = () => {
@@ -1171,6 +1450,20 @@ export default function QAExport() {
           marginBottom: 8,
         }}
       >
+        {qaDebug?.rHoldVsScore != null && (
+          <div
+            style={{
+              margin: '8px 0',
+              padding: '8px 12px',
+              border: '1px solid #ddd',
+              borderRadius: 8,
+            }}
+          >
+            <strong>Corr(mean hold ms, % RIGHT, QRNG):</strong>{' '}
+            {qaDebug.rHoldVsScore.toFixed(3)}
+          </div>
+        )}
+
         <div
           style={{
             padding: '8px 12px',
@@ -1314,7 +1607,12 @@ export default function QAExport() {
             label="n10 vs n01 symmetry (Subject↔︎Demon)"
             p={report.tests.symmetryN10vsN01.p}
           />
-
+          {qaDebug?.rHoldVsScore != null && (
+            <PBadge
+              label="Corr(mean hold ms, %RIGHT) — QRNG"
+              p={Math.abs(qaDebug.rHoldVsScore)}
+            />
+          )}
           {extraBadges}
         </div>
 
@@ -2049,8 +2347,8 @@ export default function QAExport() {
               Sign in with Email
             </button>
             <small style={{ marginLeft: 8, color: '#666' }}>
-              (Use your email+password so QA reads work via email
-              allowlist.)
+              (Use your email+password or UI so QA reads work via
+              email allowlist.)
             </small>
           </div>
 
@@ -2440,6 +2738,30 @@ export default function QAExport() {
                   </tbody>
                 </table>
               </div>
+            </div>
+
+            {/* NEW: Hold-duration vs accuracy */}
+            <div style={{ marginTop: 16 }}>
+              <h4 style={{ margin: '6px 0' }}>
+                Hold duration vs accuracy
+              </h4>
+              {!holdQRNG?.primary && !holdQRNG?.ghost ? (
+                <p style={{ color: '#666' }}>
+                  Not enough hold-duration data to compute quartiles
+                  (need ≥20 trials).
+                </p>
+              ) : (
+                <>
+                  <HoldQuartileChart
+                    title="Subject accuracy by hold-duration quartile"
+                    holdReport={holdQRNG?.primary}
+                  />
+                  <HoldQuartileChart
+                    title="Demon accuracy by hold-duration quartile"
+                    holdReport={holdQRNG?.ghost}
+                  />
+                </>
+              )}
             </div>
           </details>
         }
