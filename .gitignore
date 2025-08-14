@@ -1,4 +1,3 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 # Node
 node_modules/
@@ -38,8 +37,3 @@ experiments/*/dist/
 experiments/*/build/
 .env
 
-# ignore local-only root files
-/package.json
-/package-lock.json
-/check-env.js
-/netlify.toml
