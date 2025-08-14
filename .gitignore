@@ -37,3 +37,9 @@ experiments/*/node_modules/
 experiments/*/dist/
 experiments/*/build/
 .env
+
+# ignore local-only root files
+/package.json
+/package-lock.json
+/check-env.js
+/netlify.toml
