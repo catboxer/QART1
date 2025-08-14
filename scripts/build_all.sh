@@ -61,7 +61,7 @@ for exp_path in "${EXP_DIR}"/*; do
     if grep -q '"build"' "${exp_path}/package.json"; then
       # prefer ci when lockfile exists; otherwise install
 PKG_CMD="npm install --no-audit --no-fund"
-[ -f "${exp_path}/package-lock.json" ] && PKG_CMD="npm ci --no-audit --no-fund"
+[ -f "${exp_path}/package-lock.json" ] && PKG_CMD="npm install --no-audit --no-fund"
 
 echo "Running ${PKG_CMD} && npm run build in ${exp_name}"
 ( cd "${exp_path}" && ${PKG_CMD} && npm run build )
