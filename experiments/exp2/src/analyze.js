@@ -20,6 +20,24 @@ const sd = (xs) => {
     xs.reduce((s, x) => s + (x - m) ** 2, 0) / (xs.length - 1);
   return Math.sqrt(v);
 };
+// Given detailsDoc (details/trialDetails) return one point if present
+export function extractBoostPoint(detailsDoc) {
+  const rows = detailsDoc?.full_stack_trials || [];
+  if (!rows.length) return null;
+
+  const last = rows[rows.length - 1];
+  if (!last || !last.block_summary) return null;
+
+  const base = Number(last.fs_base_percent);
+  const boost = Number(last.fs_boost_amount);
+  const displayed = Number(last.fs_displayed_percent);
+  const boosted = !!last.fs_boosted;
+
+  if (!Number.isFinite(base) || !Number.isFinite(boost)) return null;
+
+  return { base, boost, displayed, boosted };
+}
+
 // Normal CDF approximation (for two-sided p-values)
 function normalCdf(z) {
   return 0.5 * (1 + Math.erf(z / Math.SQRT2));

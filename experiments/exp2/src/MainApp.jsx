@@ -227,8 +227,23 @@ function MainApp() {
       cancelled = true;
     };
   }, []);
-
   const hasDemographics = !!(profile && profile.demographics);
+  // ---- stop green button from activating context menu on long presses
+  useEffect(() => {
+    const root = document.getElementById('main');
+    if (!root) return;
+    const MATCH = '.icon-options.large-buttons .icon-button';
+    const onContextMenu = (e) => {
+      if (e.target.closest?.(MATCH)) e.preventDefault();
+    };
+    root.addEventListener('contextmenu', onContextMenu, {
+      capture: true,
+    });
+    return () =>
+      root.removeEventListener('contextmenu', onContextMenu, {
+        capture: true,
+      });
+  }, []);
 
   // ----- session / version -----
   const [sessionId] = useState(() => {
@@ -274,6 +289,7 @@ function MainApp() {
   // ----- consent gate -----
   const [step, setStep] = useState('consent');
   const [consent18, setConsent18] = useState(false);
+  const [isBusy, setIsBusy] = useState(false);
   const [consentAgree, setConsentAgree] = useState(false);
   const CONSENT_VERSION = config.CONSENT_VERSION;
   const DEBRIEF_URL = config.DEBRIEF_URL;
@@ -310,17 +326,19 @@ function MainApp() {
   const trialsPerBlock = config.trialsPerBlock;
   const currentBlock = blockOrder[currentBlockIndex].id;
   const currentBlockObj = blockOrder[currentBlockIndex];
-  const totalTrialsPerBlock = trialsPerBlock[currentBlock];
+  const totalTrialsPerBlock = Number(trialsPerBlock[currentBlock]);
 
   // prime assignment (display boost)
   const [isHighPrime] = useState(() => Math.random() < 0.5);
-  const BOOST_MIN = config.BOOST_MIN;
-  const BOOST_MAX = config.BOOST_MAX;
-  const FLOOR = config.FLOOR;
+  const BOOST_MIN = Number(config.BOOST_MIN);
+  const BOOST_MAX = Number(config.BOOST_MAX);
+  const FLOOR = Number(config.FLOOR);
 
   // Confetti thresholds
-  const CONFETTI_THRESHOLD_BASELINE = config.confetti.baseline;
-  const CONFETTI_THRESHOLD_QUANTUM = config.confetti.quantum;
+  const CONFETTI_THRESHOLD_BASELINE = Number(
+    config.confetti.baseline
+  );
+  const CONFETTI_THRESHOLD_QUANTUM = Number(config.confetti.quantum);
 
   // --- Feedback switches per block (live score unblocked for both) ---
   const FB = {
@@ -535,8 +553,10 @@ function MainApp() {
   const pressStartRef = useRef(null);
   const handlePressStart = (e) => {
     try {
-      if (e && e.pointerType)
+      // Only capture for mouse/pen, never for touch.
+      if (e && e.pointerType && e.pointerType !== 'touch') {
         e.currentTarget.setPointerCapture?.(e.pointerId);
+      }
     } catch {}
     pressStartRef.current = performance.now();
   };
@@ -722,7 +742,8 @@ function MainApp() {
       setTrialResults(newTrials);
 
       // star feedback (only for quantum hits)
-      if (block.id === 'spoon_love' && matched) {
+      // star feedback, if enabled for this block
+      if (FB[block.id]?.STAR && matched) {
         if (starTimerRef.current) clearTimeout(starTimerRef.current);
         setStarBurstId((k) => k + 1);
         setShowStar(true);
@@ -746,17 +767,44 @@ function MainApp() {
         const realPercent = (userCorrect / totalTrialsPerBlock) * 100;
 
         if (block.id === 'full_stack') {
-          let displayed = realPercent;
+          const baseClamped = Math.min(
+            Math.max(realPercent, FLOOR),
+            100
+          );
+
+          let displayed = baseClamped;
+          let boost = 0;
+
           if (isHighPrime) {
-            const boost = randomInt(BOOST_MIN, BOOST_MAX);
-            displayed = Math.min(
-              Math.max(realPercent + boost, FLOOR),
-              100
-            );
+            const min = Number(BOOST_MIN);
+            const max = Number(BOOST_MAX);
+            const floor = Number(FLOOR);
+            if (
+              [min, max, floor].every(Number.isFinite) &&
+              max >= min
+            ) {
+              boost = randomInt(min, max);
+              displayed = Math.min(
+                Math.max(realPercent + boost, floor),
+                100
+              );
+            } else {
+              displayed = baseClamped; // bad config → no boost
+              boost = 0;
+            }
           }
+
           if (displayed > CONFETTI_THRESHOLD_BASELINE)
             fireConfettiSafely();
-          setFullStackStats({ userPercent: displayed.toFixed(1) });
+
+          // Store for export (participants never see these fields)
+          setFullStackStats({
+            userPercent: displayed.toFixed(1), // shown to subject
+            basePercent: baseClamped.toFixed(1), // unboosted, after floor/100 clamp
+            boostAmount: boost, // integer we added
+            boosted: !!(isHighPrime && boost !== 0),
+          });
+
           setStep('fullstack-results');
         } else {
           if (realPercent > CONFETTI_THRESHOLD_QUANTUM)
@@ -936,6 +984,12 @@ function MainApp() {
         primed: isHighPrime,
         accuracy_real: fsRealPct,
         accuracy_displayed: fsDisplayedPct,
+        accuracy_base:
+          fullStackStats?.basePercent != null
+            ? Number(fullStackStats.basePercent)
+            : fsRealPct, // fallback = real
+        boost_amount: Number(fullStackStats?.boostAmount ?? 0),
+        boosted: !!fullStackStats?.boosted,
         percent_ghost_right: fsGhostPct,
         delta_vs_ghost: fsDeltaPct,
         summary: {
@@ -978,7 +1032,7 @@ function MainApp() {
     };
 
     // -------- minimize each trial row --------
-    const fsTrialsMin = fsTrials.map((r) => {
+    const fsTrialsMin = fsTrials.map((r, idx, arr) => {
       const primary =
         typeof r.primary_is_right === 'number'
           ? r.primary_is_right
@@ -989,11 +1043,55 @@ function MainApp() {
           : r.matched === 1
           ? 1
           : 0;
-      return toMinimalTrial({
+
+      const baseRow = toMinimalTrial({
         ...r,
         primary_is_right: primary,
-        ghost_is_right: r.ghost_is_right ?? null,
+        ghost_is_right:
+          r.ghost_is_right != null ? r.ghost_is_right : null,
       });
+
+      // Enrich ONLY the last trial of the baseline block with block-level boost info
+      const isLastFullStackTrial = idx === arr.length - 1;
+      if (!isLastFullStackTrial) {
+        return baseRow;
+      }
+
+      const basePercent =
+        fullStackStats && fullStackStats.basePercent != null
+          ? Number(fullStackStats.basePercent)
+          : fsRealPct != null
+          ? fsRealPct
+          : null;
+
+      const displayedPercent =
+        fullStackStats && fullStackStats.userPercent != null
+          ? Number(fullStackStats.userPercent)
+          : fsDisplayedPct != null
+          ? fsDisplayedPct
+          : null;
+
+      const boostAmount =
+        fullStackStats && fullStackStats.boostAmount != null
+          ? Number(fullStackStats.boostAmount)
+          : 0;
+
+      const boostedFlag = !!(
+        fullStackStats && fullStackStats.boosted
+      );
+
+      return {
+        ...baseRow,
+
+        // Make it easy to find later
+        block_summary: 1,
+
+        // Store the boost analytics per your current run
+        fs_base_percent: basePercent,
+        fs_displayed_percent: displayedPercent,
+        fs_boost_amount: boostAmount,
+        fs_boosted: boostedFlag,
+      };
     });
 
     const slTrialsMin = slTrials.map(toMinimalTrial);
@@ -1163,8 +1261,7 @@ function MainApp() {
           </label>
 
           {(() => {
-            const canContinue =
-              consent18 && consentAgree && profile !== undefined;
+            const canContinue = consent18 && consentAgree;
 
             return (
               <>
@@ -1177,33 +1274,50 @@ function MainApp() {
                       marginTop: 8,
                     }}
                   >
-                    {profile === undefined
-                      ? 'Loading your profile…'
-                      : 'Check both boxes to continue.'}
+                    {'Check both boxes to continue.'}
                   </p>
                 ) : null}
 
                 <button
                   className={`primary-btn ${
-                    !canContinue ? 'is-disabled' : ''
+                    !canContinue || isBusy ? 'is-disabled' : ''
                   }`}
-                  disabled={!canContinue}
-                  aria-disabled={!canContinue}
-                  onClick={() => {
-                    // profile is loaded because the button is disabled until then
-                    if (
-                      profile?.demographics &&
-                      profile?.demographics_version === 'v1'
-                    ) {
-                      // returning UID with submitted pre → skip pre page
-                      startTrials(0);
-                    } else {
-                      // first run or abandoned pre → ask pre again
+                  disabled={!canContinue || isBusy}
+                  aria-disabled={!canContinue || isBusy}
+                  onClick={async () => {
+                    setIsBusy(true);
+                    try {
+                      // Ensure we have a user + profile; fetch on demand if missing.
+                      let p = profile;
+                      if (p === undefined) {
+                        const user = await ensureSignedIn();
+                        const ref = doc(db, 'participants', user.uid);
+                        const snap = await getDoc(ref);
+                        p = snap.exists()
+                          ? { id: snap.id, ...snap.data() }
+                          : null;
+                      }
+
+                      if (
+                        p?.demographics &&
+                        p?.demographics_version === 'v1'
+                      ) {
+                        // Returning participant → go straight to trials
+                        startTrials(0);
+                      } else {
+                        // First-time or incomplete pre → show pre-questions
+                        setStep('pre');
+                      }
+                    } catch (e) {
+                      console.error('Consent continue failed', e);
+                      // Fail-safe: allow participation by sending to pre
                       setStep('pre');
+                    } finally {
+                      setIsBusy(false);
                     }
                   }}
                 >
-                  I Agree, Continue
+                  {isBusy ? 'One moment…' : 'I Agree, Continue'}
                 </button>
               </>
             );
@@ -1406,7 +1520,7 @@ function MainApp() {
                   aria-disabled={!preComplete}
                   onClick={onStartBaseline}
                 >
-                  Start Baseline Trials
+                  Read Instructions
                 </button>
               </>
             );
@@ -1557,9 +1671,7 @@ function MainApp() {
 
           <div className="trial-ui">
             <div className="top-feedback-slot">
-              {FB[currentBlock].STAR &&
-              currentBlock === 'spoon_love' &&
-              showStar ? (
+              {FB[currentBlock].STAR && showStar ? (
                 <div
                   key={starBurstId}
                   className="star-burst"
@@ -1740,13 +1852,12 @@ function MainApp() {
           <h2>Quantum Block Results</h2>
           <p>
             <strong>Your Score:</strong> {spoonLoveStats.userPercent}%
-            or hits.
           </p>
+          <p>{ratingMessage(spoonLoveStats.userPercent)}</p>
           <hr style={{ margin: '1.5rem 0' }} />
 
           <FoldedSelfCheck />
 
-          <p>{ratingMessage(spoonLoveStats.userPercent)}</p>
           <div
             dangerouslySetInnerHTML={{
               __html: (

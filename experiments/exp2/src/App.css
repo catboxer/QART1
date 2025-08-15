@@ -41,8 +41,10 @@
 }
 html,
 body {
-  height: 100%;
+  min-height: 100%;
+  height: auto;
 }
+
 body {
   margin: 0;
   padding: 2rem;
@@ -286,14 +288,6 @@ input[type='range']::-webkit-slider-thumb {
   justify-content: center;
   margin-top: 1rem;
 }
-/* =========================
-   RIGHT Button + Trial UI
-   ========================= */
-.icon-options-wrapper {
-  display: flex;
-  justify-content: center;
-  margin-top: 1rem;
-}
 .icon-options {
   display: flex;
   justify-content: center;
@@ -321,6 +315,12 @@ input[type='range']::-webkit-slider-thumb {
   position: relative;
   overflow: hidden;
   transition: background-color 0.2s ease-in; /* smooth color shift only */
+
+  /* Long-press / callout hardening (non-visual) */
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: pan-y;
 }
 @media (hover: hover) {
   .icon-button:hover {
@@ -331,12 +331,12 @@ input[type='range']::-webkit-slider-thumb {
   transform: scale(0.97);
 }
 
-/* Prevent disabled from going gray (lock to our colors) */
+/* Prevent disabled from going gray (lock to your colors) */
 .icon-button:disabled {
-  background-color: green; /* match normal */
+  background-color: green; /* keep your original intent */
   color: #fff;
   opacity: 1;
-  filter: none; /* prevent gray */
+  filter: none;
   cursor: not-allowed;
 }
 
@@ -345,7 +345,7 @@ input[type='range']::-webkit-slider-thumb {
   width: 18rem;
   font-size: 2.5rem;
   background-color: #4cd964;
-  color: #000; /* keep high contrast */
+  color: #000; /* high contrast as you had */
 }
 
 /* Hide/show text while disabled via your logic */
@@ -353,16 +353,13 @@ input[type='range']::-webkit-slider-thumb {
   color: inherit; /* keep label visible */
   pointer-events: none;
 }
-
 .icon-options.text-visible .icon-button {
-  /* no color override; keep button's own color */
+  /* no override */
 }
 
 /* =========================
-   Fetching state — lighter green + text glow only
+   Fetching state — keep your original green shift
    ========================= */
-
-/* Text glow (no movement) */
 @keyframes text-glow {
   from {
     text-shadow: 0 0 4px rgba(255, 255, 255, 0.5);
@@ -372,28 +369,18 @@ input[type='range']::-webkit-slider-thumb {
   }
 }
 
-/* Ensure fetching style wins even while disabled */
+/* Keep your "green" fetching color + glow */
 .icon-options.large-buttons .icon-button.is-fetching,
 .icon-options.large-buttons .icon-button.is-fetching:disabled {
-  background-color: green; /* lighter green */
+  background-color: green; /* as in your file */
   color: #fff;
 }
-
-/* Keep same color on hover while fetching */
-.icon-options.large-buttons .icon-button.is-fetching:hover,
-.icon-options.large-buttons .icon-button.is-fetching:disabled:hover {
-  background-color: green;
-}
-
-/* Glow the label only */
 .icon-options.large-buttons .icon-button.is-fetching .btn-label,
 .icon-options.large-buttons
   .icon-button.is-fetching:disabled
   .btn-label {
   animation: text-glow 1s ease-in-out infinite alternate;
 }
-
-/* Reduced-motion: keep readable static glow */
 @media (prefers-reduced-motion: reduce) {
   .icon-options.large-buttons .icon-button.is-fetching .btn-label,
   .icon-options.large-buttons
@@ -589,12 +576,13 @@ input[type='range']::-webkit-slider-thumb {
   }
   .icon-button,
   .icon-options.large-buttons .icon-button {
-    width: 85vw;
+    width: 55vw;
     max-width: none;
     font-size: 1.5rem;
     padding: 0.9rem;
   }
 }
+
 /* Soft fade for the loading line (no looping animation) */
 .status-line {
   opacity: 0;
@@ -610,6 +598,8 @@ input[type='range']::-webkit-slider-thumb {
     transition: none;
   }
 }
+
+/* Expander */
 .expander {
   border: 1px solid #ddd;
   border-radius: 6px;
@@ -627,6 +617,7 @@ input[type='range']::-webkit-slider-thumb {
 .expander > summary::-webkit-details-marker {
   display: none;
 }
+
 /* Left-align list + "why" block inside .instructions, even if parent is centered */
 .instructions ul,
 .instructions .why-this-matters,
@@ -637,12 +628,53 @@ input[type='range']::-webkit-slider-thumb {
 /* Shrink the "why" block text reliably */
 .instructions .why-this-matters,
 .instructions .why-this-matters * {
-  font-size: 0.9rem !important; /* root-relative; consistent */
+  font-size: 0.9rem !important;
   line-height: 1.45;
 }
 
 /* Optional: tidy spacing and width */
 .instructions .why-this-matters {
   display: inline-block;
-  margin: 1em auto 0 auto; /* centers the block, left-aligns text */
+  margin: 1em auto 0 auto;
+}
+
+/* ==== Mobile polish fixes ==== */
+@media (max-width: 600px) {
+  /* 1) Shrink space between instructions and the BIG green trial button */
+  .top-feedback-slot {
+    height: 45px;
+  } /* was 48px */
+  .bottom-feedback-slot {
+    margin-top: 40px;
+  } /* was 96px */
+  .icon-options-wrapper {
+    margin-top: 0.5rem;
+  } /* was 1rem */
+
+  /* Tighten on the “breathe” instruction screens */
+  .breathe-step .instructions + button {
+    margin-top: 0.75rem;
+  } /* override global 2rem */
+
+  /* Prevent details/expanders from blowing off-screen */
+  .expander {
+    max-width: 100%;
+    overflow-x: auto;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+  }
+  .expander img,
+  .expander table {
+    max-width: 100%;
+  }
+
+  /* Give green continue buttons breathing room above the browser bottom/safe area */
+  .primary-btn {
+    margin-bottom: calc(env(safe-area-inset-bottom, 0px) + 20px);
+  }
+
+  /* Slightly reduce global button spacing on mobile */
+  button {
+    margin: 1rem auto 0.75rem;
+  } /* was 2rem auto 1rem */
 }
