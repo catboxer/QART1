@@ -44,6 +44,156 @@ function PBadge({ label, p }) {
     </div>
   );
 }
+function BoostScatter({
+  points,
+  width = 520,
+  height = 240,
+  title = 'PRNG — Boost vs Base%',
+}) {
+  if (!points || points.length === 0) return null;
+
+  // axes
+  const padL = 40,
+    padB = 30,
+    padR = 10,
+    padT = 20;
+  const plotW = width - padL - padR;
+  const plotH = height - padT - padB;
+
+  const xMin = 0,
+    xMax = 100; // base % always clamped 0–100
+  const yMin = Math.min(0, ...points.map((p) => p.boost));
+  const yMax = Math.max(0, ...points.map((p) => p.boost));
+  const xTo = (x) => padL + ((x - xMin) / (xMax - xMin)) * plotW;
+  const yTo = (y) =>
+    padT + (1 - (y - yMin) / (yMax - yMin || 1)) * plotH;
+
+  // simple grid ticks
+  const xTicks = [0, 20, 40, 60, 80, 100];
+  const yStep = Math.max(1, Math.ceil((yMax - yMin) / 6));
+  const yTicks = [];
+  for (let v = Math.floor(yMin); v <= Math.ceil(yMax); v += yStep)
+    yTicks.push(v);
+
+  return (
+    <div style={{ margin: '8px 0 16px' }}>
+      <h3 style={{ margin: '8px 0' }}>{title}</h3>
+      <svg
+        width={width}
+        height={height}
+        role="img"
+        aria-label={title}
+      >
+        {/* axes */}
+        <line
+          x1={padL}
+          y1={padT}
+          x2={padL}
+          y2={padT + plotH}
+          stroke="#ccc"
+        />
+        <line
+          x1={padL}
+          y1={padT + plotH}
+          x2={padL + plotW}
+          y2={padT + plotH}
+          stroke="#ccc"
+        />
+
+        {/* grid + labels */}
+        {xTicks.map((t) => (
+          <g key={'x' + t}>
+            <line
+              x1={xTo(t)}
+              x2={xTo(t)}
+              y1={padT}
+              y2={padT + plotH}
+              stroke="#f1f1f1"
+            />
+            <text
+              x={xTo(t)}
+              y={padT + plotH + 16}
+              fontSize="10"
+              textAnchor="middle"
+            >
+              {t}
+            </text>
+          </g>
+        ))}
+        {yTicks.map((t) => (
+          <g key={'y' + t}>
+            <line
+              x1={padL}
+              x2={padL + plotW}
+              y1={yTo(t)}
+              y2={yTo(t)}
+              stroke="#f1f1f1"
+            />
+            <text
+              x={padL - 6}
+              y={yTo(t) + 3}
+              fontSize="10"
+              textAnchor="end"
+            >
+              {t}
+            </text>
+          </g>
+        ))}
+
+        {/* axis titles */}
+        <text
+          x={padL + plotW / 2}
+          y={height - 4}
+          fontSize="11"
+          textAnchor="middle"
+        >
+          Base (unboosted) %
+        </text>
+        <text
+          transform={`translate(12, ${padT + plotH / 2}) rotate(-90)`}
+          fontSize="11"
+          textAnchor="middle"
+        >
+          Boost amount (points)
+        </text>
+
+        {/* zero line for Y=0 */}
+        {yMin < 0 && yMax > 0 && (
+          <line
+            x1={padL}
+            x2={padL + plotW}
+            y1={yTo(0)}
+            y2={yTo(0)}
+            stroke="#ddd"
+          />
+        )}
+
+        {/* points */}
+        {points.map((p, i) => (
+          <circle
+            key={i}
+            cx={xTo(p.base)}
+            cy={yTo(p.boost)}
+            r={3}
+            // color: boosted vs not (keeps B/W-ish theme)
+            fill={p.boosted ? '#333' : '#aaa'}
+            opacity="0.9"
+          >
+            <title>{`base ${p.base.toFixed(1)} → +${
+              p.boost
+            } = ${p.displayed.toFixed(1)}${
+              p.boosted ? ' (boosted)' : ''
+            }`}</title>
+          </circle>
+        ))}
+      </svg>
+      <div style={{ fontSize: 12, color: '#666', marginTop: 6 }}>
+        Each dot = one session’s baseline block (last trial row). Dark
+        = boosted, light = not boosted.
+      </div>
+    </div>
+  );
+}
 
 function BarChart({ data, width = 520, height = 180, title = '' }) {
   const max = 100;
@@ -871,7 +1021,7 @@ export default function QAExport() {
   const [reportQRNGUnprimed, setReportQRNGUnprimed] = useState(null); // unprimed
   const [abPvals, setAbPvals] = useState(null);
   const [abPvalsPRNG, setAbPvalsPRNG] = useState(null);
-
+  const [boostPoints, setBoostPoints] = useState([]);
   const [error, setError] = useState('');
   const [authed, setAuthed] = useState(false);
   const [uid, setUid] = useState('');
@@ -1316,6 +1466,37 @@ export default function QAExport() {
     } catch (e) {
       console.warn('Hold report build failed:', e);
       setHoldQRNG({ primary: null, ghost: null });
+    }
+
+    // --- Build PRNG boost points (one per session: last baseline trial) ---
+    try {
+      const pts = [];
+      for (const d of all) {
+        // prefer hydrated trials under full_stack.trialResults; fall back to details payload if present
+        const fs = (
+          d?.full_stack?.trialResults ||
+          d?.details?.full_stack_trials ||
+          []
+        ).filter(Boolean);
+        if (!fs.length) continue;
+
+        const last = fs[fs.length - 1];
+        // Only consider rows marked as the block summary
+        if (!last || !last.block_summary) continue;
+
+        const base = Number(last.fs_base_percent);
+        const boost = Number(last.fs_boost_amount);
+        const displayed = Number(last.fs_displayed_percent);
+        const boosted = !!last.fs_boosted;
+
+        if (Number.isFinite(base) && Number.isFinite(boost)) {
+          pts.push({ base, boost, displayed, boosted });
+        }
+      }
+      setBoostPoints(pts);
+    } catch (e) {
+      console.warn('Boost points build failed:', e);
+      setBoostPoints([]);
     }
   };
 
@@ -2496,6 +2677,16 @@ export default function QAExport() {
           ) : null
         }
       />
+      {/* PRNG — Boost vs Base scatter */}
+      {boostPoints && boostPoints.length > 0 ? (
+        <BoostScatter points={boostPoints} />
+      ) : (
+        <p style={{ color: '#666' }}>
+          (No boost analytics found yet — run baseline blocks that
+          save fs_base_percent/fs_boost_amount.)
+        </p>
+      )}
+
       <Section
         title="PRNG — Full Stack (Not primed)"
         report={reportPRNGUnprimed}

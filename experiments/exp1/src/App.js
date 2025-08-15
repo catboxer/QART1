@@ -244,7 +244,7 @@ function App() {
     return (
       <div className="App">
         <main role="main">
-          <h1>Experiment #1</h1>
+          <h1>Sealed Envelope Experiment #1</h1>
         </main>
         {/* ——— Instructions block ——— */}
         <div

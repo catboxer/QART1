@@ -12,11 +12,10 @@ export const config = {
   },
 
   // Priming experiment parameters
-  priming: {
-    BOOST_MIN: 5,
-    BOOST_MAX: 15,
-    FLOOR: 60,
-  },
+
+  BOOST_MIN: 5,
+  BOOST_MAX: 15,
+  FLOOR: 60,
 
   // Confetti display thresholds (score must be > this value)
   confetti: {
