@@ -1217,7 +1217,7 @@ function MainApp() {
 
       {step === 'pre' && (
         <>
-          <h1>Experiment #2: Conscious Nudge of Random Outcomes</h1>
+          <h1>Experiment #2: Stacking The Decks</h1>
           <h2>Welcome!</h2>
           <p>
             We’re testing whether focused attention can gently shift a
