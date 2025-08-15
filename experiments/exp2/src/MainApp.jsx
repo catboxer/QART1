@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import './App.css';
+import FoldedSelfCheck from './FoldedSelfCheck';
 
 // ✅ Use the shared Firebase singletons + helper
 import { db, auth, ensureSignedIn } from './firebase';
@@ -23,6 +24,7 @@ import {
   buildIssueMailto,
 } from './questions';
 import confetti from 'canvas-confetti';
+import { config } from './config.js';
 
 // ---------- helpers ----------
 const randomInt = (min, max) =>
@@ -55,6 +57,24 @@ const fieldError = (q, responses) => {
     return null;
   }
   return !isAnswered(q, responses) ? 'Required' : null;
+};
+
+// Binomial stats at p=0.5 for N trials (rounded to whole hits)
+const binom50 = (N) => {
+  const mu = N / 2;
+  const sd = Math.sqrt(N) / 2; // = sqrt(N*0.25)
+  const r = (x) => Math.round(x);
+  const sdPct = 50 / Math.sqrt(N); // sd in percentage points
+  return {
+    N,
+    muHits: r(mu),
+    sdHits: r(sd),
+    oneHi: r(mu + sd),
+    oneLo: r(mu - sd),
+    twoHi: r(mu + 2 * sd),
+    twoLo: r(mu - 2 * sd),
+    sdPct, // ≈ 1σ as % points (optional to show)
+  };
 };
 const allAnswered = (questions, responses) =>
   questions.every((q) => isAnswered(q, responses));
@@ -230,13 +250,33 @@ function MainApp() {
   });
   const appVersion = process.env.REACT_APP_COMMIT ?? 'dev';
 
+  // ---- ROBOT ----
+
+  // ----- timing arm + robot flags (from URL) -----
+  // After: const appVersion = process.env.REACT_APP_COMMIT ?? 'dev';
+
+  const parseParams = () => {
+    const search = window.location.search || '';
+    const hash = window.location.hash || '';
+    // support params in search (?arm=...) and after a hash (e.g., #qa?arm=open&robot=1)
+    const qs = new URLSearchParams(
+      search + (hash.includes('?') ? '&' + hash.split('?')[1] : '')
+    );
+    const arm = (qs.get('arm') || '').toLowerCase();
+    const allowed = ['open', 'scramble', 'synced', 'blind'];
+    return {
+      timingArm: allowed.includes(arm) ? arm : 'open',
+      robotMode: qs.get('robot') === '1',
+    };
+  };
+  const { timingArm, robotMode } = useMemo(parseParams, []);
+
   // ----- consent gate -----
   const [step, setStep] = useState('consent');
   const [consent18, setConsent18] = useState(false);
   const [consentAgree, setConsentAgree] = useState(false);
-  const CONSENT_VERSION = 'v1-2025-08-07';
-  const DEBRIEF_URL =
-    'https://experiments.whatthequark.com/debriefs/experiment2';
+  const CONSENT_VERSION = config.CONSENT_VERSION;
+  const DEBRIEF_URL = config.DEBRIEF_URL;
 
   // ----- experiment state -----
   const [preResponses, setPreResponses] = useState({});
@@ -267,20 +307,20 @@ function MainApp() {
     { ...fullStackBlock, id: 'full_stack', showFeedback: true },
     { ...spoonLoveBlock, id: 'spoon_love', showFeedback: true },
   ]);
-  const trialsPerBlock = { full_stack: 30, spoon_love: 100 };
+  const trialsPerBlock = config.trialsPerBlock;
   const currentBlock = blockOrder[currentBlockIndex].id;
   const currentBlockObj = blockOrder[currentBlockIndex];
   const totalTrialsPerBlock = trialsPerBlock[currentBlock];
 
   // prime assignment (display boost)
   const [isHighPrime] = useState(() => Math.random() < 0.5);
-  const BOOST_MIN = 5;
-  const BOOST_MAX = 15;
-  const FLOOR = 60;
+  const BOOST_MIN = config.BOOST_MIN;
+  const BOOST_MAX = config.BOOST_MAX;
+  const FLOOR = config.FLOOR;
 
   // Confetti thresholds
-  const CONFETTI_THRESHOLD_BASELINE = 56;
-  const CONFETTI_THRESHOLD_QUANTUM = 56;
+  const CONFETTI_THRESHOLD_BASELINE = config.confetti.baseline;
+  const CONFETTI_THRESHOLD_QUANTUM = config.confetti.quantum;
 
   // --- Feedback switches per block (live score unblocked for both) ---
   const FB = {
@@ -309,6 +349,11 @@ function MainApp() {
     const setter = setMap[bucket] || setPreResponses;
     setter((prev) => ({ ...prev, [id]: value }));
   };
+
+  const statsQuantum = useMemo(
+    () => binom50(trialsPerBlock.spoon_love),
+    [trialsPerBlock.spoon_love]
+  );
 
   const filteredPreQuestions = useMemo(
     () => (hasDemographics ? [] : preQuestions.filter(filterOutPII)),
@@ -520,6 +565,22 @@ function MainApp() {
 
     let rng = null;
 
+    // ---- timing arms ----
+    if (timingArm === 'scramble') {
+      // smear the press phase randomly (destroys phase advantage)
+      const MAX_MS = 16; // ~1 frame at 60 Hz
+      await new Promise((r) => setTimeout(r, Math.random() * MAX_MS));
+    } else if (timingArm === 'synced') {
+      // quantize sampling to the next 60 Hz tick (amplifies phase effects)
+      const T = 1000 / 60; // 16.67 ms
+      const now = performance.now();
+      const wait = T - (now % T);
+      await new Promise((r) => setTimeout(r, wait));
+    } else if (timingArm === 'blind') {
+      // placeholder: you’ll wire prequeue/commit–reveal later.
+      // For now, treat as 'open' so the app still runs if someone passes ?arm=blind.
+    }
+
     try {
       if (block.id === 'full_stack') {
         // PRNG: one call → two bytes
@@ -633,6 +694,8 @@ function MainApp() {
         app_version: appVersion,
         condition: isHighPrime ? 'primed' : 'control',
         block_type: block.id,
+        agent: robotMode ? 'robot' : 'human',
+        timing_arm: timingArm, // 'open' | 'blind' | 'synced' | 'scramble'
         trial_index: currentTrial + 1,
         press_time: press_start_ts,
         press_start_ts,
@@ -712,6 +775,32 @@ function MainApp() {
     }
   };
 
+  // ----- robot/autopilot: drives the same code path as humans -----
+  useEffect(() => {
+    if (!robotMode) return;
+    if (step !== 'trials') return;
+
+    let cancelled = false;
+    (async () => {
+      while (!cancelled && currentTrial < totalTrialsPerBlock) {
+        // Inter-press interval (Poisson-ish); tweak mean as you like
+        const waitMs = -Math.log(1 - Math.random()) * 900;
+        await new Promise((r) => setTimeout(r, waitMs));
+
+        // Simulated hold (human-ish)
+        const hold = 300 + Math.random() * 600; // 300–900 ms
+
+        // IMPORTANT: call your existing handler so logging/UI stay identical
+        await handleTrial(hold);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [robotMode, step, currentTrial, totalTrialsPerBlock]);
+
   // -------- minimize each trial row (only what QAExport needs) --------
   const toMinimalTrial = (r) => ({
     session_id: r.session_id,
@@ -721,6 +810,8 @@ function MainApp() {
     press_start_ts: r.press_start_ts ?? r.press_time ?? null,
     press_release_ts: r.press_release_ts ?? null,
     hold_duration_ms: r.hold_duration_ms ?? null,
+    timing_arm: r.timing_arm ?? null, // 'open' | 'scramble' | 'synced' | 'blind'
+    agent: r.agent ?? null, // 'robot' | 'human'
 
     // primary (subject) fields
     qrng_code: r.qrng_code, // 1=LEFT, 2=RIGHT
@@ -891,8 +982,8 @@ function MainApp() {
       const primary =
         typeof r.primary_is_right === 'number'
           ? r.primary_is_right
-          : r.rng_label
-          ? r.rng_label === 'right'
+          : r.qrng_label
+          ? r.qrng_label === 'right'
             ? 1
             : 0
           : r.matched === 1
@@ -1171,32 +1262,38 @@ function MainApp() {
           <details className="expander">
             <summary>How scoring works (tap to expand)</summary>
             <div>
-              <p>Over 100 trials:</p>
+              <p>Over {statsQuantum.N} trials:</p>
               <ul>
                 <li>
                   By pure chance, you’d expect about{' '}
-                  <strong>50 hits</strong> (50%).
+                  <strong>{statsQuantum.muHits} hits</strong> (50%).
                 </li>
                 <li>
                   The natural variation (“standard deviation”) is
-                  about <strong>5 hits</strong>.
+                  about <strong>{statsQuantum.sdHits} hits</strong>
+                  {` (~${statsQuantum.sdPct.toFixed(
+                    1
+                  )} percentage points).`}
                 </li>
                 <li>
-                  Scoring <strong>55 or more</strong> is above 1
-                  standard deviation — happens only about 16% of the
-                  time by luck alone.
+                  Scoring{' '}
+                  <strong>{statsQuantum.oneHi} or more</strong> is
+                  above 1 standard deviation — happens only about 16%
+                  of the time by luck alone.
                 </li>
                 <li>
-                  Scoring <strong>60 or more</strong> is about 2
-                  standard deviations above chance — unusual when the
-                  RNG is truly random.
+                  Scoring{' '}
+                  <strong>{statsQuantum.twoHi} or more</strong> is
+                  about 2 standard deviations above chance — unusual
+                  when the RNG is truly random.
                 </li>
                 <li>
-                  Scoring <strong>45 or fewer</strong> is also 1
-                  standard deviation away, and{' '}
-                  <strong>40 or fewer</strong> is 2 standard
-                  deviations — equally unusual, just in the other
-                  direction.
+                  Scoring{' '}
+                  <strong>{statsQuantum.oneLo} or fewer</strong> is
+                  also 1 standard deviation away, and{' '}
+                  <strong>{statsQuantum.twoLo} or fewer</strong> is 2
+                  standard deviations — equally unusual, just in the
+                  other direction.
                 </li>
                 <li>
                   Very low scores (like around 33%) are just as rare
@@ -1398,6 +1495,8 @@ function MainApp() {
       {step === 'breathe-fullstack' && (
         <div className="breathe-step">
           <div className="breathing-circle" aria-hidden="true" />
+          <hr style={{ margin: '1.5rem 0' }} />
+
           <div
             className="instructions"
             dangerouslySetInnerHTML={{
@@ -1641,51 +1740,13 @@ function MainApp() {
           <h2>Quantum Block Results</h2>
           <p>
             <strong>Your Score:</strong> {spoonLoveStats.userPercent}%
+            or hits.
           </p>
+          <hr style={{ margin: '1.5rem 0' }} />
+
+          <FoldedSelfCheck />
+
           <p>{ratingMessage(spoonLoveStats.userPercent)}</p>
-          <details className="expander">
-            <summary>How scoring works (tap to expand)</summary>
-            <div>
-              <p>Over 100 trials:</p>
-              <ul>
-                <li>
-                  By pure chance, you’d expect about{' '}
-                  <strong>50 hits</strong> (50%).
-                </li>
-                <li>
-                  The natural variation (“standard deviation”) is
-                  about <strong>5 hits</strong>.
-                </li>
-                <li>
-                  Scoring <strong>55 or more</strong> is above 1
-                  standard deviation — happens only about 16% of the
-                  time by luck alone.
-                </li>
-                <li>
-                  Scoring <strong>60 or more</strong> is about 2
-                  standard deviations above chance — unusual when the
-                  RNG is truly random.
-                </li>
-                <li>
-                  Scoring <strong>45 or fewer</strong> is also 1
-                  standard deviation away, and{' '}
-                  <strong>40 or fewer</strong> is 2 standard
-                  deviations — equally unusual, just in the other
-                  direction.
-                </li>
-                <li>
-                  Very low scores (like around 33%) are just as rare
-                  as very high scores (like around 67%) — both mean
-                  you got an unusual result, not that you “did badly.”
-                </li>
-              </ul>
-              <p>
-                In short: 50% is average, 55+ or 45− is better/worse
-                than chance, and 60+ or 40− is rare in either
-                direction.
-              </p>
-            </div>
-          </details>
           <div
             dangerouslySetInnerHTML={{
               __html: (
