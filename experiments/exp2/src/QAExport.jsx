@@ -1,4 +1,3 @@
-// src/QAExport.jsx
 import React, { useEffect, useState, useMemo } from 'react';
 import { db, auth, signInWithEmailPassword } from './firebase';
 import {
@@ -13,7 +12,7 @@ import {
   updateDoc,
 } from 'firebase/firestore';
 import { signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-
+import TimingArmsPanel from './TimingArmsPanel';
 /* ---------------- tiny chart helpers (no libs) ---------------- */
 function PBadge({ label, p }) {
   let tone = '#888';
@@ -1334,6 +1333,7 @@ export default function QAExport() {
     URL.revokeObjectURL(url);
   };
   // NEW: Download sessions INCLUDING subcollection trial arrays (details/trialDetails)
+  // NEW: Download sessions INCLUDING subcollection trial arrays (details/trialDetails)
   const downloadJSONWithTrials = async () => {
     try {
       setBusy(true);
@@ -1341,6 +1341,7 @@ export default function QAExport() {
       const complete = await hydrateTrialDetails(
         rows.map((r) => ({ ...r }))
       );
+
       const payload = complete.map((d) => ({
         id: d.id,
         ...d,
@@ -1355,6 +1356,7 @@ export default function QAExport() {
             d.spoon_love?.trialResults || d.spoon_love_trials || [],
         },
       }));
+
       const blob = new Blob([JSON.stringify(payload, null, 2)], {
         type: 'application/json',
       });
@@ -2346,17 +2348,17 @@ export default function QAExport() {
             <button onClick={handleEmailSignIn}>
               Sign in with Email
             </button>
-            <small style={{ marginLeft: 8, color: '#666' }}>
+            {/* <small style={{ marginLeft: 8, color: '#666' }}>
               (Use your email+password or UI so QA reads work via
               email allowlist.)
-            </small>
+            </small> */}
           </div>
 
-          {qaStatus.uids && (
+          {/* {qaStatus.uids && (
             <div>
               <small>Allowed UIDs: {qaStatus.uids.join(', ')}</small>
             </div>
-          )}
+          )} */}
 
           <div
             style={{
@@ -2766,6 +2768,30 @@ export default function QAExport() {
           </details>
         }
       />
+      {/* === Timing arms panel (QRNG) ===================================== */}
+      {(() => {
+        // Pull ALL QRNG trials from the loaded session rows.
+        // We look in the hydrated spoon_love.trialResults first (preferred),
+        // and fall back to details.spoon_love_trials if needed.
+        const qrngTrials = (rows || [])
+          .flatMap(
+            (d) =>
+              d?.spoon_love?.trialResults ||
+              d?.details?.spoon_love_trials ||
+              []
+          )
+          .filter(Boolean);
+
+        if (!qrngTrials.length) {
+          return (
+            <p style={{ color: '#666' }}>
+              (No QRNG trials found yet to analyze timing arms.)
+            </p>
+          );
+        }
+
+        return <TimingArmsPanel trials={qrngTrials} />;
+      })()}
 
       <Section
         title="QRNG — Spoon Love (Primed only)"

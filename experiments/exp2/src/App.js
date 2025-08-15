@@ -2,10 +2,10 @@
 import React from 'react';
 import QAExport from './QAExport';
 import MainApp from './MainApp';
-
+import { config } from './config.js';
 // This is just a convenience toggle in the URL hash.
 // It's not real security since it's shipped in the bundle.
-const QA_SECRET = 'YOU_JUST_NEVER_KNOW_EXP_2';
+const QA_SECRET = config.QA_SECRET;
 
 function parseHash(hashString) {
   const hash = hashString || '';
