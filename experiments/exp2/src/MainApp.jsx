@@ -332,7 +332,6 @@ function MainApp() {
   const [isHighPrime] = useState(() => Math.random() < 0.5);
   const BOOST_MIN = Number(config.BOOST_MIN);
   const BOOST_MAX = Number(config.BOOST_MAX);
-  const FLOOR = Number(config.FLOOR);
 
   // Confetti thresholds
   const CONFETTI_THRESHOLD_BASELINE = Number(
@@ -524,6 +523,18 @@ function MainApp() {
           onPointerDown={handlePressStart}
           onPointerUp={handlePressEnd}
           onPointerCancel={() => (pressStartRef.current = null)}
+          onKeyDown={(e) => {
+            if (e.key === ' ' || e.key === 'Enter') {
+              e.preventDefault();
+              handlePressStart(e);
+            }
+          }}
+          onKeyUp={(e) => {
+            if (e.key === ' ' || e.key === 'Enter') {
+              e.preventDefault();
+              handlePressEnd();
+            }
+          }}
           disabled={isLoading || buttonsDisabled}
         >
           <span className="btn-label">
@@ -767,42 +778,56 @@ function MainApp() {
         const realPercent = (userCorrect / totalTrialsPerBlock) * 100;
 
         if (block.id === 'full_stack') {
-          const baseClamped = Math.min(
-            Math.max(realPercent, FLOOR),
-            100
-          );
-
-          let displayed = baseClamped;
+          // CONTROL: show the true score; no floor/boost
+          const basePercent = realPercent;
+          let displayed = basePercent;
           let boost = 0;
 
+          // PRIMED: apply optional boost + floor
+          // primed: apply conditional boost + random floor (60–70)
           if (isHighPrime) {
-            const min = Number(BOOST_MIN);
-            const max = Number(BOOST_MAX);
-            const floor = Number(FLOOR);
-            if (
-              [min, max, floor].every(Number.isFinite) &&
-              max >= min
-            ) {
-              boost = randomInt(min, max);
+            const min = Number.isFinite(Number(BOOST_MIN))
+              ? Number(BOOST_MIN)
+              : 0;
+            const max = Number.isFinite(Number(BOOST_MAX))
+              ? Number(BOOST_MAX)
+              : 0;
+
+            // Random floor between 60 and 70 for the displayed score
+            const floorRand = randomInt(60, 70);
+
+            // Pick boost size based on performance:
+            // - below 60 → give max boost
+            // - 60 or above → give min boost
+            if (max >= min) {
+              boost = basePercent < 60 ? max : min;
               displayed = Math.min(
-                Math.max(realPercent + boost, floor),
+                Math.max(basePercent + boost, floorRand),
                 100
               );
             } else {
-              displayed = baseClamped; // bad config → no boost
-              boost = 0;
+              // If config is weird (max < min), just apply floor
+              displayed = Math.min(
+                Math.max(basePercent, floorRand),
+                100
+              );
             }
           }
 
-          if (displayed > CONFETTI_THRESHOLD_BASELINE)
+          // Use boosted display for primed baseline, real score otherwise
+          const confettiMetric = isHighPrime
+            ? displayed
+            : basePercent;
+          if (confettiMetric >= CONFETTI_THRESHOLD_BASELINE) {
             fireConfettiSafely();
+          }
 
-          // Store for export (participants never see these fields)
           setFullStackStats({
-            userPercent: displayed.toFixed(1), // shown to subject
-            basePercent: baseClamped.toFixed(1), // unboosted, after floor/100 clamp
-            boostAmount: boost, // integer we added
+            userPercent: displayed.toFixed(1),
+            basePercent: basePercent.toFixed(1),
+            boostAmount: boost,
             boosted: !!(isHighPrime && boost !== 0),
+            confettiMetric: confettiMetric.toFixed(1), // <- optional
           });
 
           setStep('fullstack-results');

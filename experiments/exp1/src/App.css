@@ -1,95 +1,251 @@
-/* === Global Styles === */
+/* =========================
+   Design Tokens
+   ========================= */
+:root {
+  --bg: #f5f7fa;
+  --text: #2b2b2b;
+  --heading: #222;
+  --muted: #666;
+
+  --primary: #28a745;
+  --primary-hover: #218838;
+
+  --danger: #e74c3c;
+
+  --border: #ccc;
+  --card: #fff;
+
+  --radius-lg: 12px;
+  --radius-md: 10px;
+  --radius-sm: 8px;
+
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.15);
+  --focus: #1976d2;
+
+  --missing-outline: #f7b3b3;
+  --missing-bg: #fff6f6;
+  --missing-text: #b00020;
+  --hint-text: #a40000;
+
+  --anim-fast: 0.2s ease;
+  --anim-med: 0.25s ease;
+}
+
+/* =========================
+   Global
+   ========================= */
+* {
+  box-sizing: border-box;
+}
+html,
 body {
-  font-family: 'Segoe UI', Roboto, sans-serif;
-  background-color: #f5f7fa;
-  color: #2b2b2b;
+  min-height: 100%;
+  height: auto;
+}
+body {
   margin: 0;
   padding: 2rem;
+  font-family: 'Segoe UI', Roboto, Arial, Helvetica, sans-serif;
+  background: var(--bg);
+  color: var(--text);
 }
-
 .App {
   max-width: 700px;
-  margin: auto;
+  margin: 0 auto;
 }
 
-/* === Headings === */
+h1 {
+  margin: 0 0 1rem;
+  font-size: 2rem;
+  color: var(--heading);
+}
 h2 {
   font-size: 2rem;
   color: #333;
   text-align: left;
-  margin-bottom: 2rem;
+  margin: 1.5rem 0 1.25rem;
 }
 
-/* === Question Layout === */
+/* =========================
+   Buttons
+   ========================= */
+button {
+  display: block;
+  margin: 2rem auto 1rem;
+  padding: 1rem 2rem;
+  font-size: 1.1rem;
+  border: none;
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition: background var(--anim-med), transform 0.05s ease,
+    opacity var(--anim-fast), filter var(--anim-fast);
+  color: #fff;
+  background: var(--primary);
+}
+@media (hover: hover) {
+  button:hover {
+    background: var(--primary-hover);
+  }
+}
+button:active {
+  transform: scale(0.98);
+}
+
+.primary-btn {
+  background: var(--primary);
+}
+@media (hover: hover) {
+  .primary-btn:hover {
+    background: var(--primary-hover);
+  }
+}
+.secondary-btn {
+  background: #f0f0f0;
+  color: #333;
+}
+@media (hover: hover) {
+  .secondary-btn:hover {
+    background: #e8e8e8;
+  }
+}
+
+/* IMPORTANT: use aria-disabled + looks-disabled (not native disabled) */
+.primary-btn[aria-disabled='true'],
+.primary-btn.looks-disabled,
+.secondary-btn[aria-disabled='true'],
+.secondary-btn.looks-disabled {
+  opacity: 0.55;
+  filter: grayscale(15%);
+  cursor: not-allowed;
+  /* keep pointer-events so clicking still triggers red highlights */
+}
+
+/* Floating exit button */
+.exit-button {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #f8f8f8;
+  color: #333;
+  border: 1px solid var(--border);
+  padding: 8px 14px;
+  border-radius: 20px;
+  font-size: 1rem;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: all var(--anim-fast);
+  z-index: 9999;
+}
+@media (hover: hover) {
+  .exit-button:hover {
+    background: var(--danger);
+    color: #fff;
+    border-color: var(--danger);
+  }
+}
+
+/* =========================
+   Focus
+   ========================= */
+:focus {
+  outline: none;
+}
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* =========================
+   Question Layout & Inputs
+   ========================= */
 .question-block {
-  margin-bottom: 3.5rem;
+  margin-bottom: 2.25rem;
   text-align: left;
 }
-
 .question-label {
   font-weight: 600;
   font-size: 1.1rem;
   display: block;
   margin-bottom: 0.6rem;
-  color: #222;
+  color: var(--heading);
 }
-
 .question-number {
   color: #444;
   margin-right: 0.4rem;
   font-weight: bold;
 }
 
-/* === Answer Input Layout === */
 .answer-wrapper {
   display: flex;
   flex-direction: column;
   max-width: 600px;
 }
 
-/* === Input Fields === */
-.answer-wrapper input[type='number'] {
-  width: 80px !important;
-  padding: 0.4rem;
+.number-input,
+.textarea-input,
+.text-input,
+.select-input {
   font-size: 1rem;
-  border-radius: 6px;
-  border: 1px solid #ccc;
-  box-sizing: border-box;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--card);
 }
-.answer-wrapper input[type='text'],
+.number-input {
+  width: 90px;
+  padding: 0.5rem;
+}
+.text-input,
 .answer-wrapper input[type='email'] {
   width: 100%;
-  max-width: 400px;
-  padding: 0.4rem;
-  font-size: 1rem;
-  border-radius: 6px;
-  border: 1px solid #ccc;
-  box-sizing: border-box;
+  max-width: 600px;
+  padding: 0.5rem 0.6rem;
 }
-
-.answer-wrapper textarea {
+.textarea-input {
   width: 100%;
   max-width: 600px;
   height: 120px;
   padding: 0.6rem;
-  font-size: 1rem;
-  border-radius: 6px;
-  border: 1px solid #ccc;
   resize: vertical;
-  box-sizing: border-box;
 }
-
-.answer-wrapper select {
-  width: auto;
+.select-input {
+  width: 100%;
   max-width: 300px;
-  padding: 0.4rem;
-  font-size: 1rem;
-  border-radius: 6px;
-  border: 1px solid #ccc;
-  box-sizing: border-box;
+  padding: 0.5rem 0.6rem;
 }
 
-/* === Sliders === */
+/* Missing highlight (shown after user attempts to continue) */
+.question-block.missing {
+  outline: 2px solid var(--missing-outline);
+  background: var(--missing-bg);
+  border-radius: 6px;
+}
+.question-block.missing .question-label {
+  color: var(--missing-text);
+}
+.question-block.missing .answer-wrapper {
+  box-shadow: inset 0 0 0 2px rgba(176, 0, 32, 0.08);
+}
+.field-hint {
+  font-size: 12px;
+  margin-top: 4px;
+  color: var(--hint-text);
+}
+
+/* Also show a red border on the specific field that’s invalid */
+input[aria-invalid='true'],
+select[aria-invalid='true'],
+textarea[aria-invalid='true'] {
+  border-color: var(--missing-text) !important;
+  outline-color: var(--missing-text);
+  box-shadow: 0 0 0 2px rgba(176, 0, 32, 0.12);
+}
+
+/* =========================
+   Sliders
+   ========================= */
 .slider-container {
   display: flex;
   align-items: center;
@@ -97,14 +253,12 @@ h2 {
   margin-top: 0.4rem;
   max-width: 400px;
 }
-
 .slider-label {
   font-size: 0.85rem;
-  color: #666;
+  color: var(--muted);
   width: 80px;
   text-align: center;
 }
-
 .slider {
   flex-grow: 1;
 }
@@ -118,7 +272,6 @@ input[type='range'] {
   outline: none;
   margin: 0;
 }
-
 input[type='range']::-webkit-slider-thumb {
   -webkit-appearance: none;
   width: 20px;
@@ -128,107 +281,116 @@ input[type='range']::-webkit-slider-thumb {
   border: 2px solid white;
   cursor: pointer;
   box-shadow: 0 0 4px rgba(0, 0, 0, 0.2);
-  transition: background 0.3s ease;
+  transition: background var(--anim-med);
+}
+@media (hover: hover) {
+  input[type='range']::-webkit-slider-thumb:hover {
+    background: #005ecb;
+  }
 }
 
-input[type='range']::-webkit-slider-thumb:hover {
-  background: #005ecb;
-}
-
-/* === Buttons === */
-button {
-  display: block;
-  margin: 3rem auto 1rem auto;
-  padding: 1rem 2rem;
-  font-size: 1.2rem;
-  background-color: #28a745;
-  color: white;
-  border: none;
-  border-radius: 10px;
-  cursor: pointer;
-  transition: background 0.3s ease;
-}
-
-button:not(.icon-button):hover {
-  background-color: #218838;
-}
-
-/* === Focus Outline Management === */
-:focus {
-  outline: none;
-}
-
-body.user-is-tabbing button:focus,
-body.user-is-tabbing input:focus,
-body.user-is-tabbing select:focus,
-body.user-is-tabbing textarea:focus,
-body.user-is-tabbing .icon-button:focus {
-  outline: 2px solid #1976d2;
-  outline-offset: 2px;
-}
-
-/* === Icon Button === */
+/* =========================
+   Two-choice icons (circle/square)
+   ========================= */
 .icon-options-wrapper {
-  width: 100%;
   display: flex;
   justify-content: center;
-  margin-top: 2rem;
+  margin-top: 1rem;
 }
-
 .icon-options {
   display: flex;
+  justify-content: center;
+  align-items: stretch;
   gap: 2rem;
+  flex-wrap: wrap;
 }
 
 .icon-button {
-  width: 30vw;
-  height: 30vh;
-  background-color: #fff;
-  border: 1px solid #ccc;
-  padding: 0;
-  cursor: pointer;
   display: flex;
   justify-content: center;
   align-items: center;
-  transition: background-color 0.2s ease;
-  outline: none;
-  box-shadow: none;
+  text-align: center;
+  background: #fff;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  font-family: Arial, Helvetica, sans-serif;
+  font-weight: 700;
+  color: #000;
+  width: 16rem;
+  aspect-ratio: 1 / 1;
+  font-size: 2rem;
+  padding: 1rem;
+  position: relative;
+  overflow: hidden;
+  transition: background-color 0.2s ease-in;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: pan-y;
+}
+@media (hover: hover) {
+  .icon-button:hover {
+    background-color: #eef6ff;
+  }
+}
+.icon-button:active {
+  transform: scale(0.97);
 }
 
-.icon-button:hover,
-.icon-button:active {
-  background-color: #fff !important;
-  box-shadow: none !important;
-}
-.icon-button:focus {
-  outline: none;
-}
-
-.icon-button:active {
-  transform: scale(0.98);
+/* visible keyboard focus ring */
+.icon-button:focus-visible {
+  outline: 3px solid #1a73e8;
+  outline-offset: 3px;
 }
 
 .icon-symbol {
-  width: 60%;
-  height: 60%;
-  display: flex;
+  display: inline-flex;
   justify-content: center;
   align-items: center;
 }
-
-.icon-symbol svg {
-  width: 100%;
-  height: 100%;
+.icon-symbol {
+  font-size: 4rem;
 }
 
-/* === Star Burst === */
+/* =========================
+   Trial layout / feedback
+   ========================= */
+.trial-ui {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.top-feedback-slot {
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.bottom-feedback-slot {
+  margin-top: 96px;
+  min-height: 96px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  text-align: center;
+}
+.status-line,
+.aligned-line,
+.score-line {
+  margin: 4px 0;
+}
+
+/* =========================
+   Star burst
+   ========================= */
 .star-burst {
   font-size: 2.5rem;
   text-align: center;
   animation: popstar 0.8s ease-in-out;
-  margin-top: 1rem;
+  margin-top: 0.6rem;
 }
-
 @keyframes popstar {
   0% {
     transform: scale(0.5) rotate(0deg);
@@ -243,17 +405,24 @@ body.user-is-tabbing .icon-button:focus {
     opacity: 0;
   }
 }
+@media (prefers-reduced-motion: reduce) {
+  .star-burst {
+    animation: none;
+    opacity: 1;
+  }
+}
 
-/* === Breathing Circle === */
+/* =========================
+   Breathing step
+   ========================= */
 .breathing-circle {
   width: 100px;
   height: 100px;
   margin: 2rem auto;
   border-radius: 50%;
-  background-color: #aee;
+  background: #aee;
   animation: breathe 7s ease-in-out infinite;
 }
-
 @keyframes breathe {
   0% {
     transform: scale(1);
@@ -268,8 +437,12 @@ body.user-is-tabbing .icon-button:focus {
     opacity: 0.7;
   }
 }
+@media (prefers-reduced-motion: reduce) {
+  .breathing-circle {
+    animation: none;
+  }
+}
 
-/* === Breathing Step === */
 .breathe-step {
   display: flex;
   flex-direction: column;
@@ -278,59 +451,382 @@ body.user-is-tabbing .icon-button:focus {
   max-width: 600px;
   margin: 0 auto;
 }
-
 .breathe-step p {
   max-width: 500px;
-  margin-top: 0.5rem;
-  margin-bottom: 1rem;
+  margin: 0.5rem 0 1rem;
   font-size: 1.1rem;
   line-height: 1.6;
 }
-
-.breathe-step button {
-  font-size: 1rem;
-  padding: 0.75rem 1.5rem;
-  background-color: #5cdb95;
-  border: none;
-  border-radius: 8px;
-  cursor: pointer;
-}
-
 .breathe-step h2 {
   width: 100%;
   text-align: center;
 }
 
-/* === Exit Button === */
-.exit-button {
-  position: fixed;
-  bottom: 20px;
-  right: 20px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background-color: #f8f8f8;
-  border: 1px solid #ccc;
-  padding: 8px 14px;
-  border-radius: 20px;
-  font-size: 1rem;
-  color: #333;
+/* =========================
+   Misc
+   ========================= */
+.status-placeholder {
+  min-height: 1.2em;
+}
+.results-display {
+  min-height: 7em;
+}
+
+/* =========================
+   Responsive
+   ========================= */
+@media (max-width: 900px) {
+  body {
+    padding: 1.5rem;
+  }
+  .icon-options .icon-button {
+    width: 16rem;
+    font-size: 2.2rem;
+  }
+}
+@media (max-width: 600px) {
+  body {
+    padding: 1rem;
+  }
+  .icon-options {
+    gap: 1rem;
+  }
+  .icon-button {
+    width: 42vw;
+    max-width: 260px;
+    font-size: 1.6rem;
+    padding: 0.85rem;
+  }
+  .icon-button[aria-disabled='true'] {
+    opacity: 0.55;
+    filter: grayscale(15%);
+    cursor: not-allowed;
+    pointer-events: none; /* prevent accidental taps while committing */
+  }
+  h2 {
+    font-size: 1.6rem;
+  }
+  button {
+    font-size: 1rem;
+    padding: 0.8rem 1.2rem;
+    margin: 1rem auto 0.75rem;
+  }
+  .top-feedback-slot {
+    height: 45px;
+  }
+  .bottom-feedback-slot {
+    margin-top: 40px;
+  }
+}
+@media (max-width: 400px) {
+  .icon-options {
+    flex-direction: column;
+    align-items: center;
+  }
+  .icon-button {
+    width: 55vw;
+    max-width: none;
+    font-size: 1.5rem;
+    padding: 0.9rem;
+  }
+}
+
+/* Loading status fade (no looping animation) */
+.status-line {
+  opacity: 0;
+  transition: opacity 180ms ease-in;
+}
+.status-line.show {
+  opacity: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .status-line {
+    transition: none;
+  }
+}
+
+/* Expander */
+.expander {
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  background: #fafafa;
+}
+.expander > summary {
   cursor: pointer;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-  transition: all 0.2s ease;
-  z-index: 9999;
+  font-weight: 600;
+  list-style: none;
+}
+.expander[open] {
+  background: #f6f6f6;
+}
+.expander > summary::-webkit-details-marker {
+  display: none;
 }
 
-.exit-button:hover {
-  background-color: #e74c3c;
-  color: #fff;
-  border-color: #e74c3c;
+/* Instruction blocks align left */
+.instructions ul,
+.instructions .why-this-matters,
+.instructions .why-this-matters p {
+  text-align: left !important;
+}
+.instructions .why-this-matters,
+.instructions .why-this-matters * {
+  font-size: 0.9rem !important;
+  line-height: 1.45;
+}
+.instructions .why-this-matters {
+  display: inline-block;
+  margin: 1em auto 0 auto;
+}
+/* Visually hide but keep for screen readers */
+/* Visually hide but keep for screen readers */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }
 
-.exit-icon {
-  font-size: 1.4rem;
+/* Icon layout and responsive sizing */
+.icon-options-wrapper {
+  max-width: 100%;
+  overflow: hidden;
 }
 
-.exit-text {
-  font-weight: 500;
+.icon-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: min(4vw, 24px);
+  align-items: center;
+}
+
+.icon-button {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  min-height: clamp(160px, 35vw, 280px);
+  padding: min(3vw, 16px);
+}
+
+.icon-symbol svg {
+  width: clamp(120px, 18vw, 180px);
+  height: clamp(120px, 18vw, 180px);
+  display: block;
+}
+
+/* Disable interactions when aria-disabled is true */
+.icon-button[aria-disabled='true'] {
+  opacity: 0.55;
+  filter: grayscale(15%);
+  cursor: not-allowed;
+  pointer-events: none;
+}
+/* === Responsive overrides for two-choice icon layout === */
+@media (max-width: 1024px) {
+  .icon-options-wrapper {
+    max-width: 100%;
+    overflow: hidden;
+  }
+  .icon-options {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: min(4vw, 24px);
+    align-items: center;
+  }
+  .icon-button {
+    width: 100%;
+    min-height: clamp(160px, 35vw, 280px);
+    padding: min(3vw, 16px);
+  }
+  /* Scale symbols cleanly whether they are text or SVG */
+  .icon-symbol,
+  .icon-symbol svg {
+    width: clamp(120px, 18vw, 180px);
+    height: clamp(120px, 18vw, 180px);
+    font-size: clamp(2.5rem, 6vw, 4rem);
+  }
+}
+
+/* Stack vertically on narrow phones */
+@media (max-width: 480px) {
+  .icon-options {
+    grid-template-columns: 1fr;
+  }
+}
+/* Icon-only button layout */
+.icon-only {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+/* Envelope SVG sizing (scales with button text size) */
+.envelope-icon {
+  width: 1.25em;
+  height: 1.25em;
+  display: inline-block;
+  vertical-align: -0.15em;
+}
+
+/* Visually hidden but accessible (for screen readers) */
+.sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 1px, 1px) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+/* === Prepare button small icon === */
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.btn-envelope {
+  width: 1.1em;
+  height: 1.1em;
+  display: inline-block;
+  vertical-align: -0.15em;
+}
+
+/* === Envelope fold+seal loader === */
+.envelope-loader {
+  display: grid;
+  place-items: center;
+  gap: 0.5rem;
+  padding: 12px 8px;
+  min-height: 88px; /* keeps layout steady where the button was */
+  text-align: center;
+}
+
+.envelope-label {
+  font-size: 0.95rem;
+  line-height: 1.2;
+}
+
+/* Base SVG look */
+.env {
+  width: 64px;
+  height: 48px;
+  overflow: visible;
+}
+
+/* Colors tie into your button palette; adjust if needed */
+.env .body rect,
+.env .body polyline,
+.env .flap polygon,
+.env .paper rect,
+.env .paper line,
+.env .seal {
+  stroke: currentColor;
+  stroke-width: 2;
+  fill: transparent;
+}
+
+/* Paper is lighter for contrast */
+.env .paper rect,
+.env .paper line {
+  stroke-opacity: 0.85;
+}
+
+/* Seal uses fill to pop when it appears */
+.env .seal {
+  fill: currentColor;
+  opacity: 0;
+  transform-origin: 32px 26px;
+}
+
+/* Animation timeline (loops) */
+@keyframes paper-slide {
+  0% {
+    transform: translateY(14px);
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  45% {
+    transform: translateY(0);
+  }
+  55% {
+    transform: translateY(0);
+  }
+  100% {
+    transform: translateY(12px);
+    opacity: 0;
+  }
+}
+
+@keyframes flap-close {
+  0% {
+    transform: rotateX(160deg);
+    opacity: 1;
+  }
+  45% {
+    transform: rotateX(0deg);
+  }
+  60% {
+    transform: rotateX(0deg);
+  }
+  100% {
+    transform: rotateX(160deg);
+    opacity: 1;
+  }
+}
+
+@keyframes seal-pop {
+  0%,
+  55% {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  65% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  85% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+}
+
+/* Apply animations with offsets so it looks sequential */
+.env .paper {
+  animation: paper-slide 1.8s ease-in-out infinite;
+  transform-origin: 32px 18px;
+}
+.env .flap {
+  transform-origin: 32px 12px;
+  animation: flap-close 1.8s cubic-bezier(0.2, 0.7, 0.2, 1) infinite;
+  animation-delay: 0.1s;
+  transform-style: preserve-3d;
+  backface-visibility: hidden;
+}
+.env .seal {
+  animation: seal-pop 1.8s ease-in-out infinite;
+  animation-delay: 0.3s;
+}
+
+/* Respect reduced-motion preferences */
+@media (prefers-reduced-motion: reduce) {
+  .env .paper,
+  .env .flap,
+  .env .seal {
+    animation: none;
+  }
 }

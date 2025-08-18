@@ -1,14 +1,14 @@
 export const config = {
   // Versioning
-  CONSENT_VERSION: 'v1-2025-08-14',
-  QA_SECRET: 'WHAT_THE_QUARK_EXP_2',
+  CONSENT_VERSION: 'v1-2025-08-15',
+  QA_SECRET: 'WHAT_THE_QUARK_EXP_1',
   DEBRIEF_URL:
-    'https://experiments.whatthequark.com/debriefs/experiment2',
-
+    'https://experiments.whatthequark.com/debriefs/experiment1',
+  REQUIRE_PRE: false,
   // Trial counts
   trialsPerBlock: {
-    full_stack: 30, // Baseline block
-    spoon_love: 100, // Quantum block
+    full_stack: 8, // Baseline block
+    spoon_love: 8, // Quantum block
   },
 
   // Priming experiment parameters
