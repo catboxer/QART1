@@ -1,5 +1,5 @@
 import { config } from './config.js';
-//const N_QUANTUM = config.trialsPerBlock.spoon_love;
+const N_QUANTUM = config.trialsPerBlock.spoon_love;
 
 export const preQuestions = [
   //   { id: 'name', question: 'What is your name?', type: 'text' },
@@ -90,92 +90,71 @@ export const preQuestions = [
 export const cueBlocks = [
   {
     id: 'full_stack',
-    label: 'Physical RNG - Match One',
+    label: 'Practice Baseline',
+    buttonLabel: 'OM',
     preInstructions: `
-      <h1>Focus & Breathe</h1>
-      
-      <h3>Your Task:</h3>
+      <h1>Focus & Breathing – Baseline Block</h1>
+      <h2><strong>Your Task:</strong> </h2>
 <ul>
-   <li><strong>Draw your envelopes.</strong> Click the <em>Draw Your Sealed Envelopes</em> button.</li>
-  <li><strong>Start the trials.</strong> Click the <em>Start Match One Trials</em> button when it turns green.</li>
-  <li><strong>How many:</strong> ${
-    config.trialsPerBlock.full_stack
-  } trials (~${Math.ceil(
-      Number(config.trialsPerBlock.full_stack) / 5
-    )} rounds of 5).</li>
-  <li><strong>Play in rounds.</strong> Each round has 5 trials. After each round you’ll see your result.</li>
-  <li><strong>Round win.</strong> Getting 3 or more correct out of 5 wins the round.</li>
-  <li><strong>Progress.</strong> You’ll complete several rounds; your total round & trial wins are shown on screen at the end.</li>
-  <li><strong>Goal.</strong> Choose the hidden symbol more often than chance (~20% per trial).</li>
-  <li><strong>Need to stop early?</strong> Click <em>Exit Study</em> (bottom-right) to send your completed results.</li>
+  <li>You will see a green button labeled <strong>{{WORD}}</strong>.</li>
+  <li>Your challenge is to keep your attention on this word and see if you can nudge the Random Number Generator ever so slightly—beyond pure chance.</li>
+  <li><strong>PRESS</strong> and <strong>HOLD</strong> the {{WORD}} button as you bring your focus fully onto the concept it represents to you.</li>
+  <li>Do not release until you feel truly refocused and sense the right moment to act.</li>
+  <li>If your mind drifts (and it probably will), simply notice the distraction and gently return your focus to {{WORD}}.</li>
+  <li><strong>RELEASE</strong> the button only when you feel calm, steady, and ready.</li>
 </ul>
  `,
     trialInstructions: `
-      <h2>Physical RNG (Match One)</h2>
+      <h2>Baseline</h2>
         <ul>
-        <li>You’ll see five symbols. On each trial, one is the target.</li>
-        <li>Pick the one you feel is right.</li>
-        <li>Encountering issues? <a href="{{ISSUE_MAILTO}}">Email us at h@whatthequark.com</a> about the problem.</li>
+        <li><strong>PRESS </strong> the {{WORD}} button.</li>
+        <li><strong>HOLD</strong> the button down.</li>
+        <li><strong>REFOCUS</strong> when distracted.</li>
+        <li><strong>RELEASE </strong>when it feels right.</li>
       </ul>
+        <p style="margin:0">Wait until the button text {{WORD}} turns black before pressing again.</p>
+      <p style="margin:0">If the network hiccups you will receive an alert. Press again.</p>
+    <p style="margin:0">Encountering issues? <a href="{{ISSUE_MAILTO}}">Email us at h@whatthequark.com</a> about the problem.</p>
       `,
-    showFeedback: true,
-  },
-  {
-    id: 'spoon_love',
-    label: 'Quantum RNG - Match Two',
-    preInstructions: `
-           <h1>Focus & Breathe</h1>
-<h3>Your Task:</h3>
-<ul>
-   <li><strong>Draw your envelopes.</strong> Click the <em>Draw Your Sealed Envelopes</em> button. </li>
-  <li><strong>Start the trials.</strong> Click the <em>Start Match Two Trials</em> button when it turns green.</li>
-  <li><strong>How many:</strong> ${
-    config.trialsPerBlock.spoon_love
-  } trials (~${Math.ceil(
-      Number(config.trialsPerBlock.spoon_love) / 5
-    )} rounds of 5).</li>
-  <li><strong>Play in rounds.</strong> Each round has 5 trials. After each round you’ll see your result.</li>
-  <li><strong>Round win.</strong> Getting 3 or more correct out of 5 wins the round.</li>
-  <li><strong>Progress.</strong> You’ll complete several rounds; your total round wins & trial wins are shown on screen at the end.</li>
-  <li><strong>Goal.</strong> Choose the hidden symbol more often than chance (~20% per trial).</li>
-  <li><strong>Need to stop early?</strong> Click <em>Exit Study</em> (bottom-right) to send your completed results.</li>
-</ul>`,
-    trialInstructions: `
-      <h2>Quantum RNG (Match Two)</h2>
-        <ul>
-        <li>You’ll see five symbols. On each trial, one is the target.</li>
-        <li>Pick the one you feel is right.</li>
-        <li>Encountering issues? <a href="{{ISSUE_MAILTO}}">Email us at h@whatthequark.com</a> about the problem.</li>
-      </ul>`,
     showFeedback: false,
   },
   {
-    id: 'client_local',
-    label: 'Local - Match Three',
+    id: 'spoon_love',
+    label: 'Quantum',
+    buttonLabel: 'OM',
     preInstructions: `
-           <h1>Focus & Breathe</h1>
-      <h3>Your Task:</h3>
+      <h2>Focus & Breathing – Quantum Block</h2>
+      <h2><strong>Your Task:</strong> </h2>
 <ul>
-  <li><strong>Start the trials.</strong> Click the <em>Start Match Three Trials</em> button.</li>
-     <li>The app generates a choice <strong>after </strong>you select yours.</li>
-     <li><strong>How many:</strong> ${
-       config.trialsPerBlock.client_local
-     } trials (~${Math.ceil(
-      Number(config.trialsPerBlock.client_local) / 5
-    )} rounds of 5).</li>
-  <li><strong>Play in rounds.</strong> Each round has 5 trials. After each round you’ll see your result.</li>
-  <li><strong>Round win.</strong> Getting 3 or more correct out of 5 wins the round.</li>
-  <li><strong>Progress.</strong> You’ll complete several rounds; your round wins and total trial wins are shown on screen.</li>
-  <li><strong>Goal.</strong> Choose the hidden symbol more often than chance (~20% per trial).</li>
-  <li><strong>Need to stop early?</strong> Click <em>Exit Study</em> (bottom-right) to send your completed results.</li>
-</ul>`,
+  <li>You will see a green button labeled <strong>{{WORD}}</strong>.</li>
+  <li>Your challenge is to keep your attention on this word and see if you can nudge the RNG ever so slightly—beyond pure chance.</li>
+  <li><strong>PRESS</strong> and <strong>HOLD</strong> the {{WORD}} button as you bring your focus fully onto the concept it represents for you.</li>
+  <li>Do not release until you feel truly refocused and sense the right moment to act.</li>
+  <li>If your mind drifts (and it probably will), simply notice the distraction and gently return your focus to {{WORD}}.</li>
+  <li><strong>RELEASE</strong> the button only when you feel calm, steady, and ready.</li>
+</ul>
+      <div class="why-this-matters">
+  <p><strong>Why this matters</strong></p>
+  <p>
+    This block is long and boring; and that’s intentional. The challenge is staying focused despite wandering thoughts. That skill tends to improve with practice. We’re exploring whether better focus correlates with better-than-chance scores.
+  </p>
+  <p>
+    <em>Goal:</em> Work toward completing all ${N_QUANTUM} trials with minimal lapses in focus. Treat it like a growth exercise and notice how your focus (and score) change over time. 
+    <p>If you cannot finish the trial, please use the Exit Study button at the bottom right of the screen to record your results. </p>
+  </p>
+</div> `,
     trialInstructions: `
-      <h2>Local (Match Three)</h2>
-        <ul>
-        <li>You’ll see five symbols. On each trial, one is the target.</li>
-        <li>Pick the one you feel is right.</li>
-        <li>Encountering issues? <a href="{{ISSUE_MAILTO}}">Email us at h@whatthequark.com</a> about the problem.</li>
-      </ul>`,
+      <h2>Main Experiment</h2>
+      <ul>
+        <li><strong>PRESS </strong> the {{WORD}} button.</li>
+        <li><strong>HOLD</strong></li>
+        <li><strong>REFOCUS</strong> when distracted.</li>
+        <li><strong>RELEASE </strong>when it feels right.</li>
+      </ul>
+      <p style="margin:0">Wait until the button text {{WORD}} turns black before pressing again.</p>
+      <p style="margin:0">If the network hiccups you will receive an alert. Press again.</p>
+    <p style="margin:0">Encountering issues? <a href="{{ISSUE_MAILTO}}">Email us about the problem</a>.</p>
+      `,
     showFeedback: false,
   },
 ];
@@ -200,6 +179,20 @@ Thanks!`;
     encodeURIComponent(body)
   );
 }
+export function buildIssueEmailBody(sessionId) {
+  return `Hi team,
+
+I hit a problem during the experiment.
+
+- What I was doing: [brief steps]
+- What happened: [error message or behavior]
+- When: [date/time and timezone]
+- Device / browser: [e.g., iPhone 14, Safari]
+- Session ID: ${sessionId}
+
+Thanks!`;
+}
+
 // ——— MID (between blocks) ———
 export const midQuestions = [
   {

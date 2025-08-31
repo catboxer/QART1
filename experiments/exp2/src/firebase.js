@@ -1,20 +1,20 @@
-// src/firebase.js (JavaScript version)
+import { initializeApp, getApp, getApps } from 'firebase/app';
 
-// Import the functions you need from the SDKs you need
-import { initializeApp } from 'firebase/app';
-import { getFirestore } from 'firebase/firestore';
+// Auth
 import {
   getAuth,
-  onAuthStateChanged,
-  signInAnonymously,
   setPersistence,
-  browserLocalPersistence,
   browserSessionPersistence,
+  inMemoryPersistence,
   signInWithEmailAndPassword,
+  signInAnonymously,
+  onAuthStateChanged,
 } from 'firebase/auth';
 
-// Your web app's Firebase configuration
-// (These keys are OK to be in the client for Firebase web apps)
+// Firestore
+import { getFirestore } from 'firebase/firestore';
+
+// 1) PASTE YOUR WORKING CONFIG HERE
 const firebaseConfig = {
   apiKey: 'AIzaSyBnZiiYdnaTxa6Zn-QOPhgNJ8lt6PAi2uU',
   authDomain: 'qartexperiment1.firebaseapp.com',
@@ -25,56 +25,48 @@ const firebaseConfig = {
   measurementId: 'G-TB0M38XPBC',
 };
 
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-export const auth = getAuth(app);
-export { db };
+// 2) Initialize exactly once (safe even if multiple bundles import this)
+const app = getApps().length
+  ? getApp()
+  : initializeApp(firebaseConfig);
 
-// Set persistence (no top-level await; use promise form)
-// Try local; if that fails (e.g., privacy mode), fall back to session.
-// Make persistence a promise we can await before any sign-in.
-// Try local; if that fails (e.g., privacy mode), fall back to session.
-const persistenceReady = setPersistence(
-  auth,
-  browserLocalPersistence
-).catch(async () => {
+// 3) Core singletons
+const authInstance = getAuth(app);
+const dbInstance = getFirestore(app);
+
+// 4) Session (clears on browser close). Fallback: in-memory (clears on refresh).
+export const persistenceReady = (async () => {
   try {
-    await setPersistence(auth, browserSessionPersistence);
-  } catch {
-    // ignore — we'll still proceed, but auth may not persist across reloads
+    await setPersistence(authInstance, browserSessionPersistence);
+  } catch (e) {
+    console.warn(
+      'Session persistence not available; falling back to in-memory.',
+      e
+    );
+    await setPersistence(authInstance, inMemoryPersistence);
   }
-});
+})();
 
-/**
- * Waits until there is a Firebase user. If none, signs in anonymously.
- * Call this BEFORE any Firestore reads/writes that require auth.
- * Usage: const user = await ensureSignedIn();
- */
-// ----- Email + Password sign-in (stable identity for QA/admin) -----
+// 5) Auth helpers
 export async function signInWithEmailPassword(email, password) {
+  await persistenceReady;
   const cred = await signInWithEmailAndPassword(
-    auth,
+    authInstance,
     email,
     password
   );
-  return cred.user; // contains uid, email, displayName, etc.
+  return cred.user;
 }
 
+// Ensure we have a user (anonymous) before Firestore ops where needed.
+// (You can choose NOT to call this on pages where you don't want anon sign-in.)
 export async function ensureSignedIn() {
-  // Ensure persistence is set BEFORE we decide to sign in
   await persistenceReady;
-
-  // If a user already exists (from a prior visit), use it
-  if (auth.currentUser) return auth.currentUser;
-
-  // Otherwise create ONE anonymous user
-  await signInAnonymously(auth);
-
-  // Wait for the user object to be ready
+  if (authInstance.currentUser) return authInstance.currentUser;
+  await signInAnonymously(authInstance);
   return new Promise((resolve, reject) => {
     const off = onAuthStateChanged(
-      auth,
+      authInstance,
       (u) => {
         if (!u) return;
         off();
@@ -85,6 +77,26 @@ export async function ensureSignedIn() {
   });
 }
 
+// 6) Public exports used by your app
+export const auth = authInstance;
+export const db = dbInstance;
+
+// 7) Debug helpers (handy in DevTools)
 if (typeof window !== 'undefined') {
-  window._auth = auth; // Now you can run: window._auth.currentUser?.uid
+  window._auth = authInstance;
+  window.__FBDEBUG__ = {
+    get projectId() {
+      return authInstance.app.options.projectId;
+    },
+    get email() {
+      return authInstance.currentUser?.email || null;
+    },
+    async provider() {
+      const u = authInstance.currentUser;
+      if (!u) return null;
+      const t = await u.getIdTokenResult();
+      return t.signInProvider || null; // "password", "anonymous", etc.
+    },
+  };
+  // console.log('[FBDEBUG] projectId:', window.__FBDEBUG__.projectId);
 }
