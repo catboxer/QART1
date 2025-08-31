@@ -201,11 +201,6 @@ function crypto01() {
   // Map to [0,1) with full 32-bit precision
   return u[0] / 4294967296;
 }
-function coinFlipLeakyOrStrict() {
-  const u = new Uint32Array(1);
-  crypto.getRandomValues(u);
-  return (u[0] & 1) === 0 ? 'leaky' : 'strict';
-}
 /**
  * Secure, unbiased shuffle of the 5 symbols.
  * - If `seed` is provided (number), the order is deterministic.
@@ -599,6 +594,7 @@ function MainApp() {
     return `${t}-${p}-${r}`;
   });
   const appVersion = process.env.REACT_APP_COMMIT ?? 'dev';
+  const [sessionShuffleMode, setSessionShuffleMode] = useState(null); // 'leaky' | 'strict' | null
 
   // URL flags
   const parseParams = () => {
@@ -659,7 +655,6 @@ function MainApp() {
   const starTimerRef = useRef(null);
   const isSavingRef = useRef(false);
   const [trialBlockingError, setTrialBlockingError] = useState(null);
-  const [sessionShuffleMode, setSessionShuffleMode] = useState(null); // 'leaky' | 'strict' | null
 
   // Prefetch/caching for sealed envelopes
   const [assignmentCache, setAssignmentCache] = useState({
@@ -991,38 +986,25 @@ function MainApp() {
 
   // Ensure we have ONE parent run document for all blocks
   const [exp1DocId, setExp1DocId] = useState(null);
-  async function ensureSessionShuffleMode(parentId) {
-    const ref = doc(db, 'experiment1_responses', parentId);
-    try {
-      const snap = await getDoc(ref);
-      const existing = snap.exists()
-        ? (snap.data()?.shuffle_mode || '')
-            .toString()
-            .trim()
-            .toLowerCase()
-        : '';
-      if (existing === 'leaky' || existing === 'strict') {
-        setSessionShuffleMode(existing);
-        return existing;
-      }
-    } catch (_) {
-      /* non-fatal */
-    }
-
-    // Assign once per session, 50/50
-    const assigned = coinFlipLeakyOrStrict();
-    await setDoc(ref, { shuffle_mode: assigned }, { merge: true });
-    setSessionShuffleMode(assigned);
-    return assigned;
-  }
 
   async function ensureRunDoc() {
-    // If we already have a parent doc, make sure shuffle_mode exists there too
+    // If we already have a run id, make sure sessionShuffleMode is loaded too.
     if (exp1DocId) {
       if (!sessionShuffleMode) {
         try {
-          await ensureSessionShuffleMode(exp1DocId);
-        } catch (_) {}
+          const ref = doc(db, 'experiment1_responses', exp1DocId);
+          const snap = await getDoc(ref);
+          const existing = snap.exists()
+            ? String(snap.data()?.shuffle_mode || '')
+                .trim()
+                .toLowerCase()
+            : '';
+          if (existing === 'leaky' || existing === 'strict') {
+            setSessionShuffleMode(existing);
+          }
+        } catch (_) {
+          /* non-fatal */
+        }
       }
       return exp1DocId;
     }
@@ -1030,7 +1012,7 @@ function MainApp() {
     await ensureSignedIn();
     const participant_id = auth.currentUser?.uid ?? null;
 
-    // Create parent run doc
+    // Create the parent run doc
     const mainRef = await addDoc(
       collection(db, 'experiment1_responses'),
       {
@@ -1041,21 +1023,48 @@ function MainApp() {
         timestamp: serverTimestamp(),
       }
     );
+
     const parentId = mainRef.id;
 
-    // Keep your minimal merge
+    // Minimal merge to ensure participant_id is present
     await setDoc(
       doc(db, 'experiment1_responses', parentId),
       { participant_id },
       { merge: true }
     );
 
-    // NEW: set session shuffle (50/50) once on the parent doc
+    // === NEW: ensure session-level shuffle_mode is set/read (one time per session) ===
     try {
-      await ensureSessionShuffleMode(parentId);
-    } catch (_) {}
+      const ref = doc(db, 'experiment1_responses', parentId);
+      const snap = await getDoc(ref);
+      const existing = snap.exists()
+        ? String(snap.data()?.shuffle_mode || '')
+            .trim()
+            .toLowerCase()
+        : '';
 
-    // Warm the read (unchanged)
+      // If already set, use it; otherwise assign 50/50 and persist.
+      const assigned =
+        existing === 'leaky' || existing === 'strict'
+          ? existing
+          : Math.random() < 0.5
+          ? 'leaky'
+          : 'strict';
+
+      if (assigned !== existing) {
+        await setDoc(
+          ref,
+          { shuffle_mode: assigned },
+          { merge: true }
+        );
+      }
+      setSessionShuffleMode(assigned);
+    } catch (e) {
+      console.warn('shuffle_mode set/read failed (non-fatal):', e);
+    }
+    // === END NEW ===
+
+    // Warm read (keeps your old behavior)
     try {
       await getDoc(doc(db, 'experiment1_responses', parentId));
     } catch (_) {}
@@ -1800,16 +1809,6 @@ function MainApp() {
         ? resolvedMeta?.remap_proof ?? null
         : null,
 
-      // legacy neutral fields (kept for compatibility)
-      // legacy/back-compat flags (now reflect 5-choice scoring)
-      qrng_code: null,
-      qrng_label: correctLabel,
-      primary_is_right: Number(subject_hit === 1),
-      ghost_qrng_code: null,
-      ghost_is_right: Number(demon_hit === 1),
-      primary_pos: null, // 2-choice only; keep null for 5-choice
-      pair_rule: null,
-
       // audit marker for your proof context shape
       proof_ctx_version: 1,
     };
@@ -1976,7 +1975,7 @@ function MainApp() {
             condition: logRow.condition,
             k_options: logRow.k_options,
             block_type: logRow.block_type,
-
+            shuffle_mode: sessionShuffleMode ?? null,
             // trial identity & timing
             trial_index: logRow.trial_index,
             press_time: logRow.press_time,
@@ -2024,15 +2023,6 @@ function MainApp() {
             remap_r: logRow.remap_r ?? null,
             remap_r_ghost: logRow.remap_r_ghost ?? null,
             remap_proof: logRow.remap_proof ?? null,
-
-            // legacy neutrals for back-compat
-            qrng_code: logRow.qrng_code ?? null,
-            qrng_label: logRow.qrng_label ?? null,
-            primary_is_right: logRow.primary_is_right ?? null,
-            ghost_qrng_code: logRow.ghost_qrng_code ?? null,
-            ghost_is_right: logRow.ghost_is_right ?? null,
-            primary_pos: logRow.primary_pos ?? null,
-            pair_rule: logRow.pair_rule ?? null,
 
             // audit marker for context shape
             proof_ctx_version: logRow.proof_ctx_version ?? 1,

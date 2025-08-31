@@ -1562,28 +1562,8 @@ export default function QAExport() {
       .map((t) => ({ mode: t.shuffle_mode }));
     console.log('sample trial modes:', sampleTrials);
     // Read the session's shuffle once (doc field, then any trial as fallback)
-    const sessionShuffle = (d) => {
-      const norm = (v) =>
-        String(v || '')
-          .trim()
-          .toLowerCase();
-      const ok = (m) => m === 'leaky' || m === 'strict';
-
-      // 1) session-level (new data)
-      let m = norm(d?.shuffle_mode);
-      if (ok(m)) return m;
-
-      // 2) fallback to any trial (old data)
-      const candidates = [
-        norm(d?.full_stack?.trialResults?.[0]?.shuffle_mode),
-        norm(d?.spoon_love?.trialResults?.[0]?.shuffle_mode),
-        norm(d?.client_local?.trialResults?.[0]?.shuffle_mode),
-      ].filter(Boolean);
-
-      // if mixed, you could majority-vote; for now just pick first valid
-      const firstValid = candidates.find(ok);
-      return ok(firstValid) ? firstValid : '';
-    };
+    const sessionShuffle = (d) =>
+      +(d?.shuffle_mode || '').toString().trim().toLowerCase();
 
     // session filter per mode + shuffle
     const baseSessionFilter =
