@@ -201,7 +201,11 @@ function crypto01() {
   // Map to [0,1) with full 32-bit precision
   return u[0] / 4294967296;
 }
-
+function coinFlipLeakyOrStrict() {
+  const u = new Uint32Array(1);
+  crypto.getRandomValues(u);
+  return (u[0] & 1) === 0 ? 'leaky' : 'strict';
+}
 /**
  * Secure, unbiased shuffle of the 5 symbols.
  * - If `seed` is provided (number), the order is deterministic.
@@ -241,6 +245,7 @@ function assignZenerFromBytes(rawByte, ghostByte, displayIcons) {
 }
 
 const getBlock = (id) => cueBlocks.find((b) => b.id === id);
+// 50/50 coin flip using strong randomness
 
 const isAnswered = (q, responses) => {
   const v = responses[q.id];
@@ -654,6 +659,7 @@ function MainApp() {
   const starTimerRef = useRef(null);
   const isSavingRef = useRef(false);
   const [trialBlockingError, setTrialBlockingError] = useState(null);
+  const [sessionShuffleMode, setSessionShuffleMode] = useState(null); // 'leaky' | 'strict' | null
 
   // Prefetch/caching for sealed envelopes
   const [assignmentCache, setAssignmentCache] = useState({
@@ -985,10 +991,46 @@ function MainApp() {
 
   // Ensure we have ONE parent run document for all blocks
   const [exp1DocId, setExp1DocId] = useState(null);
+  async function ensureSessionShuffleMode(parentId) {
+    const ref = doc(db, 'experiment1_responses', parentId);
+    try {
+      const snap = await getDoc(ref);
+      const existing = snap.exists()
+        ? (snap.data()?.shuffle_mode || '')
+            .toString()
+            .trim()
+            .toLowerCase()
+        : '';
+      if (existing === 'leaky' || existing === 'strict') {
+        setSessionShuffleMode(existing);
+        return existing;
+      }
+    } catch (_) {
+      /* non-fatal */
+    }
+
+    // Assign once per session, 50/50
+    const assigned = coinFlipLeakyOrStrict();
+    await setDoc(ref, { shuffle_mode: assigned }, { merge: true });
+    setSessionShuffleMode(assigned);
+    return assigned;
+  }
+
   async function ensureRunDoc() {
-    if (exp1DocId) return exp1DocId;
+    // If we already have a parent doc, make sure shuffle_mode exists there too
+    if (exp1DocId) {
+      if (!sessionShuffleMode) {
+        try {
+          await ensureSessionShuffleMode(exp1DocId);
+        } catch (_) {}
+      }
+      return exp1DocId;
+    }
+
     await ensureSignedIn();
     const participant_id = auth.currentUser?.uid ?? null;
+
+    // Create parent run doc
     const mainRef = await addDoc(
       collection(db, 'experiment1_responses'),
       {
@@ -1000,14 +1042,24 @@ function MainApp() {
       }
     );
     const parentId = mainRef.id;
+
+    // Keep your minimal merge
     await setDoc(
       doc(db, 'experiment1_responses', parentId),
       { participant_id },
       { merge: true }
     );
+
+    // NEW: set session shuffle (50/50) once on the parent doc
+    try {
+      await ensureSessionShuffleMode(parentId);
+    } catch (_) {}
+
+    // Warm the read (unchanged)
     try {
       await getDoc(doc(db, 'experiment1_responses', parentId));
     } catch (_) {}
+
     setExp1DocId(parentId);
     return parentId;
   }
