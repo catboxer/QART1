@@ -5,16 +5,15 @@ import {
   getDocs,
   query,
   orderBy,
+  limit,
   startAfter,
   doc,
   getDoc,
   updateDoc,
-  limit,
 } from 'firebase/firestore';
+import { config } from './config';
 import { signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-import { twoPropZ, twoSidedP, normalCdf } from './stats';
-import { config } from './config.js';
-
+import TimingArmsPanel from './TimingArmsPanel';
 /* ---------------- tiny chart helpers (no libs) ---------------- */
 function PBadge({ label, p }) {
   let tone = '#888';
@@ -46,121 +45,154 @@ function PBadge({ label, p }) {
     </div>
   );
 }
-
-/* ---- Tiny histogram (no libs) ---- */
-function buildHistogram(values, binSize = 2) {
-  const clean = values.filter((v) => Number.isFinite(v));
-  if (!clean.length) return [];
-  const bins = new Map(); // key = binStart e.g. 24, 26, ...
-  for (const v of clean) {
-    const clamped = Math.max(0, Math.min(100, v));
-    const k = Math.floor(clamped / binSize) * binSize;
-    bins.set(k, (bins.get(k) || 0) + 1);
-  }
-  return Array.from(bins.entries())
-    .sort((a, b) => a[0] - b[0])
-    .map(([start, count]) => ({
-      start,
-      end: start + binSize,
-      count,
-    }));
-}
-
-function Histogram({
-  title = 'Accuracy per run',
-  values,
-  bin = 2,
+function BoostScatter({
+  points,
   width = 520,
-  height = 200,
+  height = 240,
+  title = 'PRNG — Boost vs Base%',
 }) {
-  const data = buildHistogram(values || [], bin);
-  if (!data.length) return null;
+  if (!points || points.length === 0) return null;
 
-  const padL = 32,
-    padB = 24,
-    padR = 8,
-    padT = 24;
+  // axes
+  const padL = 40,
+    padB = 30,
+    padR = 10,
+    padT = 20;
   const plotW = width - padL - padR;
   const plotH = height - padT - padB;
 
-  const maxCount = Math.max(...data.map((d) => d.count));
-  const xStep = plotW / data.length;
+  const xMin = 0,
+    xMax = 100; // base % always clamped 0–100
+  const yMin = Math.min(0, ...points.map((p) => p.boost));
+  const yMax = Math.max(0, ...points.map((p) => p.boost));
+  const xTo = (x) => padL + ((x - xMin) / (xMax - xMin)) * plotW;
+  const yTo = (y) =>
+    padT + (1 - (y - yMin) / (yMax - yMin || 1)) * plotH;
 
-  const barW = Math.max(1, xStep * 0.9);
-  const yTo = (c) => padT + plotH - (plotH * c) / (maxCount || 1);
+  // simple grid ticks
+  const xTicks = [0, 20, 40, 60, 80, 100];
+  const yStep = Math.max(1, Math.ceil((yMax - yMin) / 6));
+  const yTicks = [];
+  for (let v = Math.floor(yMin); v <= Math.ceil(yMax); v += yStep)
+    yTicks.push(v);
 
   return (
-    <figure style={{ margin: '12px 0' }}>
-      <figcaption style={{ marginBottom: 4 }}>{title}</figcaption>
-      <svg width={width} height={height} aria-label={title}>
+    <div style={{ margin: '8px 0 16px' }}>
+      <h3 style={{ margin: '8px 0' }}>{title}</h3>
+      <svg
+        width={width}
+        height={height}
+        role="img"
+        aria-label={title}
+      >
         {/* axes */}
         <line
           x1={padL}
           y1={padT}
           x2={padL}
           y2={padT + plotH}
-          stroke="#999"
+          stroke="#ccc"
         />
         <line
           x1={padL}
           y1={padT + plotH}
           x2={padL + plotW}
           y2={padT + plotH}
-          stroke="#999"
+          stroke="#ccc"
         />
 
-        {/* bars */}
-        {data.map((d, i) => {
-          const x = padL + i * xStep + (xStep - barW) / 2;
-          const y = yTo(d.count);
-          const h = padT + plotH - y;
-          return (
-            <rect
-              key={i}
-              x={x}
-              y={y}
-              width={barW}
-              height={h}
-              fill="#4c78a8"
+        {/* grid + labels */}
+        {xTicks.map((t) => (
+          <g key={'x' + t}>
+            <line
+              x1={xTo(t)}
+              x2={xTo(t)}
+              y1={padT}
+              y2={padT + plotH}
+              stroke="#f1f1f1"
             />
-          );
-        })}
+            <text
+              x={xTo(t)}
+              y={padT + plotH + 16}
+              fontSize="10"
+              textAnchor="middle"
+            >
+              {t}
+            </text>
+          </g>
+        ))}
+        {yTicks.map((t) => (
+          <g key={'y' + t}>
+            <line
+              x1={padL}
+              x2={padL + plotW}
+              y1={yTo(t)}
+              y2={yTo(t)}
+              stroke="#f1f1f1"
+            />
+            <text
+              x={padL - 6}
+              y={yTo(t) + 3}
+              fontSize="10"
+              textAnchor="end"
+            >
+              {t}
+            </text>
+          </g>
+        ))}
 
-        {/* simple x ticks at 0, 20, 40, 60, 80, 100 */}
-        {[0, 20, 40, 60, 80, 100].map((t) => {
-          const x = padL + (t / 100) * plotW;
-          return (
-            <g key={t}>
-              <line
-                x1={x}
-                y1={padT + plotH}
-                x2={x}
-                y2={padT + plotH + 4}
-                stroke="#999"
-              />
-              <text
-                x={x}
-                y={padT + plotH + 14}
-                textAnchor="middle"
-                fontSize="10"
-              >
-                {t}
-              </text>
-            </g>
-          );
-        })}
-
-        {/* y max label */}
+        {/* axis titles */}
         <text
-          x={padL - 6}
-          y={padT + 8}
-          textAnchor="end"
-          fontSize="10"
+          x={padL + plotW / 2}
+          y={height - 4}
+          fontSize="11"
+          textAnchor="middle"
         >
-          {maxCount}
+          Base (unboosted) %
         </text>
+        <text
+          transform={`translate(12, ${padT + plotH / 2}) rotate(-90)`}
+          fontSize="11"
+          textAnchor="middle"
+        >
+          Boost amount (points)
+        </text>
+
+        {/* zero line for Y=0 */}
+        {yMin < 0 && yMax > 0 && (
+          <line
+            x1={padL}
+            x2={padL + plotW}
+            y1={yTo(0)}
+            y2={yTo(0)}
+            stroke="#ddd"
+          />
+        )}
+
+        {/* points */}
+        {points.map((p, i) => (
+          <circle
+            key={i}
+            cx={xTo(p.base)}
+            cy={yTo(p.boost)}
+            r={3}
+            // color: boosted vs not (keeps B/W-ish theme)
+            fill={p.boosted ? '#333' : '#aaa'}
+            opacity="0.9"
+          >
+            <title>{`base ${p.base.toFixed(1)} → +${
+              p.boost
+            } = ${p.displayed.toFixed(1)}${
+              p.boosted ? ' (boosted)' : ''
+            }`}</title>
+          </circle>
+        ))}
       </svg>
-    </figure>
+      <div style={{ fontSize: 12, color: '#666', marginTop: 6 }}>
+        Each dot = one session’s baseline block (last trial row). Dark
+        = boosted, light = not boosted.
+      </div>
+    </div>
   );
 }
 
@@ -258,11 +290,139 @@ function MiniBars({ pctPrimary, pctGhost }) {
   );
 }
 
-/* ---------------- small math helpers ---------------- */
+/* ==== NEW: tiny helpers for hold charts ==== */
+function RBadge({ label, r }) {
+  const tone = '#555';
+  return (
+    <div
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 8,
+        marginRight: 12,
+      }}
+    >
+      <span style={{ minWidth: 210 }}>{label}</span>
+      <span
+        style={{
+          padding: '4px 8px',
+          borderRadius: 6,
+          background: tone,
+          color: '#fff',
+          fontVariantNumeric: 'tabular-nums',
+        }}
+      >
+        r = {Number.isFinite(r) ? r.toFixed(3) : '—'}
+      </span>
+    </div>
+  );
+}
 
-// Generic binomial Z against any p0 in (0,1)
-const binomZAgainst = (p0, k, n) =>
-  n ? (k - n * p0) / Math.sqrt(n * p0 * (1 - p0)) : 0;
+function HoldQuartileChart({ title, holdReport }) {
+  if (!holdReport) return null;
+  const data = (holdReport.quartiles || []).map((q) => ({
+    label: q.label,
+    value: q.pct ?? 0,
+  }));
+  return (
+    <div>
+      <BarChart title={title} data={data} />
+      <div
+        style={{
+          display: 'flex',
+          gap: 12,
+          alignItems: 'center',
+          flexWrap: 'wrap',
+        }}
+      >
+        <PBadge
+          label="Hi vs Lo (Q4 vs Q1) — two-prop"
+          p={holdReport.hiVsLo?.p ?? NaN}
+        />
+        <RBadge
+          label="Pearson r (ms ↔ right)"
+          r={holdReport.pearson}
+        />
+        <div
+          style={{
+            padding: '6px 10px',
+            border: '1px solid #eee',
+            borderRadius: 6,
+            background: '#fafafa',
+            fontSize: 12,
+          }}
+          title="Quartile cutoffs for hold_duration_ms"
+        >
+          n={holdReport.nTrials} &nbsp;|&nbsp; cutoffs ms:&nbsp; Q1≤
+          {Math.round(holdReport.qCutoffsMs.q1)},&nbsp; Q2≤
+          {Math.round(holdReport.qCutoffsMs.q2)},&nbsp; Q3≤
+          {Math.round(holdReport.qCutoffsMs.q3)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- small math helpers ---------------- */
+function pearsonR(xs, ys) {
+  const n = Math.min(xs.length, ys.length);
+  if (n < 3) return null;
+  let sx = 0,
+    sy = 0,
+    sxx = 0,
+    syy = 0,
+    sxy = 0,
+    k = 0;
+  for (let i = 0; i < n; i++) {
+    const x = xs[i],
+      y = ys[i];
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    sx += x;
+    sy += y;
+    sxx += x * x;
+    syy += y * y;
+    sxy += x * y;
+    k++;
+  }
+  if (k < 3) return null;
+  const cov = sxy - (sx * sy) / k;
+  const vx = sxx - (sx * sx) / k;
+  const vy = syy - (sy * sy) / k;
+  const denom = Math.sqrt(vx * vy);
+  return denom ? cov / denom : null;
+}
+
+function erfApprox(z) {
+  const sign = z < 0 ? -1 : 1;
+  z = Math.abs(z);
+  const a1 = 0.254829592,
+    a2 = -0.284496736,
+    a3 = 1.421413741,
+    a4 = -1.453152027,
+    a5 = 1.061405429,
+    p = 0.3275911;
+  const t = 1 / (1 + p * z);
+  const y =
+    1 -
+    ((((a5 * t + a4) * t + a3) * t + a2) * t + a1) *
+      t *
+      Math.exp(-z * z);
+  return sign * y;
+}
+const normalCdf = (z) => 0.5 * (1 + erfApprox(z / Math.SQRT2));
+const twoSidedP = (z) => {
+  const pOne = 1 - normalCdf(Math.abs(z));
+  return Math.max(0, Math.min(1, 2 * pOne));
+};
+const binomZAgainstHalf = (k, n) =>
+  n ? (k - n * 0.5) / Math.sqrt(n * 0.25) : 0;
+const twoPropZ = (k1, n1, k2, n2) => {
+  const pPool = (k1 + k2) / (n1 + n2);
+  const se = Math.sqrt(pPool * (1 - pPool) * (1 / n1 + 1 / n2));
+  return se ? (k1 / n1 - k2 / n2) / se : 0;
+};
+const twoSidedP_fromCounts = (k1, n1, k2, n2) =>
+  twoSidedP(twoPropZ(k1, n1, k2, n2));
 
 /* ==== NEW: lightweight t-tests (p-values via normal approx) ==== */
 function mean(arr) {
@@ -281,44 +441,8 @@ function tTwoSidedP_fromNormalApprox(t, df) {
   const z = Math.abs(t);
   return Math.max(0, Math.min(1, 2 * (1 - normalCdf(z))));
 }
-function runRngSanityTest() {
-  const N = 10000,
-    k = 5;
-  const pick = () => Math.floor(Math.random() * k);
-  const pct = (x) => ((100 * x) / N).toFixed(2) + '%';
 
-  let physHits = 0,
-    qFixedHits = 0,
-    qBugHits = 0;
-
-  for (let i = 0; i < N; i++) {
-    const remapR = pick();
-    const targetP = (pick() + remapR) % k;
-    const demonP = (pick() + remapR) % k;
-    if (demonP === targetP) physHits++;
-  }
-  for (let i = 0; i < N; i++) {
-    const remapR = pick();
-    const target = (pick() + remapR) % k;
-    const demon = (pick() + remapR) % k;
-    if (demon === target) qFixedHits++;
-  }
-  for (let i = 0; i < N; i++) {
-    const remapR = pick();
-    const s = pick(),
-      g = pick();
-    const target = (s + remapR) % k;
-    const rPrime = (remapR + (g % k)) % k; // old buggy extra rotation
-    const demon = (g + rPrime) % k;
-    if (demon === target) qBugHits++;
-  }
-
-  console.log('RNG sanity (expect ~20% when unbiased)');
-  console.log('Physical demon ~= ', pct(physHits));
-  console.log('Quantum (fixed) demon ~= ', pct(qFixedHits));
-  console.log('Quantum demon ~= ', pct(qBugHits));
-}
-
+/* ---------------- general stats over sessions (pooled) ---------------- */
 /* ---------------- general stats over sessions (pooled) ---------------- */
 function computeStats(sessions, getTrials, sessionFilter) {
   const per = [];
@@ -346,8 +470,8 @@ function computeStats(sessions, getTrials, sessionFilter) {
 
     for (let i = 0; i < N; i++) {
       const t = trials[i] || {};
-      const p = Number(t.subject_hit) === 1 ? 1 : 0;
-      const g = Number(t.demon_hit) === 1 ? 1 : 0;
+      const p = Number(t.primary_is_right) === 1 ? 1 : 0;
+      const g = Number(t.ghost_is_right) === 1 ? 1 : 0;
       hp += p;
       hg += g;
 
@@ -355,10 +479,9 @@ function computeStats(sessions, getTrials, sessionFilter) {
       if (p === 0 && g === 1) n01++;
 
       const pos = t.primary_pos;
-      if (pos === 1 || pos === 2) {
-        if (lastPos != null && pos === lastPos) altOK = false;
-        lastPos = pos;
-      }
+      if (pos !== 1 && pos !== 2) altOK = false;
+      if (lastPos != null && pos === lastPos) altOK = false;
+      lastPos = pos;
 
       const qc = t.qrng_code;
       if (qc != null && qc !== 1 && qc !== 2) qrngOK = false;
@@ -395,11 +518,11 @@ function computeStats(sessions, getTrials, sessionFilter) {
     pctPooledP != null && pctPooledG != null
       ? pctPooledP - pctPooledG
       : null;
-  const p0 = 0.2; // 5-choice chance
-  const zGhost = binomZAgainst(p0, Kg, Ntot);
+
+  const zGhost = binomZAgainstHalf(Kg, Ntot);
   const pGhost = twoSidedP(zGhost);
-  const zPrimaryP0 = binomZAgainst(p0, Kp, Ntot);
-  const pPrimaryP0 = twoSidedP(zPrimaryP0);
+  const zPrimary50 = binomZAgainstHalf(Kp, Ntot);
+  const pPrimary50 = twoSidedP(zPrimary50);
 
   const zPP = twoPropZ(Kp, Ntot, Kg, Ntot);
   const pPP = twoSidedP(zPP);
@@ -434,12 +557,8 @@ function computeStats(sessions, getTrials, sessionFilter) {
     },
     tests: {
       rngBiasGhost: { z: zGhost, p: pGhost },
-      primaryVsChance: { z: zPrimaryP0, p: pPrimaryP0, p0 },
-      primaryVsGhost: {
-        z: zPP,
-        p: pPP,
-        method: 'two-proportion z (pooled)',
-      },
+      primaryVs50: { z: zPrimary50, p: pPrimary50 },
+      primaryVsGhost: { z: zPP, p: pPP },
       symmetryN10vsN01: {
         z: zSym,
         p: pSym,
@@ -459,8 +578,6 @@ function computeStatsSessionWeighted(
   sessionFilter
 ) {
   // Build map of earliest (first) session per participant
-  const p0 = 0.2;
-  const chancePct = 100 * p0;
   const firstByPerson = new Map();
   const toTime = (d) => {
     const t =
@@ -524,18 +641,16 @@ function computeStatsSessionWeighted(
 
     for (let i = 0; i < N; i++) {
       const t = trials[i] || {};
-      const p = Number(t.subject_hit) === 1 ? 1 : 0;
-      const g = Number(t.demon_hit) === 1 ? 1 : 0;
-
+      const p = Number(t.primary_is_right) === 1 ? 1 : 0;
+      const g = Number(t.ghost_is_right) === 1 ? 1 : 0;
       hp += p;
       hg += g;
       if (p === 1 && g === 0) n10++;
       if (p === 0 && g === 1) n01++;
       const pos = t.primary_pos;
-      if (pos === 1 || pos === 2) {
-        if (lastPos != null && pos === lastPos) altOK = false;
-        lastPos = pos;
-      }
+      if (pos !== 1 && pos !== 2) altOK = false;
+      if (lastPos != null && pos === lastPos) altOK = false;
+      lastPos = pos;
       const qc = t.qrng_code;
       if (qc != null && qc !== 1 && qc !== 2) qrngOK = false;
     }
@@ -586,16 +701,17 @@ function computeStatsSessionWeighted(
 
   const gVar = variance(pctGhostArr, meanG);
   const gSE = n > 1 ? Math.sqrt(gVar / n) : 0;
-  const tGhostVsChance = gSE ? (meanG - chancePct) / gSE : 0;
-  const pGhostVsChance = tTwoSidedP_fromNormalApprox(
-    tGhostVsChance,
+  const tGhostVs50 = gSE ? (meanG - 50) / gSE : 0;
+  const pGhostVs50 = tTwoSidedP_fromNormalApprox(
+    tGhostVs50,
     Math.max(1, n - 1)
   );
+
   const pVar = variance(pctPrimaryArr, meanP);
   const pSE = n > 1 ? Math.sqrt(pVar / n) : 0;
-  const tPrimaryVsChance = pSE ? (meanP - chancePct) / pSE : 0;
-  const pPrimaryVsChance = tTwoSidedP_fromNormalApprox(
-    tPrimaryVsChance,
+  const tPrimaryVs50 = pSE ? (meanP - 50) / pSE : 0;
+  const pPrimaryVs50 = tTwoSidedP_fromNormalApprox(
+    tPrimaryVs50,
     Math.max(1, n - 1)
   );
 
@@ -630,18 +746,16 @@ function computeStatsSessionWeighted(
     },
     tests: {
       rngBiasGhost: {
-        t: tGhostVsChance,
-        p: pGhostVsChance,
+        t: tGhostVs50,
+        p: pGhostVs50,
         df: Math.max(1, n - 1),
         type: 'one-sample t (approx)',
-        p0,
       },
-      primaryVsChance: {
-        t: tPrimaryVsChance,
-        p: pPrimaryVsChance,
+      primaryVs50: {
+        t: tPrimaryVs50,
+        p: pPrimaryVs50,
         df: Math.max(1, n - 1),
         type: 'one-sample t (approx)',
-        p0,
       },
       primaryVsGhost: {
         t: tPaired,
@@ -661,7 +775,190 @@ function computeStatsSessionWeighted(
   };
 }
 
-/* ==== NEW: early-exit helpers (DYNAMIC from config.trialsPerBlock) ==== */
+/* ---------------- priming A/B p-values + new diff-of-diff ---------------- */
+function primingABPvals(qrngPrimedReport, qrngUnprimedReport) {
+  if (!qrngPrimedReport || !qrngUnprimedReport) return null;
+
+  const k1P = qrngPrimedReport.totals.primaryRight;
+  const n1 = qrngPrimedReport.totals.trials;
+  const k1G = qrngPrimedReport.totals.ghostRight;
+
+  const k0P = qrngUnprimedReport.totals.primaryRight;
+  const n0 = qrngUnprimedReport.totals.trials;
+  const k0G = qrngUnprimedReport.totals.ghostRight;
+
+  // A/B on rates
+  const primaryRateP = twoSidedP_fromCounts(k1P, n1, k0P, n0);
+  const ghostRateP = twoSidedP_fromCounts(k1G, n1, k0G, n0);
+
+  // Difference-in-differences
+  const deltaPrimed = k1P / n1 - k1G / n1;
+  const deltaUnprimed = k0P / n0 - k0G / n0;
+  const diffDiff = deltaPrimed - deltaUnprimed;
+
+  const pPool = (k1P - k1G + (k0P - k0G)) / (n1 + n0);
+  const seDiffDiff = Math.sqrt(
+    pPool * (1 - pPool) * (1 / n1 + 1 / n0)
+  );
+  const zDiffDiff = seDiffDiff ? diffDiff / seDiffDiff : 0;
+  const pDiffDiff = twoSidedP(zDiffDiff);
+
+  return {
+    primaryRate: { p: primaryRateP },
+    ghostRate: { p: ghostRateP },
+    diffOfDiff: {
+      p: pDiffDiff,
+      deltaPrimed,
+      deltaUnprimed,
+      diffDiff,
+    },
+  };
+}
+
+/* ---------------- Diagnostics helpers ---------------- */
+function breakdownBy(trials, key, rightField) {
+  const map = new Map();
+  for (const t of trials) {
+    if (!t) continue;
+    const k = t[key];
+    const r = Number(t[rightField]) === 1 ? 1 : 0;
+    if (!map.has(k)) map.set(k, { n: 0, hits: 0 });
+    const row = map.get(k);
+    row.n += 1;
+    row.hits += r;
+  }
+  return Array.from(map.entries()).map(([k, { n, hits }]) => ({
+    key: String(k),
+    n,
+    pct: n ? (100 * hits) / n : null,
+  }));
+}
+function parityPct(trials, rawField) {
+  let n = 0,
+    odd = 0;
+  for (const t of trials) {
+    const b = t?.[rawField];
+    if (typeof b === 'number') {
+      n += 1;
+      if ((b & 1) === 1) odd += 1;
+    }
+  }
+  return { n, pctOdd: n ? (100 * odd) / n : null };
+}
+/* ==== NEW: hold-duration vs accuracy helpers ==== */
+function quantile(sortedNums, q) {
+  if (!sortedNums.length) return null;
+  const pos = (sortedNums.length - 1) * q;
+  const base = Math.floor(pos);
+  const rest = pos - base;
+  if (sortedNums[base + 1] !== undefined) {
+    return (
+      sortedNums[base] +
+      rest * (sortedNums[base + 1] - sortedNums[base])
+    );
+  } else {
+    return sortedNums[base];
+  }
+}
+
+// Simple Pearson r on raw arrays (0/1 right vs ms)
+function pearsonR_num(xs, ys) {
+  const n = Math.min(xs.length, ys.length);
+  if (n < 3) return null;
+  let sx = 0,
+    sy = 0,
+    sxx = 0,
+    syy = 0,
+    sxy = 0,
+    k = 0;
+  for (let i = 0; i < n; i++) {
+    const x = xs[i],
+      y = ys[i];
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    sx += x;
+    sy += y;
+    sxx += x * x;
+    syy += y * y;
+    sxy += x * y;
+    k++;
+  }
+  if (k < 3) return null;
+  const cov = sxy - (sx * sy) / k;
+  const vx = sxx - (sx * sx) / k;
+  const vy = syy - (sy * sy) / k;
+  const denom = Math.sqrt(vx * vy);
+  return denom ? cov / denom : null;
+}
+
+function computeHoldReport(
+  trials,
+  {
+    holdField = 'hold_duration_ms',
+    rightField = 'primary_is_right',
+  } = {}
+) {
+  const rows = [];
+  for (const t of trials || []) {
+    const ms = Number(t?.[holdField]);
+    const right = Number(t?.[rightField]) === 1 ? 1 : 0;
+    if (Number.isFinite(ms) && (right === 0 || right === 1)) {
+      rows.push({ ms, right });
+    }
+  }
+  if (rows.length < 20) return null; // need some data
+
+  // Quartile cutoffs
+  const holdsSorted = rows.map((r) => r.ms).sort((a, b) => a - b);
+  const q1 = quantile(holdsSorted, 0.25);
+  const q2 = quantile(holdsSorted, 0.5);
+  const q3 = quantile(holdsSorted, 0.75);
+
+  const bins = [
+    { label: 'Q1 (fastest)', hits: 0, n: 0, pred: (ms) => ms <= q1 },
+    { label: 'Q2', hits: 0, n: 0, pred: (ms) => ms > q1 && ms <= q2 },
+    { label: 'Q3', hits: 0, n: 0, pred: (ms) => ms > q2 && ms <= q3 },
+    { label: 'Q4 (slowest)', hits: 0, n: 0, pred: (ms) => ms > q3 },
+  ];
+  for (const r of rows) {
+    for (const b of bins)
+      if (b.pred(r.ms)) {
+        b.n++;
+        b.hits += r.right;
+        break;
+      }
+  }
+  const quartiles = bins.map((b) => ({
+    label: b.label,
+    n: b.n,
+    pct: b.n ? (100 * b.hits) / b.n : null,
+  }));
+
+  // Hi vs Lo (top vs bottom quartile), 2-prop test
+  const hi = bins[3]; // Q4
+  const lo = bins[0]; // Q1
+  const pHiLo = twoSidedP_fromCounts(hi.hits, hi.n, lo.hits, lo.n);
+
+  // Pearson r between ms and right (0/1)
+  const xs = rows.map((r) => r.ms);
+  const ys = rows.map((r) => r.right);
+  const r = pearsonR_num(xs, ys);
+
+  return {
+    quartiles,
+    hiVsLo: {
+      kHi: hi.hits,
+      nHi: hi.n,
+      kLo: lo.hits,
+      nLo: lo.n,
+      p: pHiLo,
+    },
+    pearson: r,
+    nTrials: rows.length,
+    qCutoffsMs: { q1, q2, q3 },
+  };
+}
+
+/* ==== NEW: early-exit helpers ==== */
 const getBaselineTrials = (doc) =>
   (doc?.full_stack?.trialResults || []).length;
 const getQuantumTrials = (doc) =>
@@ -669,23 +966,20 @@ const getQuantumTrials = (doc) =>
 const getClientLocalTrials = (doc) =>
   (doc?.client_local?.trialResults || []).length;
 
-// Pull straight from config.trialsPerBlock, with simple numeric fallbacks
-const MIN_FULL_STACK = Number(
-  config?.completerMin?.full_stack ??
-    config?.trialsPerBlock?.full_stack ??
-    20
-);
-const MIN_SPOON_LOVE = Number(
-  config?.completerMin?.spoon_love ??
-    config?.trialsPerBlock?.spoon_love ??
-    20
-);
-const MIN_CLIENT_LOCAL = Number(
-  config?.completerMin?.client_local ??
-    config?.trialsPerBlock?.client_local ??
-    20
-);
-
+// Pull completer mins from config (prefer explicit completerMin, then trialsPerBlock), with sane fallbacks.
+const asNum = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
+const MIN_FULL_STACK =
+  asNum(config?.completerMin?.full_stack) ??
+  asNum(config?.trialsPerBlock?.full_stack) ??
+  20;
+const MIN_SPOON_LOVE =
+  asNum(config?.completerMin?.spoon_love) ??
+  asNum(config?.trialsPerBlock?.spoon_love) ??
+  50;
+const MIN_CLIENT_LOCAL =
+  asNum(config?.completerMin?.client_local) ??
+  asNum(config?.trialsPerBlock?.client_local) ??
+  20;
 function isCompleter(doc) {
   return (
     getBaselineTrials(doc) >= MIN_FULL_STACK &&
@@ -732,292 +1026,20 @@ function normalizeExitReason(reason) {
   return s.length > 40 ? s.slice(0, 40) + '…' : s;
 }
 
-/*-----------------------PATTERNS------------------------*/
-
-function PatternsPanel({ trials, title = 'Patterns' }) {
-  // ---------- Helpers (scoped to this component) ----------
-  const firstInt = (row, keys) => {
-    for (const k of keys) {
-      const v = row?.[k];
-      if (Number.isInteger(v)) return v;
-    }
-    return null;
-  };
-  const firstVal = (row, keys) => {
-    for (const k of keys) {
-      const v = row?.[k];
-      if (v != null) return v;
-    }
-    return null;
-  };
-  const listFrom = (row) => {
-    for (const k of [
-      'options',
-      'display_order',
-      'symbols',
-      'choices',
-      'stimulus_ids',
-      'buttons',
-      'ids',
-    ]) {
-      if (Array.isArray(row?.[k])) return row[k];
-    }
-    return null;
-  };
-  const getIndexFromIdAndList = (id, list) => {
-    if (!list) return null;
-    for (let idx = 0; idx < list.length; idx++) {
-      const v = list[idx];
-      if (v === id) return idx; // array of ids like ["A","B",...]
-      if (v && typeof v === 'object') {
-        if (
-          v.id === id ||
-          v._id === id ||
-          v.key === id ||
-          v.value === id
-        )
-          return idx;
-      }
-    }
-    return null;
-  };
-  const getPick = (row) => {
-    const idx = firstInt(row, [
-      'selected_index',
-      'subject_index_0based',
-      'subject_index',
-      'choice_index',
-      'response_index',
-      'pressed_index',
-      'button_index',
-      'subject_choice_index',
-      'subjectSelectedIndex',
-      'selectedIdx',
-    ]);
-    if (idx != null) return idx;
-    const id = firstVal(row, [
-      'selected_id',
-      'subject_id',
-      'choice_id',
-      'answer_id',
-      'picked_id',
-      'clicked_id',
-    ]);
-    if (id != null) {
-      const j = getIndexFromIdAndList(id, listFrom(row));
-      if (Number.isInteger(j)) return j;
-    }
-    return null;
-  };
-  const getTgt = (row) => {
-    const idx = firstInt(row, [
-      'target_index_0based',
-      'target_index',
-      'correct_index',
-    ]);
-    if (idx != null) return idx;
-    const id = firstVal(row, [
-      'target_id',
-      'target',
-      'correct_id',
-      'answer_id',
-      'answer_index',
-      'correct_position',
-    ]);
-    if (id != null) {
-      const j = getIndexFromIdAndList(id, listFrom(row));
-      if (Number.isInteger(j)) return j;
-    }
-    return null;
-  };
-
-  if (!Array.isArray(trials) || trials.length === 0) return null;
-  // DEBUG coverage counts
-  const _dbg = { total: trials.length, pickOK: 0, tgtOK: 0 };
-  for (const r of trials) {
-    if (Number.isInteger(getPick(r))) _dbg.pickOK++;
-    if (Number.isInteger(getTgt(r))) _dbg.tgtOK++;
-  }
-
-  // ---------- 1) Position bias ----------
-  const posCounts = Array(5).fill(0);
-  let validPickCount = 0;
-  for (const r of trials) {
-    const i = getPick(r);
-    if (Number.isInteger(i) && i >= 0 && i < 5) {
-      posCounts[i]++;
-      validPickCount++;
-    }
-  }
-  const posPct = posCounts.map((n) =>
-    validPickCount ? ((100 * n) / validPickCount).toFixed(1) : '0.0'
-  );
-
-  // ---------- 2) Streakiness (skip null picks) ----------
-  const runLengths = [];
-  let prevPick = null;
-  let run = 0;
-  for (const r of trials) {
-    const pick = getPick(r);
-    if (!Number.isInteger(pick)) continue;
-    if (prevPick === null) {
-      prevPick = pick;
-      run = 1;
-    } else if (pick === prevPick) {
-      run++;
-    } else {
-      runLengths.push(run);
-      prevPick = pick;
-      run = 1;
-    }
-  }
-  if (run > 0) runLengths.push(run);
-
-  // ---------- 3) Lag-k alignment ----------
-  const lagRows = [];
-  for (let k = 1; k <= 5; k++) {
-    let n = 0,
-      hit = 0;
-    for (let t = 0; t + k < trials.length; t++) {
-      const pick = getPick(trials[t]);
-      const tgt = getTgt(trials[t + k]);
-      if (Number.isInteger(pick) && Number.isInteger(tgt)) {
-        n++;
-        if (pick === tgt) hit++;
-      }
-    }
-    lagRows.push({
-      k,
-      n,
-      pct: n ? ((100 * hit) / n).toFixed(1) : '—',
-    });
-  }
-
-  // ---------- 4) Timing vs accuracy (optional) ----------
-  const withBuckets = trials.filter((r) =>
-    Number.isFinite(r.press_bucket_ms)
-  );
-  let timingLine = null;
-  if (withBuckets.length) {
-    const sorted = [...withBuckets].sort(
-      (a, b) => a.press_bucket_ms - b.press_bucket_ms
-    );
-    const median =
-      sorted[Math.floor(sorted.length / 2)].press_bucket_ms;
-    const acc = (arr) => {
-      const n = arr.length;
-      const k = arr.reduce(
-        (a, t) => a + (Number(t.subject_hit) === 1 ? 1 : 0),
-        0
-      );
-      return n ? ((100 * k) / n).toFixed(1) : '—';
-    };
-    const fast = withBuckets.filter(
-      (t) => t.press_bucket_ms <= median
-    );
-    const slow = withBuckets.filter(
-      (t) => t.press_bucket_ms > median
-    );
-    timingLine = `Fast: ${acc(fast)}%  |  Slow: ${acc(slow)}% (N=${
-      withBuckets.length
-    })`;
-  }
-
-  return (
-    <details style={{ marginTop: 12 }}>
-      <summary>{title}</summary>
-      <small style={{ color: '#666', marginLeft: 8 }}>
-        N={_dbg.total}, picks={_dbg.pickOK}, tgts={_dbg.tgtOK}
-      </small>
-
-      <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
-        <div>
-          <strong>Position bias</strong>
-          <div style={{ fontSize: 13, marginTop: 4 }}>
-            {posPct.map((p, i) => (
-              <span
-                key={i}
-                style={{ display: 'inline-block', minWidth: 54 }}
-              >
-                {`Pos ${i}: ${p}%`}
-              </span>
-            ))}
-          </div>
-        </div>
-
-        <div>
-          <strong>Streakiness</strong>
-          <div style={{ fontSize: 13, marginTop: 4 }}>
-            {runLengths.length
-              ? `Run lengths: ${runLengths.join(', ')}`
-              : 'No valid picks'}
-          </div>
-        </div>
-
-        <div>
-          <strong>Lag-k alignment</strong>
-          <table style={{ borderCollapse: 'collapse', marginTop: 4 }}>
-            <thead>
-              <tr>
-                <th style={{ textAlign: 'left', padding: '2px 8px' }}>
-                  k
-                </th>
-                <th
-                  style={{ textAlign: 'right', padding: '2px 8px' }}
-                >
-                  N
-                </th>
-                <th
-                  style={{ textAlign: 'right', padding: '2px 8px' }}
-                >
-                  % equal
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {lagRows.map((r) => (
-                <tr key={r.k}>
-                  <td style={{ padding: '2px 8px' }}>{r.k}</td>
-                  <td
-                    style={{ padding: '2px 8px', textAlign: 'right' }}
-                  >
-                    {r.n}
-                  </td>
-                  <td
-                    style={{ padding: '2px 8px', textAlign: 'right' }}
-                  >
-                    {r.pct}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        {timingLine && (
-          <div>
-            <strong>Timing vs accuracy</strong>
-            <div style={{ fontSize: 13, marginTop: 4 }}>
-              {timingLine}
-            </div>
-          </div>
-        )}
-      </div>
-    </details>
-  );
-}
-
 /* ---------------------- COMPONENT ---------------------- */
 export default function QAExport() {
   const [rows, setRows] = useState([]);
   const [busy, setBusy] = useState(false);
-  const [reportPRNG, setReportPRNG] = useState(null); // full_stack (Physical)
-  const [reportQRNG, setReportQRNG] = useState(null); // spoon_love (Quantum)
-  const [reportCL, setReportCL] = useState(null); // client_local (Local)
-  const [reportALL, setReportALL] = useState(null); // pooled across blocks
+  const [reportPRNGPrimed, setReportPRNGPrimed] = useState(null);
+  const [reportPRNGUnprimed, setReportPRNGUnprimed] = useState(null);
+  const [reportQRNG, setReportQRNG] = useState(null); // Spoon Love (all)
+  const [reportQRNGPrimed, setReportQRNGPrimed] = useState(null); // primed
+  const [reportQRNGUnprimed, setReportQRNGUnprimed] = useState(null); // unprimed
+  const [abPvals, setAbPvals] = useState(null);
+  const [abPvalsPRNG, setAbPvalsPRNG] = useState(null);
+  const [boostPoints, setBoostPoints] = useState([]);
   const [error, setError] = useState('');
   const [authed, setAuthed] = useState(false);
-  const [canToggle, setCanToggle] = useState(false);
   const [uid, setUid] = useState('');
   const [qaStatus, setQaStatus] = useState(null);
   const [toggling, setToggling] = useState(false);
@@ -1033,6 +1055,11 @@ export default function QAExport() {
     completers: 0,
     nonCompleters: 0,
     exitBreakdown: [],
+  });
+  // Hold-duration analyses (QRNG): { primary, ghost }
+  const [holdQRNG, setHoldQRNG] = useState({
+    primary: null,
+    ghost: null,
   });
 
   // 🔐 Sign in anonymously
@@ -1053,32 +1080,6 @@ export default function QAExport() {
     });
     return () => unsub();
   }, []);
-  // ✅ Determine if current user is allowed to toggle QA
-  useEffect(() => {
-    (async () => {
-      try {
-        const u = auth.currentUser;
-        if (!u) {
-          setCanToggle(false);
-          return;
-        }
-
-        const t = await u.getIdTokenResult();
-        const provider = t.signInProvider; // must be "password"
-        const email = u.email || '';
-
-        const snap = await getDoc(doc(db, 'admin', 'qa'));
-        const qa = snap.exists() ? snap.data() : {};
-        const whitelisted =
-          Array.isArray(qa.emails) && qa.emails.includes(email);
-
-        setCanToggle(provider === 'password' && whitelisted);
-      } catch {
-        setCanToggle(false);
-      }
-    })();
-  }, [authed, qaStatus]); // recompute when auth or QA doc changes
-
   // 🔑 Sign in with Email/Password (prompts), then refresh QA status and data
   const handleEmailSignIn = async () => {
     try {
@@ -1190,25 +1191,25 @@ export default function QAExport() {
   };
 
   // 🔀 Toggle QA enabled (requires rules allowing your UID)
-  // 🔀 Toggle QA enabled (allowed only for whitelisted email+password users)
-  // 🔀 Toggle QA enabled (allowed only for whitelisted email+password users)
   const toggleQA = async () => {
     if (!qaStatus) return;
-    if (!canToggle) {
-      setError(
-        'Sign in with email+password and be on admin/qa.emails to toggle QA.'
-      );
+    if (!authed) {
+      setError('Not signed in yet. Try again in a moment.');
       return;
     }
     try {
       setToggling(true);
       const qaRef = doc(db, 'admin', 'qa');
       await updateDoc(qaRef, { enabled: !qaStatus.enabled });
-      await reloadQaStatus(); // UI state comes from Firestore
+      await reloadQaStatus();
       setError('');
     } catch (err) {
       console.error('Error toggling QA:', err);
-      setError(`Denied: ${err?.code || ''} ${err?.message || err}`);
+      setError(
+        `Toggle failed: ${err?.code || ''} ${err?.message || err}. ` +
+          `If this says permission-denied, confirm your rules allow email admins to update admin/qa ` +
+          `and that your email is in admin/qa.emails.`
+      );
     } finally {
       setToggling(false);
     }
@@ -1239,7 +1240,6 @@ export default function QAExport() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
   // If trial arrays are not in the main doc, fetch them from the subcollection
-  // If trial arrays are not in the main doc, fetch them from the subcollection
   const hydrateTrialDetails = async (rows) => {
     const jobs = rows.map(async (d) => {
       const hasFs =
@@ -1248,239 +1248,46 @@ export default function QAExport() {
       const hasSl =
         Array.isArray(d?.spoon_love?.trialResults) &&
         d.spoon_love.trialResults.length;
-      const hasCl =
-        Array.isArray(d?.client_local?.trialResults) &&
-        d.client_local.trialResults.length;
-
-      if (hasFs && hasSl && hasCl) return d;
+      if (hasFs && hasSl) return d;
       if (!d.id) return d;
-
       try {
         const ref = doc(
           db,
-          'experiment1_responses',
+          'experiment2_responses',
           d.id,
           'details',
           'trialDetails'
         );
         const snap = await getDoc(ref);
         if (snap.exists()) {
-          const det = snap.data() || {};
+          const det = snap.data();
           d.full_stack = d.full_stack || {};
           d.spoon_love = d.spoon_love || {};
-          d.client_local = d.client_local || {};
-
           if (!hasFs && Array.isArray(det.full_stack_trials))
             d.full_stack.trialResults = det.full_stack_trials;
-
           if (!hasSl && Array.isArray(det.spoon_love_trials))
             d.spoon_love.trialResults = det.spoon_love_trials;
-
-          console.log('[Hydrated sample]', {
-            pickType:
-              typeof d.spoon_love?.trialResults?.[0]?.selected_index,
-            tgtType:
-              typeof d.spoon_love?.trialResults?.[0]
-                ?.target_index_0based,
-            row: d.spoon_love?.trialResults?.[0],
-          });
-
-          if (!hasCl && Array.isArray(det.client_local_trials))
-            d.client_local.trialResults = det.client_local_trials;
         }
-
-        // 🔁 Fallback: if any block still missing, synthesize from /logs
-        const needFs = !(
-          d?.full_stack?.trialResults &&
-          d.full_stack.trialResults.length
-        );
-        const needSl = !(
-          d?.spoon_love?.trialResults &&
-          d.spoon_love.trialResults.length
-        );
-        const needCl = !(
-          d?.client_local?.trialResults &&
-          d.client_local.trialResults.length
-        );
-
-        if (needFs || needSl || needCl) {
-          const logSnap = await getDocs(
-            collection(db, 'experiment1_responses', d.id, 'logs')
-          );
-          const logs = logSnap.docs.map((x) => x.data() || {});
-
-          // normalize block names:
-          // - accept r.block_type OR r.block
-          // - accept suffixed names like "full_stack-Physical"
-          const normBlock = (v) => {
-            const s = String(v || '').toLowerCase();
-            if (s.startsWith('full_stack')) return 'full_stack';
-            if (s.startsWith('spoon_love')) return 'spoon_love';
-            if (s.startsWith('client_local')) return 'client_local';
-            return s;
-          };
-
-          // Coercers: turn numeric-looking strings into numbers
-          const toInt = (v) => {
-            if (v === null || v === undefined) return null;
-            if (typeof v === 'number' && Number.isFinite(v))
-              return v | 0;
-            if (typeof v === 'string') {
-              const n = parseInt(v, 10);
-              return Number.isNaN(n) ? null : n;
-            }
-            return null;
-          };
-          const toNum = (v) => {
-            if (v === null || v === undefined) return null;
-            const n = typeof v === 'number' ? v : Number(v);
-            return Number.isFinite(n) ? n : null;
-          };
-
-          const byBlock = (want) =>
-            logs
-              .filter(
-                (r) => normBlock(r.block_type ?? r.block) === want
-              )
-              .sort(
-                (a, b) =>
-                  (toInt(a.trial_index) ?? 0) -
-                  (toInt(b.trial_index) ?? 0)
-              )
-              .map((r) => {
-                // normalize indices (handle numbers or numeric strings)
-                const targetIdx =
-                  toInt(r.target_index_0based) ??
-                  toInt(r.target_index) ??
-                  toInt(r.correct_index);
-
-                const ghostIdx =
-                  toInt(r.ghost_index_0based) ?? toInt(r.demon_index);
-
-                const pickIdx =
-                  toInt(r.selected_index) ??
-                  toInt(r.subject_index_0based) ??
-                  toInt(r.subject_index);
-
-                // options may sometimes be a JSON string; parse if needed
-                let options = r.options;
-                if (
-                  !Array.isArray(options) &&
-                  typeof options === 'string'
-                ) {
-                  try {
-                    const parsed = JSON.parse(options);
-                    if (Array.isArray(parsed)) options = parsed;
-                  } catch {}
-                }
-
-                return {
-                  // core correctness
-                  subject_hit: toInt(r.subject_hit) === 1 ? 1 : 0,
-                  demon_hit: toInt(r.demon_hit) === 1 ? 1 : 0,
-                  matched: toInt(r.matched) === 1 ? 1 : 0,
-
-                  // indexing & ordering
-                  trial_index: toInt(r.trial_index),
-                  rng_source: r.rng_source ?? null,
-
-                  // targets (write BOTH names)
-                  target_index_0based: targetIdx,
-                  target_index: targetIdx,
-
-                  // demon/ghost index (optional)
-                  ghost_index_0based: ghostIdx,
-                  ghost_index: ghostIdx,
-
-                  // raw bytes (provenance)
-                  raw_byte:
-                    toInt(r.raw_byte) ?? toInt(r.subject_raw_byte),
-                  ghost_raw_byte:
-                    toInt(r.ghost_raw_byte) ??
-                    toInt(r.demon_raw_byte),
-
-                  // subject choice — normalize to selected_index
-                  selected_index: pickIdx,
-                  selected_id: r.selected_id ?? null,
-
-                  // UI context
-                  options: Array.isArray(options) ? options : null,
-
-                  // timing (used in Quantum timing split)
-                  press_bucket_ms: toNum(r.press_bucket_ms),
-                  press_start_ts: r.press_start_ts ?? null,
-
-                  // block label for grouping
-                  block_type: (
-                    r.block_type ??
-                    r.block ??
-                    ''
-                  ).toString(),
-                };
-              });
-
-          // assign synthesized trials where still needed
-          d.full_stack = d.full_stack || {};
-          d.spoon_love = d.spoon_love || {};
-          d.client_local = d.client_local || {};
-
-          if (needFs)
-            d.full_stack.trialResults = byBlock('full_stack');
-          if (needSl)
-            d.spoon_love.trialResults = byBlock('spoon_love');
-          if (needCl)
-            d.client_local.trialResults = byBlock('client_local');
-        }
-      } catch (_) {
-        // ignore hydration errors for a single doc
-      }
+      } catch (_) {}
       return d;
     });
-
     await Promise.all(jobs);
     return rows;
-  };
-
-  // Fetch commit–reveal artifacts (hash, salt, tapes) for one run
-  const fetchRevealForRun = async (runId) => {
-    try {
-      const snap = await getDocs(
-        collection(db, 'experiment1_responses', runId, 'reveal')
-      );
-      return snap.docs.map((d) => {
-        const r = d.data() || {};
-        const revealed_at = r.revealed_at?.toDate
-          ? r.revealed_at.toDate().toISOString()
-          : r.revealed_at ?? null;
-        return {
-          id: d.id,
-          block_type: r.block_type ?? null,
-          commit_algo: r.commit_algo ?? 'SHA-256',
-          commit_hash_hex: r.commit_hash_hex ?? null,
-          salt_hex: r.salt_hex ?? null,
-          tape_pairs_b64: r.tape_pairs_b64 ?? null,
-          bytes_per_trial: r.bytes_per_trial ?? null,
-          tape_length_trials: r.tape_length_trials ?? null,
-          revealed_at,
-          created_iso: r.created_iso ?? null,
-          rng_source: r.rng_source ?? null,
-        };
-      });
-    } catch (_) {
-      return [];
-    }
   };
 
   // 📦 Fetch all sessions and build reports + priming A/B p-values
   const fetchAll = async () => {
     setBusy(true);
     setError('');
-    setReportPRNG(null);
+    setReportPRNGPrimed(null);
+    setReportPRNGUnprimed(null);
     setReportQRNG(null);
-    setReportCL(null);
-    setReportALL(null);
+    setReportQRNGPrimed(null);
+    setReportQRNGUnprimed(null);
+    setAbPvals(null);
+    setAbPvalsPRNG(null);
 
-    const coll = collection(db, 'experiment1_responses');
+    const coll = collection(db, 'experiment2_responses');
     const pageSize = 500;
     let qRef = query(coll, orderBy('timestamp'), limit(pageSize));
     let all = [];
@@ -1507,11 +1314,6 @@ export default function QAExport() {
       setRows(all);
       setLastUpdated(new Date());
       buildReports(all);
-      console.log(
-        'FS sample',
-        rows.find((d) => d?.full_stack?.trialResults?.length)
-          ?.full_stack?.trialResults?.[0]
-      );
     } catch (e) {
       console.error(e);
       setError(`Fetch failed: ${e?.code || ''} ${e?.message || e}`);
@@ -1549,53 +1351,169 @@ export default function QAExport() {
     setSummary({ total, completers, nonCompleters, exitBreakdown });
 
     // session filter per mode
-    // session filter per mode
     const filterCompleters = (d) => isCompleter(d);
     const sessionFilter =
       mode === 'completers' ? filterCompleters : null;
+    const allow = sessionFilter ?? (() => true);
 
-    // trial extractors for each block
+    // trial extractors + flags
     const getPRNG = (doc) => doc?.full_stack?.trialResults || [];
     const getQRNG = (doc) => doc?.spoon_love?.trialResults || [];
-    const getCL = (doc) => doc?.client_local?.trialResults || [];
+    const isPrimed = (doc) => !!doc?.assignment?.primed;
 
-    let rPRNG, rQRNG, rCL;
+    let rQRNG, rPrimed, rUnprimed;
+    let rPRNGPrimed, rPRNGUnprimed;
+
     if (mode === 'sessionWeighted') {
-      rPRNG = computeStatsSessionWeighted(
+      rPRNGPrimed = computeStatsSessionWeighted(
         all,
         getPRNG,
-        sessionFilter
+        (d) => allow(d) && isPrimed(d)
+      );
+      rPRNGUnprimed = computeStatsSessionWeighted(
+        all,
+        getPRNG,
+        (d) => allow(d) && !isPrimed(d)
       );
       rQRNG = computeStatsSessionWeighted(
         all,
         getQRNG,
         sessionFilter
       );
-      rCL = computeStatsSessionWeighted(all, getCL, sessionFilter);
+      rPrimed = computeStatsSessionWeighted(
+        all,
+        getQRNG,
+        (d) => allow(d) && isPrimed(d)
+      );
+      rUnprimed = computeStatsSessionWeighted(
+        all,
+        getQRNG,
+        (d) => allow(d) && !isPrimed(d)
+      );
     } else {
-      rPRNG = computeStats(all, getPRNG, sessionFilter);
+      rPRNGPrimed = computeStats(
+        all,
+        getPRNG,
+        (d) => allow(d) && isPrimed(d)
+      );
+      rPRNGUnprimed = computeStats(
+        all,
+        getPRNG,
+        (d) => allow(d) && !isPrimed(d)
+      );
       rQRNG = computeStats(all, getQRNG, sessionFilter);
-      rCL = computeStats(all, getCL, sessionFilter);
+      rPrimed = computeStats(
+        all,
+        getQRNG,
+        (d) => allow(d) && isPrimed(d)
+      );
+      rUnprimed = computeStats(
+        all,
+        getQRNG,
+        (d) => allow(d) && !isPrimed(d)
+      );
     }
 
-    // Build pooled (ALL) report by concatenating trials from all blocks
-    const getALL = (doc) => [
-      ...(doc?.full_stack?.trialResults || []),
-      ...(doc?.spoon_love?.trialResults || []),
-      ...(doc?.client_local?.trialResults || []),
-    ];
-
-    let rALL;
-    if (mode === 'sessionWeighted') {
-      rALL = computeStatsSessionWeighted(all, getALL, sessionFilter);
-    } else {
-      rALL = computeStats(all, getALL, sessionFilter);
-    }
-
-    setReportPRNG(rPRNG);
+    setReportPRNGPrimed(rPRNGPrimed);
+    setReportPRNGUnprimed(rPRNGUnprimed);
     setReportQRNG(rQRNG);
-    setReportCL(rCL);
-    setReportALL(rALL);
+    setReportQRNGPrimed(rPrimed);
+    setReportQRNGUnprimed(rUnprimed);
+    setAbPvals(primingABPvals(rPrimed, rUnprimed));
+    setAbPvalsPRNG(primingABPvals(rPRNGPrimed, rPRNGUnprimed));
+
+    // --- Correlation: mean hold (ms) vs % RIGHT per session (QRNG) ---
+    try {
+      const rowsForCorr = [];
+      for (const d of all) {
+        const trials = (d?.spoon_love?.trialResults || []).filter(
+          Boolean
+        );
+        if (!trials.length) continue;
+
+        const rights = trials.reduce(
+          (a, t) => a + (Number(t?.primary_is_right) === 1 ? 1 : 0),
+          0
+        );
+        const pctRight = (100 * rights) / trials.length;
+
+        const holds = trials
+          .map((t) => Number(t?.hold_duration_ms))
+          .filter(Number.isFinite);
+
+        if (!holds.length) continue;
+        const meanHold =
+          holds.reduce((a, b) => a + b, 0) / holds.length;
+
+        rowsForCorr.push({ meanHold, pctRight });
+      }
+      const xs = rowsForCorr.map((r) => r.meanHold);
+      const ys = rowsForCorr.map((r) => r.pctRight);
+      const rHoldVsScore = pearsonR(xs, ys);
+
+      // Keep it in qaDebug and log it
+      setQaDebug((prev) => ({ ...(prev || {}), rHoldVsScore }));
+      if (rHoldVsScore != null) {
+        console.log(
+          '[QA] Corr(mean hold ms, %RIGHT) =',
+          rHoldVsScore.toFixed(3)
+        );
+      }
+    } catch (e) {
+      console.warn('Hold-vs-score correlation failed:', e);
+    }
+
+    // --- NEW: trial-level hold-duration vs accuracy (QRNG) ---
+    try {
+      const allQRNGTrials = all
+        .flatMap((d) => d?.spoon_love?.trialResults || [])
+        .filter(Boolean);
+
+      const primaryHold = computeHoldReport(allQRNGTrials, {
+        holdField: 'hold_duration_ms',
+        rightField: 'primary_is_right',
+      });
+      const ghostHold = computeHoldReport(allQRNGTrials, {
+        holdField: 'hold_duration_ms',
+        rightField: 'ghost_is_right',
+      });
+
+      setHoldQRNG({ primary: primaryHold, ghost: ghostHold });
+    } catch (e) {
+      console.warn('Hold report build failed:', e);
+      setHoldQRNG({ primary: null, ghost: null });
+    }
+
+    // --- Build PRNG boost points (one per session: last baseline trial) ---
+    try {
+      const pts = [];
+      for (const d of all) {
+        // prefer hydrated trials under full_stack.trialResults; fall back to details payload if present
+        const fs = (
+          d?.full_stack?.trialResults ||
+          d?.details?.full_stack_trials ||
+          []
+        ).filter(Boolean);
+        if (!fs.length) continue;
+
+        const last = fs[fs.length - 1];
+        // Only consider rows marked as the block summary
+        if (!last || !last.block_summary) continue;
+
+        const base = Number(last.fs_base_percent);
+        const boost = Number(last.fs_boost_amount);
+        const displayed = Number(last.fs_displayed_percent);
+        const boosted = !!last.fs_boosted;
+
+        if (Number.isFinite(base) && Number.isFinite(boost)) {
+          pts.push({ base, boost, displayed, boosted });
+        }
+      }
+      setBoostPoints(pts);
+    } catch (e) {
+      console.warn('Boost points build failed:', e);
+      setBoostPoints([]);
+    }
   };
 
   const downloadJSON = () => {
@@ -1611,48 +1529,30 @@ export default function QAExport() {
     a.remove();
     URL.revokeObjectURL(url);
   };
-  // Download sessions INCLUDING details/trialDetails AND commit–reveal artifacts
-  const downloadJSONWithTrialsAndReveal = async () => {
+  // NEW: Download sessions INCLUDING subcollection trial arrays (details/trialDetails)
+  // NEW: Download sessions INCLUDING subcollection trial arrays (details/trialDetails)
+  const downloadJSONWithTrials = async () => {
     try {
       setBusy(true);
-      // Ensure trial arrays exist on every row
+      // Ensure all rows have trial arrays by hydrating details/trialDetails
       const complete = await hydrateTrialDetails(
         rows.map((r) => ({ ...r }))
       );
 
-      // Attach commit–reveal artifacts to each session
-      const payload = await Promise.all(
-        complete.map(async (d) => {
-          const reveal = d.id ? await fetchRevealForRun(d.id) : [];
-          return {
-            id: d.id,
-            ...d,
-            full_stack: {
-              ...(d.full_stack || {}),
-              trialResults:
-                d.full_stack?.trialResults ||
-                d.full_stack_trials ||
-                [],
-            },
-            spoon_love: {
-              ...(d.spoon_love || {}),
-              trialResults:
-                d.spoon_love?.trialResults ||
-                d.spoon_love_trials ||
-                [],
-            },
-            client_local: {
-              ...(d.client_local || {}),
-              trialResults:
-                d.client_local?.trialResults ||
-                d.client_local_trials || // fallback if ever present flat
-                [],
-            },
-            // Commit–reveal artifacts for cryptographic audit
-            reveal,
-          };
-        })
-      );
+      const payload = complete.map((d) => ({
+        id: d.id,
+        ...d,
+        full_stack: {
+          ...(d.full_stack || {}),
+          trialResults:
+            d.full_stack?.trialResults || d.full_stack_trials || [],
+        },
+        spoon_love: {
+          ...(d.spoon_love || {}),
+          trialResults:
+            d.spoon_love?.trialResults || d.spoon_love_trials || [],
+        },
+      }));
 
       const blob = new Blob([JSON.stringify(payload, null, 2)], {
         type: 'application/json',
@@ -1660,7 +1560,7 @@ export default function QAExport() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'sessions_with_trials_and_reveal.json';
+      a.download = 'sessions_with_trials.json';
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -1689,188 +1589,51 @@ export default function QAExport() {
           warnings: r.warnings,
         }));
 
-  const firstTenPRNG = useMemo(
-    () => makeFirstTen(reportPRNG),
-    [reportPRNG]
+  const firstTenPRNGPrimed = useMemo(
+    () => makeFirstTen(reportPRNGPrimed),
+    [reportPRNGPrimed]
+  );
+  const firstTenPRNGUnprimed = useMemo(
+    () => makeFirstTen(reportPRNGUnprimed),
+    [reportPRNGUnprimed]
   );
   const firstTenQRNG = useMemo(
     () => makeFirstTen(reportQRNG),
     [reportQRNG]
   );
-  const firstTenCL = useMemo(
-    () => makeFirstTen(reportCL),
-    [reportCL]
+  const firstTenPrimed = useMemo(
+    () => makeFirstTen(reportQRNGPrimed),
+    [reportQRNGPrimed]
   );
-  const firstTenALL = useMemo(
-    () => makeFirstTen(reportALL),
-    [reportALL]
-  );
-  const completerDebugRows = useMemo(() => {
-    return rows.slice(0, 20).map((d) => ({
-      id: d.id || d.session_id || '(no id)',
-      fs: (d?.full_stack?.trialResults || []).length,
-      sl: (d?.spoon_love?.trialResults || []).length,
-      cl: (d?.client_local?.trialResults || []).length,
-      min_fs: MIN_FULL_STACK,
-      min_sl: MIN_SPOON_LOVE,
-      min_cl: MIN_CLIENT_LOCAL,
-      completer: isCompleter(d),
-    }));
-  }, [rows]);
-
-  /* ===== Histograms: % accuracy per run (by block) ===== */
-  const accuraciesFS = useMemo(() => {
-    return rows.map((d) => {
-      const trials = d?.full_stack?.trialResults || [];
-      const hits = trials.reduce(
-        (a, t) => a + (Number(t.subject_hit) === 1 ? 1 : 0),
-        0
-      );
-      return trials.length ? (100 * hits) / trials.length : null;
-    });
-  }, [rows]);
-
-  const accuraciesSL = useMemo(() => {
-    return rows.map((d) => {
-      const trials = d?.spoon_love?.trialResults || [];
-      const hits = trials.reduce(
-        (a, t) => a + (Number(t.subject_hit) === 1 ? 1 : 0),
-        0
-      );
-      return trials.length ? (100 * hits) / trials.length : null;
-    });
-  }, [rows]);
-
-  const accuraciesCL = useMemo(() => {
-    return rows.map((d) => {
-      const trials = d?.client_local?.trialResults || [];
-      const hits = trials.reduce(
-        (a, t) => a + (Number(t.subject_hit) === 1 ? 1 : 0),
-        0
-      );
-      return trials.length ? (100 * hits) / trials.length : null;
-    });
-  }, [rows]);
-  // RNG randomness (ghost/demon vs 20%) by RNG source
-  // Flatten trials across all sessions for each block (for PatternsPanel)
-  const trialsFSAll = useMemo(
-    () => rows.flatMap((d) => d?.full_stack?.trialResults || []),
-    [rows]
-  );
-  const trialsSLAll = useMemo(
-    () => rows.flatMap((d) => d?.spoon_love?.trialResults || []),
-    [rows]
-  );
-  const trialsCLAll = useMemo(
-    () => rows.flatMap((d) => d?.client_local?.trialResults || []),
-    [rows]
+  const firstTenUnprimed = useMemo(
+    () => makeFirstTen(reportQRNGUnprimed),
+    [reportQRNGUnprimed]
   );
 
-  const qrngGhostBySource = useMemo(() => {
-    // Quantum block
-    if (!reportQRNG) return [];
-    const m = new Map();
-    for (const t of rows.flatMap(
-      (d) => d?.spoon_love?.trialResults || []
-    )) {
-      const src = String(t?.rng_source ?? 'unknown');
-      const g = Number(t?.demon_hit) === 1 ? 1 : 0;
-      const row = m.get(src) || { source: src, n: 0, k: 0 };
-      row.n += 1;
-      row.k += g;
-      m.set(src, row);
-    }
-    return Array.from(m.values())
-      .map((r) => ({
-        source: r.source,
-        n: r.n,
-        pct: r.n ? (100 * r.k) / r.n : null,
-        p: twoSidedP(binomZAgainst(0.2, r.k, r.n)),
-      }))
-      .sort((a, b) => b.n - a.n);
-  }, [rows, reportQRNG]);
-
-  const prngGhostBySource = useMemo(() => {
-    // Full Stack block
-    if (!reportPRNG) return [];
-    const m = new Map();
-    for (const t of rows.flatMap(
-      (d) => d?.full_stack?.trialResults || []
-    )) {
-      const src = String(t?.rng_source ?? 'unknown');
-      const g = Number(t?.demon_hit) === 1 ? 1 : 0;
-
-      const row = m.get(src) || { source: src, n: 0, k: 0 };
-      row.n += 1;
-      row.k += g;
-      m.set(src, row);
-    }
-    return Array.from(m.values())
-      .map((r) => ({
-        source: r.source,
-        n: r.n,
-        pct: r.n ? (100 * r.k) / r.n : null,
-        p: twoSidedP(binomZAgainst(0.2, r.k, r.n)),
-      }))
-      .sort((a, b) => b.n - a.n);
-  }, [rows, reportPRNG]);
-
-  /* ===== Block-by-block deltas per participant ===== */
-  function pctFromTrials(trials) {
-    if (!Array.isArray(trials) || !trials.length) return null;
-    const hits = trials.reduce(
-      (a, t) =>
-        a + (Number(t.subject_hit ?? t.matched) === 1 ? 1 : 0),
-      0
-    );
-    return (100 * hits) / trials.length;
-  }
-  function firstBy(map, key, seed) {
-    return map.get(key) ?? (map.set(key, seed), seed);
-  }
-
-  const deltasPerParticipant = useMemo(() => {
-    // Group sessions by participant_id
-    const byPid = new Map();
-    for (const d of rows) {
-      const pid = d?.participant_id || 'unknown';
-      const list = firstBy(byPid, pid, []);
-      list.push(d);
-    }
-
-    // Pick first session for each participant (policy: first)
-    const out = [];
-    for (const [pid, sessions] of byPid.entries()) {
-      const s0 = sessions[0] || {};
-      const fsPct = pctFromTrials(s0?.full_stack?.trialResults);
-      const slPct = pctFromTrials(s0?.spoon_love?.trialResults);
-      const clPct = pctFromTrials(s0?.client_local?.trialResults);
-
-      const deltaSLvsFS =
-        Number.isFinite(slPct) && Number.isFinite(fsPct)
-          ? slPct - fsPct
-          : null;
-      const deltaCLvsFS =
-        Number.isFinite(clPct) && Number.isFinite(fsPct)
-          ? clPct - fsPct
-          : null;
-
-      out.push({
-        participant_id: pid,
-        fsPct,
-        slPct,
-        clPct,
-        deltaSLvsFS,
-        deltaCLvsFS,
-      });
-    }
-    // Sort for readability: largest SL boost first
-    out.sort(
-      (a, b) =>
-        (b.deltaSLvsFS ?? -Infinity) - (a.deltaSLvsFS ?? -Infinity)
-    );
-    return out;
-  }, [rows]);
+  // --- Diagnostics inputs for QRNG (all)
+  const allQRNGTrials = useMemo(
+    () =>
+      reportQRNG
+        ? rows.flatMap((d) => d?.spoon_love?.trialResults || [])
+        : [],
+    [rows, reportQRNG]
+  );
+  const ghostByPos = useMemo(
+    () => breakdownBy(allQRNGTrials, 'primary_pos', 'ghost_is_right'),
+    [allQRNGTrials]
+  );
+  const ghostBySource = useMemo(
+    () => breakdownBy(allQRNGTrials, 'rng_source', 'ghost_is_right'),
+    [allQRNGTrials]
+  );
+  const parityPrimary = useMemo(
+    () => parityPct(allQRNGTrials, 'raw_byte'),
+    [allQRNGTrials]
+  );
+  const parityGhost = useMemo(
+    () => parityPct(allQRNGTrials, 'ghost_raw_byte'),
+    [allQRNGTrials]
+  );
 
   const FactsCard = ({ report }) => {
     if (!report) return null;
@@ -1886,6 +1649,20 @@ export default function QAExport() {
           marginBottom: 8,
         }}
       >
+        {qaDebug?.rHoldVsScore != null && (
+          <div
+            style={{
+              margin: '8px 0',
+              padding: '8px 12px',
+              border: '1px solid #ddd',
+              borderRadius: 8,
+            }}
+          >
+            <strong>Corr(mean hold ms, % RIGHT, QRNG):</strong>{' '}
+            {qaDebug.rHoldVsScore.toFixed(3)}
+          </div>
+        )}
+
         <div
           style={{
             padding: '8px 12px',
@@ -1997,7 +1774,7 @@ export default function QAExport() {
           {usingSessionWeighted ? (
             <>
               <PBadge
-                label="Session-weighted: Demon vs chance (p₀=20%)"
+                label="Session-weighted: Demon vs 50% (t)"
                 p={report.tests.rngBiasGhost.p}
               />
               <PBadge
@@ -2005,24 +1782,23 @@ export default function QAExport() {
                 p={report.tests.primaryVsGhost.p}
               />
               <PBadge
-                label="Session-weighted: Subject vs chance (p₀=20%)"
-                p={report.tests.primaryVsChance.p}
+                label="Session-weighted: Subject vs 50% (t)"
+                p={report.tests.primaryVs50.p}
               />
             </>
           ) : (
             <>
               <PBadge
-                label="RNG bias (demon vs chance, p₀=20%)"
+                label="RNG bias (demon vs 50%)"
                 p={report.tests.rngBiasGhost.p}
               />
-
               <PBadge
                 label="Subject vs Demon"
                 p={report.tests.primaryVsGhost.p}
               />
               <PBadge
-                label="Subject vs chance (p₀=20%)"
-                p={report.tests.primaryVsChance.p}
+                label="Subject vs 50%"
+                p={report.tests.primaryVs50.p}
               />
             </>
           )}
@@ -2030,7 +1806,12 @@ export default function QAExport() {
             label="n10 vs n01 symmetry (Subject↔︎Demon)"
             p={report.tests.symmetryN10vsN01.p}
           />
-
+          {qaDebug?.rHoldVsScore != null && (
+            <PBadge
+              label="Corr(mean hold ms, %RIGHT) — QRNG"
+              p={Math.abs(qaDebug.rHoldVsScore)}
+            />
+          )}
           {extraBadges}
         </div>
 
@@ -2136,7 +1917,7 @@ export default function QAExport() {
                     borderBottom: '1px solid #eee',
                   }}
                 >
-                  RNG
+                  QRNG OK
                 </th>
                 <th
                   style={{
@@ -2267,7 +2048,7 @@ export default function QAExport() {
     );
   };
 
-  /* ==== Reference For Labels UI (5-choice, no priming) ==== */
+  /* ==== NEW: Reference For Labels UI ==== */
   const ReferenceMatrix = () => (
     <details style={{ marginTop: 8 }}>
       <summary>What do these labels mean?</summary>
@@ -2308,11 +2089,10 @@ export default function QAExport() {
             </tr>
             <tr>
               <td style={{ padding: '6px 8px' }}>
-                RNG bias (demon vs 20%)
+                RNG bias (demon vs 50%)
               </td>
               <td style={{ padding: '6px 8px' }}>
-                Is the demon’s accuracy different from chance (p₀ =
-                20%)?
+                Is the demon’s accuracy different from 50% (chance)?
               </td>
             </tr>
             <tr>
@@ -2328,15 +2108,51 @@ export default function QAExport() {
               </td>
               <td style={{ padding: '6px 8px' }}>
                 When subject and demon disagree, is the number of
-                subject-only wins (<code>n10</code>) different from
-                demon-only wins (<code>n01</code>)?
+                subject-only wins different from demon-only wins?
               </td>
             </tr>
             <tr>
-              <td style={{ padding: '6px 8px' }}>Subject vs 20%</td>
+              <td style={{ padding: '6px 8px' }}>Subject vs 50%</td>
               <td style={{ padding: '6px 8px' }}>
                 Is the <strong>subject’s</strong> accuracy different
-                from chance (p₀ = 20%)?
+                from chance?
+              </td>
+            </tr>
+            <tr>
+              <td style={{ padding: '6px 8px' }}>
+                Primed vs Not — Subject rate
+              </td>
+              <td style={{ padding: '6px 8px' }}>
+                Is the <strong>subject’s</strong> accuracy different
+                between the primed and unprimed groups?
+              </td>
+            </tr>
+            <tr>
+              <td style={{ padding: '6px 8px' }}>
+                Primed vs Not — Demon rate
+              </td>
+              <td style={{ padding: '6px 8px' }}>
+                Is the <strong>demon’s</strong> accuracy different
+                between the primed and unprimed groups?
+              </td>
+            </tr>
+            <tr>
+              <td style={{ padding: '6px 8px' }}>
+                Participant-weighted t-tests
+              </td>
+              <td style={{ padding: '6px 8px' }}>
+                Treats each participant as one unit by using their
+                first session only, then runs t-tests across
+                participants.
+              </td>
+            </tr>
+            <tr>
+              <td style={{ padding: '6px 8px' }}>
+                Diff-of-diff (gap bigger in primed?)
+              </td>
+              <td style={{ padding: '6px 8px' }}>
+                Does priming change the size of the{' '}
+                <strong>subject − demon</strong> accuracy gap?
               </td>
             </tr>
           </tbody>
@@ -2345,12 +2161,12 @@ export default function QAExport() {
     </details>
   );
 
-  /* ==== Trial columns cheat-sheet (5-choice, no legacy) ==== */
+  /* ==== NEW: Trial columns cheat-sheet ==== */
   const TrialColumnsHelp = () => (
     <details style={{ marginTop: 8 }}>
       <summary>What does each trial field mean?</summary>
       <div style={{ overflowX: 'auto', marginTop: 6 }}>
-        <table style={{ borderCollapse: 'collapse', minWidth: 820 }}>
+        <table style={{ borderCollapse: 'collapse', minWidth: 760 }}>
           <thead>
             <tr style={{ background: '#fff' }}>
               <th
@@ -2392,97 +2208,61 @@ export default function QAExport() {
             </tr>
           </thead>
           <tbody>
-            {/* Core correctness flags (5-choice) */}
             <tr>
               <td style={{ padding: '6px 8px' }}>
-                <code>subject_hit</code>
+                <code>primary_is_right</code>
               </td>
               <td style={{ padding: '6px 8px' }}>Subject</td>
               <td style={{ padding: '6px 8px' }}>0/1</td>
               <td style={{ padding: '6px 8px' }}>
-                1 if the subject’s choice matched the target on this
-                trial.
+                1 if the subject’s answer was correct on this trial.
               </td>
             </tr>
             <tr>
               <td style={{ padding: '6px 8px' }}>
-                <code>demon_hit</code>
+                <code>ghost_is_right</code>
               </td>
               <td style={{ padding: '6px 8px' }}>Demon</td>
               <td style={{ padding: '6px 8px' }}>0/1</td>
               <td style={{ padding: '6px 8px' }}>
-                1 if the demon’s choice matched the target on this
-                trial.
+                1 if the demon’s answer was correct on this trial.
               </td>
             </tr>
-
-            {/* Indices (reconstruction / audits) */}
             <tr>
               <td style={{ padding: '6px 8px' }}>
-                <code>target_index</code>
+                <code>primary_pos</code>
               </td>
               <td style={{ padding: '6px 8px' }}>Allocation</td>
-              <td style={{ padding: '6px 8px' }}>0–4</td>
+              <td style={{ padding: '6px 8px' }}>1 or 2</td>
               <td style={{ padding: '6px 8px' }}>
-                Target’s index within the 5 displayed symbols.
+                Which slot the subject’s target was assigned to
+                (should alternate 1,2,1,2,…).
               </td>
             </tr>
             <tr>
               <td style={{ padding: '6px 8px' }}>
-                <code>subject_index</code>
+                <code>raw_byte</code>
               </td>
-              <td style={{ padding: '6px 8px' }}>Subject</td>
-              <td style={{ padding: '6px 8px' }}>0–4</td>
               <td style={{ padding: '6px 8px' }}>
-                Subject’s chosen index within the 5 displayed symbols.
+                Allocation (subject stream)
               </td>
-            </tr>
-            <tr>
+              <td style={{ padding: '6px 8px' }}>integer (0–255)</td>
               <td style={{ padding: '6px 8px' }}>
-                <code>demon_index</code>
-              </td>
-              <td style={{ padding: '6px 8px' }}>Demon</td>
-              <td style={{ padding: '6px 8px' }}>0–4</td>
-              <td style={{ padding: '6px 8px' }}>
-                Demon’s chosen index within the 5 displayed symbols.
+                Underlying random byte for the subject stream; parity
+                often maps to the side.
               </td>
             </tr>
             <tr>
               <td style={{ padding: '6px 8px' }}>
-                <code>display_order</code>
-              </td>
-              <td style={{ padding: '6px 8px' }}>UI</td>
-              <td style={{ padding: '6px 8px' }}>array[5]</td>
-              <td style={{ padding: '6px 8px' }}>
-                IDs for the 5 symbols in the order shown (for
-                reproducibility/audits).
-              </td>
-            </tr>
-
-            {/* RNG provenance */}
-            <tr>
-              <td style={{ padding: '6px 8px' }}>
-                <code>subject_raw_byte</code>
+                <code>ghost_raw_byte</code>
               </td>
               <td style={{ padding: '6px 8px' }}>
-                RNG (subject stream)
+                Allocation (demon stream)
               </td>
-              <td style={{ padding: '6px 8px' }}>0–255</td>
+              <td style={{ padding: '6px 8px' }}>integer (0–255)</td>
               <td style={{ padding: '6px 8px' }}>
-                Underlying random byte used for the subject/target
-                selection.
-              </td>
-            </tr>
-            <tr>
-              <td style={{ padding: '6px 8px' }}>
-                <code>demon_raw_byte</code>
-              </td>
-              <td style={{ padding: '6px 8px' }}>
-                RNG (demon stream)
-              </td>
-              <td style={{ padding: '6px 8px' }}>0–255</td>
-              <td style={{ padding: '6px 8px' }}>
-                Underlying random byte used for the demon selection.
+                Underlying random byte for the demon stream; parity
+                likewise maps to its side.
               </td>
             </tr>
             <tr>
@@ -2501,109 +2281,29 @@ export default function QAExport() {
                 <code>qrng_code</code>
               </td>
               <td style={{ padding: '6px 8px' }}>Integrity</td>
+              <td style={{ padding: '6px 8px' }}>1 or 2</td>
               <td style={{ padding: '6px 8px' }}>
-                small int / string
-              </td>
-              <td style={{ padding: '6px 8px' }}>
-                Quality/status code for QRNG fetch (expected “1”/“2”
-                when present).
-              </td>
-            </tr>
-
-            {/* Server rotation proof (for 5-choice mapping) */}
-            <tr>
-              <td style={{ padding: '6px 8px' }}>
-                <code>remap_r</code>
-              </td>
-              <td style={{ padding: '6px 8px' }}>Server</td>
-              <td style={{ padding: '6px 8px' }}>0–4</td>
-              <td style={{ padding: '6px 8px' }}>
-                Server rotation applied to map raw bytes to the
-                on-screen indices.
+                Quality code for QRNG fetch (expected 1 or 2 when
+                present). Other values trigger a warning.
               </td>
             </tr>
             <tr>
               <td style={{ padding: '6px 8px' }}>
-                <code>remap_proof</code>
+                <code>n10 / n01</code> (derived)
               </td>
-              <td style={{ padding: '6px 8px' }}>Server</td>
-              <td style={{ padding: '6px 8px' }}>string</td>
+              <td style={{ padding: '6px 8px' }}>Comparison</td>
+              <td style={{ padding: '6px 8px' }}>counts</td>
               <td style={{ padding: '6px 8px' }}>
-                Proof/HMAC for the rotation (for integrity/audits).
-              </td>
-            </tr>
-
-            {/* Trial/session bookkeeping */}
-            <tr>
-              <td style={{ padding: '6px 8px' }}>
-                <code>block</code>
-              </td>
-              <td style={{ padding: '6px 8px' }}>Session</td>
-              <td style={{ padding: '6px 8px' }}>string</td>
-              <td style={{ padding: '6px 8px' }}>
-                Block name (e.g., <code>full_stack-Physical</code>,{' '}
-                <code>spoon_love-Quantum</code>,{' '}
-                <code>client_local-Local</code>).
-              </td>
-            </tr>
-            <tr>
-              <td style={{ padding: '6px 8px' }}>
-                <code>trial_index</code>
-              </td>
-              <td style={{ padding: '6px 8px' }}>Trial</td>
-              <td style={{ padding: '6px 8px' }}>0-based int</td>
-              <td style={{ padding: '6px 8px' }}>
-                Index of the trial within its block.
-              </td>
-            </tr>
-            <tr>
-              <td style={{ padding: '6px 8px' }}>
-                <code>press_bucket_ms</code>
-              </td>
-              <td style={{ padding: '6px 8px' }}>Timing</td>
-              <td style={{ padding: '6px 8px' }}>int</td>
-              <td style={{ padding: '6px 8px' }}>
-                Rounded response-time bucket for the button press.
-              </td>
-            </tr>
-            <tr>
-              <td style={{ padding: '6px 8px' }}>
-                <code>session_id</code>
-              </td>
-              <td style={{ padding: '6px 8px' }}>Session</td>
-              <td style={{ padding: '6px 8px' }}>string</td>
-              <td style={{ padding: '6px 8px' }}>
-                Opaque session identifier linking trials to a run.
-              </td>
-            </tr>
-            <tr>
-              <td style={{ padding: '6px 8px' }}>
-                <code>participant_id</code>
-              </td>
-              <td style={{ padding: '6px 8px' }}>Participant</td>
-              <td style={{ padding: '6px 8px' }}>string</td>
-              <td style={{ padding: '6px 8px' }}>
-                Anonymized participant identifier.
-              </td>
-            </tr>
-            <tr>
-              <td style={{ padding: '6px 8px' }}>
-                <code>created_at</code>
-              </td>
-              <td style={{ padding: '6px 8px' }}>Firestore</td>
-              <td style={{ padding: '6px 8px' }}>Timestamp</td>
-              <td style={{ padding: '6px 8px' }}>
-                When this trial row was written (server time).
+                <code>n10</code> increments when subject is right &
+                demon is wrong; <code>n01</code> increments when
+                subject is wrong & demon is right.
               </td>
             </tr>
           </tbody>
         </table>
-
         <p style={{ marginTop: 8, color: '#555' }}>
-          Tip: the parent session/run document also stores{' '}
-          <code>timestamp</code> (server time),{' '}
-          <code>created_at</code>, <code>updated_at</code>, and{' '}
-          <code>exit_reason</code> (e.g., <em>complete</em>).
+          Note: backend field names keep <code>ghost_*</code> for
+          compatibility; the UI shows them as “demon.”
         </p>
       </div>
     </details>
@@ -2625,7 +2325,7 @@ export default function QAExport() {
         { id: 'pooled', label: 'All trials (pooled)' },
         {
           id: 'completers',
-          label: `Completers only (≥${MIN_FULL_STACK} baseline, ≥${MIN_SPOON_LOVE} quantum, ≥${MIN_CLIENT_LOCAL} local)`,
+          label: 'Completers only (≥20 baseline, ≥50 quantum)',
         },
         {
           id: 'sessionWeighted',
@@ -2691,67 +2391,6 @@ export default function QAExport() {
           %)
         </div>
       </div>
-      <details style={{ marginTop: 8 }}>
-        <summary>Completer debug (first 20 runs)</summary>
-        <table style={{ borderCollapse: 'collapse', marginTop: 6 }}>
-          <thead>
-            <tr>
-              <th style={{ textAlign: 'left', padding: '4px 8px' }}>
-                Run
-              </th>
-              <th style={{ textAlign: 'right', padding: '4px 8px' }}>
-                FS
-              </th>
-              <th style={{ textAlign: 'right', padding: '4px 8px' }}>
-                SL
-              </th>
-              <th style={{ textAlign: 'right', padding: '4px 8px' }}>
-                CL
-              </th>
-              <th style={{ textAlign: 'right', padding: '4px 8px' }}>
-                Need
-              </th>
-              <th style={{ textAlign: 'center', padding: '4px 8px' }}>
-                Completer
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {completerDebugRows.map((r) => (
-              <tr key={r.id}>
-                <td style={{ padding: '4px 8px' }}>
-                  <code>{r.id.slice(0, 8)}…</code>
-                </td>
-                <td
-                  style={{ padding: '4px 8px', textAlign: 'right' }}
-                >
-                  {r.fs}
-                </td>
-                <td
-                  style={{ padding: '4px 8px', textAlign: 'right' }}
-                >
-                  {r.sl}
-                </td>
-                <td
-                  style={{ padding: '4px 8px', textAlign: 'right' }}
-                >
-                  {r.cl}
-                </td>
-                <td
-                  style={{ padding: '4px 8px', textAlign: 'right' }}
-                >
-                  {r.min_fs}/{r.min_sl}/{r.min_cl}
-                </td>
-                <td
-                  style={{ padding: '4px 8px', textAlign: 'center' }}
-                >
-                  {r.completer ? '✅' : '❌'}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </details>
 
       <details style={{ marginTop: 6 }}>
         <summary>Exit reasons (counts & percentages)</summary>
@@ -2927,27 +2566,13 @@ export default function QAExport() {
               flexWrap: 'wrap',
             }}
           >
-            <button
-              onClick={toggleQA}
-              disabled={!canToggle || toggling}
-              title={
-                !canToggle
-                  ? 'Sign in with email+password and be whitelisted to toggle'
-                  : ''
-              }
-            >
+            <button onClick={toggleQA} disabled={toggling}>
               {toggling
                 ? 'Working…'
                 : qaStatus.enabled
                 ? 'Disable QA'
                 : 'Enable QA'}
             </button>
-            {!canToggle && (
-              <small style={{ color: '#666' }}>
-                Sign in with email+password and ensure your email is
-                listed in admin/qa.emails.
-              </small>
-            )}
 
             {/* Refresh status + data */}
             <button
@@ -3009,9 +2634,6 @@ export default function QAExport() {
           </div>
         </div>
       )}
-      <button onClick={runRngSanityTest}>
-        Run RNG Sanity Test - check console log for results
-      </button>
 
       {/* ==== NEW: mode toggle & summary ==== */}
       <ModeToggle />
@@ -3020,7 +2642,7 @@ export default function QAExport() {
       <SummaryCard />
 
       <p>
-        This page fetches <code>experiment1_responses</code>, lets you
+        This page fetches <code>experiment2_responses</code>, lets you
         download JSON, and runs QA checks in-browser.
       </p>
 
@@ -3036,437 +2658,358 @@ export default function QAExport() {
             Download sessions.json
           </button>
           <button
-            onClick={downloadJSONWithTrialsAndReveal}
+            onClick={downloadJSONWithTrials}
             style={{ marginLeft: 8 }}
-            title="Includes details/trialDetails AND commit–reveal (hash, salt, base64 tapes)"
+            title="Includes details/trialDetails subdoc arrays"
           >
-            Download sessions_with_trials_and_reveal.json
+            Download sessions_with_trials.json
           </button>
         </p>
       ) : null}
 
       {/* Sections */}
 
+      {/* PRNG — show A/B badges so abPvalsPRNG is used */}
       <Section
-        title="All Blocks (pooled)"
-        report={reportALL}
-        firstTen={firstTenALL}
+        title="PRNG — Full Stack (Primed only)"
+        report={reportPRNGPrimed}
+        firstTen={firstTenPRNGPrimed}
+        extraBadges={
+          abPvalsPRNG ? (
+            <>
+              <PBadge
+                label="Primed vs Unprimed — Subject rate"
+                p={abPvalsPRNG.primaryRate.p}
+              />
+              <PBadge
+                label="Primed vs Unprimed — Demon rate"
+                p={abPvalsPRNG.ghostRate.p}
+              />
+              <PBadge
+                label="Diff-of-diff (gap bigger in primed?)"
+                p={abPvalsPRNG.diffOfDiff.p}
+              />
+            </>
+          ) : null
+        }
       />
+      {/* PRNG — Boost vs Base scatter */}
+      {boostPoints && boostPoints.length > 0 ? (
+        <BoostScatter points={boostPoints} />
+      ) : (
+        <p style={{ color: '#666' }}>
+          (No boost analytics found yet — run baseline blocks that
+          save fs_base_percent/fs_boost_amount.)
+        </p>
+      )}
+
       <Section
-        title="Physical"
-        report={reportPRNG}
-        firstTen={firstTenPRNG}
-      />
-      <PatternsPanel
-        trials={trialsFSAll}
-        title="Patterns — Physical RNG"
+        title="PRNG — Full Stack (Not primed)"
+        report={reportPRNGUnprimed}
+        firstTen={firstTenPRNGUnprimed}
       />
 
       <Section
-        title="Quantum"
+        title="QRNG — Spoon Love (all)"
         report={reportQRNG}
         firstTen={firstTenQRNG}
+        extraBadges={
+          abPvals ? (
+            <>
+              <PBadge
+                label="Primed vs Not — Subject rate"
+                p={abPvals.primaryRate.p}
+              />
+              <PBadge
+                label="Primed vs Not — Demon rate"
+                p={abPvals.ghostRate.p}
+              />
+              <PBadge
+                label="Diff-of-diff (gap bigger in primed?)"
+                p={abPvals.diffOfDiff.p}
+              />
+            </>
+          ) : null
+        }
+        diagnostics={
+          <details style={{ marginTop: 8 }}>
+            <summary>Diagnostics</summary>
+            <div
+              style={{
+                display: 'flex',
+                gap: 16,
+                flexWrap: 'wrap',
+                marginTop: 8,
+              }}
+            >
+              <div>
+                <h4 style={{ margin: '6px 0' }}>
+                  Demon % by primary_pos
+                </h4>
+                <table style={{ borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr>
+                      <th
+                        style={{
+                          textAlign: 'left',
+                          padding: '4px 8px',
+                        }}
+                      >
+                        pos
+                      </th>
+                      <th
+                        style={{
+                          textAlign: 'right',
+                          padding: '4px 8px',
+                        }}
+                      >
+                        Demon %
+                      </th>
+                      <th
+                        style={{
+                          textAlign: 'right',
+                          padding: '4px 8px',
+                        }}
+                      >
+                        N
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ghostByPos.map((g) => (
+                      <tr key={g.key}>
+                        <td style={{ padding: '4px 8px' }}>
+                          {g.key}
+                        </td>
+                        <td
+                          style={{
+                            padding: '4px 8px',
+                            textAlign: 'right',
+                          }}
+                        >
+                          {g.pct?.toFixed(2) ?? '—'}%
+                        </td>
+                        <td
+                          style={{
+                            padding: '4px 8px',
+                            textAlign: 'right',
+                          }}
+                        >
+                          {g.n}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div>
+                <h4 style={{ margin: '6px 0' }}>
+                  Demon % by rng_source
+                </h4>
+                <table style={{ borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr>
+                      <th
+                        style={{
+                          textAlign: 'left',
+                          padding: '4px 8px',
+                        }}
+                      >
+                        source
+                      </th>
+                      <th
+                        style={{
+                          textAlign: 'right',
+                          padding: '4px 8px',
+                        }}
+                      >
+                        Demon %
+                      </th>
+                      <th
+                        style={{
+                          textAlign: 'right',
+                          padding: '4px 8px',
+                        }}
+                      >
+                        N
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ghostBySource.map((g) => (
+                      <tr key={g.key}>
+                        <td style={{ padding: '4px 8px' }}>
+                          {g.key}
+                        </td>
+                        <td
+                          style={{
+                            padding: '4px 8px',
+                            textAlign: 'right',
+                          }}
+                        >
+                          {g.pct?.toFixed(2) ?? '—'}%
+                        </td>
+                        <td
+                          style={{
+                            padding: '4px 8px',
+                            textAlign: 'right',
+                          }}
+                        >
+                          {g.n}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div>
+                <h4 style={{ margin: '6px 0' }}>
+                  Parity (odd = RIGHT) from raw bytes
+                </h4>
+                <table style={{ borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr>
+                      <th
+                        style={{
+                          textAlign: 'left',
+                          padding: '4px 8px',
+                        }}
+                      >
+                        stream
+                      </th>
+                      <th
+                        style={{
+                          textAlign: 'right',
+                          padding: '4px 8px',
+                        }}
+                      >
+                        % odd
+                      </th>
+                      <th
+                        style={{
+                          textAlign: 'right',
+                          padding: '4px 8px',
+                        }}
+                      >
+                        N bytes
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td style={{ padding: '4px 8px' }}>
+                        Subject raw_byte
+                      </td>
+                      <td
+                        style={{
+                          padding: '4px 8px',
+                          textAlign: 'right',
+                        }}
+                      >
+                        {parityPrimary.pctOdd != null
+                          ? parityPrimary.pctOdd.toFixed(2)
+                          : '—'}
+                        %
+                      </td>
+                      <td
+                        style={{
+                          padding: '4px 8px',
+                          textAlign: 'right',
+                        }}
+                      >
+                        {parityPrimary.n}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style={{ padding: '4px 8px' }}>
+                        Demon ghost_raw_byte
+                      </td>
+                      <td
+                        style={{
+                          padding: '4px 8px',
+                          textAlign: 'right',
+                        }}
+                      >
+                        {parityGhost.pctOdd != null
+                          ? parityGhost.pctOdd.toFixed(2)
+                          : '—'}
+                        %
+                      </td>
+                      <td
+                        style={{
+                          padding: '4px 8px',
+                          textAlign: 'right',
+                        }}
+                      >
+                        {parityGhost.n}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* NEW: Hold-duration vs accuracy */}
+            <div style={{ marginTop: 16 }}>
+              <h4 style={{ margin: '6px 0' }}>
+                Hold duration vs accuracy
+              </h4>
+              {!holdQRNG?.primary && !holdQRNG?.ghost ? (
+                <p style={{ color: '#666' }}>
+                  Not enough hold-duration data to compute quartiles
+                  (need ≥20 trials).
+                </p>
+              ) : (
+                <>
+                  <HoldQuartileChart
+                    title="Subject accuracy by hold-duration quartile"
+                    holdReport={holdQRNG?.primary}
+                  />
+                  <HoldQuartileChart
+                    title="Demon accuracy by hold-duration quartile"
+                    holdReport={holdQRNG?.ghost}
+                  />
+                </>
+              )}
+            </div>
+          </details>
+        }
       />
-      <PatternsPanel
-        trials={trialsSLAll}
-        title="Patterns — Quantum RNG"
-      />
-      <button
-        onClick={() => {
-          const arr = rows.flatMap(
-            (d) => d?.spoon_love?.trialResults || []
+      {/* === Timing arms panel (QRNG) ===================================== */}
+      {(() => {
+        // Pull ALL QRNG trials from the loaded session rows.
+        // We look in the hydrated spoon_love.trialResults first (preferred),
+        // and fall back to details.spoon_love_trials if needed.
+        const qrngTrials = (rows || [])
+          .flatMap(
+            (d) =>
+              d?.spoon_love?.trialResults ||
+              d?.details?.spoon_love_trials ||
+              []
+          )
+          .filter(Boolean);
+
+        if (!qrngTrials.length) {
+          return (
+            <p style={{ color: '#666' }}>
+              (No QRNG trials found yet to analyze timing arms.)
+            </p>
           );
-          console.log(
-            'QUANTUM trial examples (first 3):',
-            arr
-              .slice(0, 3)
-              .map((r) => ({ keys: Object.keys(r), sample: r }))
-          );
-          alert(
-            'Opened console: View QUANTUM trial field names there.'
-          );
-        }}
-        style={{ margin: '6px 0' }}
-      >
-        Debug Quantum trial fields (console)
-      </button>
+        }
+
+        return <TimingArmsPanel trials={qrngTrials} />;
+      })()}
 
       <Section
-        title="Local"
-        report={reportCL}
-        firstTen={firstTenCL}
+        title="QRNG — Spoon Love (Primed only)"
+        report={reportQRNGPrimed}
+        firstTen={firstTenPrimed}
       />
-      <PatternsPanel
-        trials={trialsCLAll}
-        title="Patterns — Local RNG"
+      <Section
+        title="QRNG — Spoon Love (Not primed)"
+        report={reportQRNGUnprimed}
+        firstTen={firstTenUnprimed}
       />
-      <button
-        onClick={() => {
-          const arr = rows.flatMap(
-            (d) => d?.client_local?.trialResults || []
-          );
-          console.log(
-            'LOCAL trial examples (first 3):',
-            arr
-              .slice(0, 3)
-              .map((r) => ({ keys: Object.keys(r), sample: r }))
-          );
-          alert(
-            'Opened console: View LOCAL trial field names there.'
-          );
-        }}
-        style={{ margin: '6px 0' }}
-      >
-        Debug Local trial fields (console)
-      </button>
-
-      {/* RNG randomness (ghost/demon vs chance p₀=20%) by RNG source */}
-      <details style={{ marginTop: 12 }}>
-        <summary>
-          Randomness checks — ghost vs chance (p₀=20%) by RNG
-        </summary>
-        <div style={{ display: 'grid', gap: 12, marginTop: 8 }}>
-          <div>
-            <h4 style={{ margin: '6px 0' }}>Quantum</h4>
-            {qrngGhostBySource.length ? (
-              <table style={{ borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr>
-                    <th
-                      style={{
-                        textAlign: 'left',
-                        padding: '4px 8px',
-                      }}
-                    >
-                      RNG source
-                    </th>
-                    <th
-                      style={{
-                        textAlign: 'right',
-                        padding: '4px 8px',
-                      }}
-                    >
-                      Demon %
-                    </th>
-                    <th
-                      style={{
-                        textAlign: 'right',
-                        padding: '4px 8px',
-                      }}
-                    >
-                      N
-                    </th>
-                    <th
-                      style={{
-                        textAlign: 'right',
-                        padding: '4px 8px',
-                      }}
-                    >
-                      p vs 20%
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {qrngGhostBySource.map((r) => (
-                    <tr key={`sl_${r.source}`}>
-                      <td style={{ padding: '4px 8px' }}>
-                        {r.source}
-                      </td>
-                      <td
-                        style={{
-                          padding: '4px 8px',
-                          textAlign: 'right',
-                        }}
-                      >
-                        {r.pct != null ? r.pct.toFixed(2) : '—'}%
-                      </td>
-                      <td
-                        style={{
-                          padding: '4px 8px',
-                          textAlign: 'right',
-                        }}
-                      >
-                        {r.n}
-                      </td>
-                      <td
-                        style={{
-                          padding: '4px 8px',
-                          textAlign: 'right',
-                        }}
-                      >
-                        {Number.isFinite(r.p)
-                          ? r.p.toExponential(2)
-                          : '—'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : (
-              <p style={{ color: '#666' }}>No QRNG trials found.</p>
-            )}
-          </div>
-
-          <div>
-            <h4 style={{ margin: '6px 0' }}>Physical — Full Stack</h4>
-            {prngGhostBySource.length ? (
-              <table style={{ borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr>
-                    <th
-                      style={{
-                        textAlign: 'left',
-                        padding: '4px 8px',
-                      }}
-                    >
-                      RNG source
-                    </th>
-                    <th
-                      style={{
-                        textAlign: 'right',
-                        padding: '4px 8px',
-                      }}
-                    >
-                      Demon %
-                    </th>
-                    <th
-                      style={{
-                        textAlign: 'right',
-                        padding: '4px 8px',
-                      }}
-                    >
-                      N
-                    </th>
-                    <th
-                      style={{
-                        textAlign: 'right',
-                        padding: '4px 8px',
-                      }}
-                    >
-                      p vs 20%
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {prngGhostBySource.map((r) => (
-                    <tr key={`fs_${r.source}`}>
-                      <td style={{ padding: '4px 8px' }}>
-                        {r.source}
-                      </td>
-                      <td
-                        style={{
-                          padding: '4px 8px',
-                          textAlign: 'right',
-                        }}
-                      >
-                        {r.pct != null ? r.pct.toFixed(2) : '—'}%
-                      </td>
-                      <td
-                        style={{
-                          padding: '4px 8px',
-                          textAlign: 'right',
-                        }}
-                      >
-                        {r.n}
-                      </td>
-                      <td
-                        style={{
-                          padding: '4px 8px',
-                          textAlign: 'right',
-                        }}
-                      >
-                        {Number.isFinite(r.p)
-                          ? r.p.toExponential(2)
-                          : '—'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : (
-              <p style={{ color: '#666' }}>
-                No Full Stack trials found.
-              </p>
-            )}
-          </div>
-        </div>
-      </details>
-
-      {/* ========== Histograms — % accuracy per run ========== */}
-      <details style={{ marginTop: 12 }}>
-        <summary>Histograms — % accuracy per run</summary>
-        <div style={{ display: 'grid', gap: 12 }}>
-          <Histogram
-            title="Physical — subject % per run"
-            values={accuraciesFS}
-            bin={2}
-          />
-          <Histogram
-            title="Quantum — subject % per run"
-            values={accuraciesSL}
-            bin={2}
-          />
-          <Histogram
-            title="Local — subject % per run"
-            values={accuraciesCL}
-            bin={2}
-          />
-        </div>
-      </details>
-      {/* ========== Block-by-block deltas per participant ========== */}
-      <details style={{ marginTop: 12 }}>
-        <summary>Block-by-block deltas per participant</summary>
-        <div style={{ overflowX: 'auto', marginTop: 8 }}>
-          <table
-            style={{
-              borderCollapse: 'collapse',
-              minWidth: 720,
-              width: '100%',
-            }}
-          >
-            <thead>
-              <tr style={{ background: '#fafafa' }}>
-                <th
-                  style={{
-                    textAlign: 'left',
-                    padding: '6px 8px',
-                    borderBottom: '1px solid #eee',
-                  }}
-                >
-                  Participant
-                </th>
-                <th
-                  style={{
-                    textAlign: 'right',
-                    padding: '6px 8px',
-                    borderBottom: '1px solid #eee',
-                  }}
-                >
-                  Physical %
-                </th>
-                <th
-                  style={{
-                    textAlign: 'right',
-                    padding: '6px 8px',
-                    borderBottom: '1px solid #eee',
-                  }}
-                >
-                  Quantum %
-                </th>
-                <th
-                  style={{
-                    textAlign: 'right',
-                    padding: '6px 8px',
-                    borderBottom: '1px solid #eee',
-                  }}
-                >
-                  Local %
-                </th>
-                <th
-                  style={{
-                    textAlign: 'right',
-                    padding: '6px 8px',
-                    borderBottom: '1px solid #eee',
-                  }}
-                >
-                  Δ SL − FS (pp)
-                </th>
-                <th
-                  style={{
-                    textAlign: 'right',
-                    padding: '6px 8px',
-                    borderBottom: '1px solid #eee',
-                  }}
-                >
-                  Δ CL − FS (pp)
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {deltasPerParticipant.map((r) => (
-                <tr key={r.participant_id}>
-                  <td
-                    style={{
-                      padding: '6px 8px',
-                      borderBottom: '1px solid #f5f5f5',
-                    }}
-                  >
-                    <code>{r.participant_id}</code>
-                  </td>
-                  <td
-                    style={{
-                      padding: '6px 8px',
-                      borderBottom: '1px solid #f5f5f5',
-                      textAlign: 'right',
-                    }}
-                  >
-                    {Number.isFinite(r.fsPct)
-                      ? r.fsPct.toFixed(1)
-                      : '—'}
-                    %
-                  </td>
-                  <td
-                    style={{
-                      padding: '6px 8px',
-                      borderBottom: '1px solid #f5f5f5',
-                      textAlign: 'right',
-                    }}
-                  >
-                    {Number.isFinite(r.slPct)
-                      ? r.slPct.toFixed(1)
-                      : '—'}
-                    %
-                  </td>
-                  <td
-                    style={{
-                      padding: '6px 8px',
-                      borderBottom: '1px solid #f5f5f5',
-                      textAlign: 'right',
-                    }}
-                  >
-                    {Number.isFinite(r.clPct)
-                      ? r.clPct.toFixed(1)
-                      : '—'}
-                    %
-                  </td>
-                  <td
-                    style={{
-                      padding: '6px 8px',
-                      borderBottom: '1px solid #f5f5f5',
-                      textAlign: 'right',
-                    }}
-                  >
-                    {Number.isFinite(r.deltaSLvsFS)
-                      ? r.deltaSLvsFS.toFixed(1)
-                      : '—'}
-                  </td>
-                  <td
-                    style={{
-                      padding: '6px 8px',
-                      borderBottom: '1px solid #f5f5f5',
-                      textAlign: 'right',
-                    }}
-                  >
-                    {Number.isFinite(r.deltaCLvsFS)
-                      ? r.deltaCLvsFS.toFixed(1)
-                      : '—'}
-                  </td>
-                </tr>
-              ))}
-              {deltasPerParticipant.length === 0 && (
-                <tr>
-                  <td
-                    colSpan={6}
-                    style={{ padding: 8, color: '#666' }}
-                  >
-                    No participants found.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </details>
     </div>
   );
 }

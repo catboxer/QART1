@@ -4,7 +4,9 @@
   "description": "# Getting Started with Create React App",
   "main": "check-env.js",
   "scripts": {
+    "audit:remap:json": "node tools/verify-remap.js --json ./exports/sessions_with_trials_and_reveal.json --hmac $REMAP_HMAC_SECRET --proof $REMAP_PROOF_SECRET",
     "test": "echo \"Error: no test specified\" && exit 1",
+    "exp0": "netlify dev --functions=netlify/functions --command=\"npm start --prefix experiments/exp0\" --target-port=3000 --port=8888",
     "exp1": "netlify dev --functions=netlify/functions --command=\"npm start --prefix experiments/exp1\" --target-port=3000 --port=8888",
     "exp2": "netlify dev --functions=netlify/functions --command=\"npm start --prefix experiments/exp2\" --target-port=3000 --port=8888"
   },

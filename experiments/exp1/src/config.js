@@ -5,21 +5,22 @@ export const config = {
   DEBRIEF_URL:
     'https://experiments.whatthequark.com/debriefs/experiment1',
   REQUIRE_PRE: false,
-  // Trial counts
+  // --- GATING FEATURE FLAG ---
+  // This new flag controls the quantum remapping feature.
+  // true = spoon_love block uses click-timing remap (original behavior)
+  // false = spoon_love block acts like full_stack (no remap)
+  // SET TO false TO DISABLE REMAPPING
+  ENABLE_QUANTUM_REMAP: false,
+  // Trial counts in 5s
   trialsPerBlock: {
-    full_stack: 8, // Baseline block
-    spoon_love: 8, // Quantum block
+    full_stack: 30, // Baseline block
+    spoon_love: 30, // Quantum block
+    client_local: 30, // Quantum block
   },
-
-  // Priming experiment parameters
-
-  BOOST_MIN: 5,
-  BOOST_MAX: 15,
-
-  // Confetti display thresholds (score must be > this value)
-  confetti: {
-    baseline: 56,
-    quantum: 56,
+  // Minium number of trials to be considered full experiment
+  completerMin: {
+    full_stack: 30,
+    spoon_love: 30,
+    client_local: 30,
   },
 };
-// Alter whether feedback is displayed.

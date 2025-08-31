@@ -50,7 +50,7 @@ body {
   color: var(--text);
 }
 .App {
-  max-width: 700px;
+  max-width: 1200px;
   margin: 0 auto;
 }
 
@@ -290,67 +290,106 @@ input[type='range']::-webkit-slider-thumb {
 }
 
 /* =========================
-   Two-choice icons (circle/square)
+   Zener icon grid (5 choices)
    ========================= */
+
+/* Keep the icon area tidy; on phones we reserve a slice of viewport so 2 rows fit */
 .icon-options-wrapper {
-  display: flex;
-  justify-content: center;
   margin-top: 1rem;
-}
-.icon-options {
-  display: flex;
-  justify-content: center;
-  align-items: stretch;
-  gap: 2rem;
-  flex-wrap: wrap;
+  --icons-area: min(55svh, 55lvh, 55vh);
+  max-width: 100%;
+  overflow: hidden; /* prevents side scroll on tiny screens */
 }
 
-.icon-button {
-  display: flex;
-  justify-content: center;
+/* ≥600px: one row of 5, centered, each cell 72–200px wide */
+.icon-options {
+  --gap: 14px;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(72px, 300px));
+  gap: var(--gap);
+  justify-content: center; /* center the entire row */
+  justify-items: center; /* center items inside their cells */
+  align-content: start; /* rows (if any) stick to the top */
   align-items: center;
-  text-align: center;
-  background: #fff;
-  border: 2px solid var(--border);
-  border-radius: var(--radius-lg);
-  cursor: pointer;
-  font-family: Arial, Helvetica, sans-serif;
-  font-weight: 700;
-  color: #000;
-  width: 16rem;
+  padding: 6px 0;
+}
+
+/* The card: square, scalable, true centering, NO forced min-height */
+.icon-button {
+  display: grid; /* grid makes perfect centering trivial */
+  place-items: center;
+  width: 100%;
   aspect-ratio: 1 / 1;
-  font-size: 2rem;
-  padding: 1rem;
-  position: relative;
-  overflow: hidden;
-  transition: background-color 0.2s ease-in;
-  -webkit-touch-callout: none;
-  -webkit-user-select: none;
-  user-select: none;
-  touch-action: pan-y;
+  min-width: 72px;
+  min-height: 72px;
+  /* appearance */
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px;
+  color: #000;
+  transition: background 0.2s ease;
 }
 @media (hover: hover) {
   .icon-button:hover {
-    background-color: #eef6ff;
+    background: #f5f9ff;
   }
 }
-.icon-button:active {
-  transform: scale(0.97);
-}
-
-/* visible keyboard focus ring */
 .icon-button:focus-visible {
   outline: 3px solid #1a73e8;
   outline-offset: 3px;
 }
-
-.icon-symbol {
-  display: inline-flex;
-  justify-content: center;
-  align-items: center;
+.icon-button:active {
+  transform: scale(0.98);
 }
-.icon-symbol {
-  font-size: 4rem;
+.icon-button[aria-disabled='true'] {
+  opacity: 0.55;
+  filter: grayscale(15%);
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* Make the icon wrapper fill the card and center the SVG dead-center */
+.icon-button .icon-symbol {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  line-height: 0; /* kill inline-SVG baseline wobble */
+}
+.icon-button .icon-symbol svg {
+  display: block;
+  width: 72%;
+  height: 72%;
+  margin: 0 auto;
+}
+
+/* <600px: wrap to 2 rows (3 + 2), auto-shrink but never <72px,
+   and ensure both rows stay inside the reserved viewport slice */
+@media (max-width: 599.98px) {
+  .icon-options {
+    --gap: 10px;
+    grid-template-columns: repeat(3, minmax(72px, 1fr));
+  }
+  .icon-button {
+    /* width-fit: 3 across, respecting page padding (16px) and gaps */
+    --page-pad: 16px;
+    --cellW: calc(
+      (100vw - (2 * var(--page-pad)) - (2 * var(--gap))) / 3
+    );
+
+    /* height-fit: two rows inside the reserved area */
+    --cellH: calc((var(--icons-area) - (1 * var(--gap))) / 2);
+
+    /* width-limited size with hard floor and soft cap */
+    --sizeW: clamp(72px, var(--cellW), 200px);
+
+    /* final square = min(width-fit, height-fit) */
+    width: min(var(--sizeW), var(--cellH));
+    height: min(var(--sizeW), var(--cellH));
+    aspect-ratio: initial; /* let explicit height apply cleanly */
+    padding: 8px;
+  }
 }
 
 /* =========================
@@ -593,80 +632,6 @@ input[type='range']::-webkit-slider-thumb {
   border: 0;
 }
 
-/* Icon layout and responsive sizing */
-.icon-options-wrapper {
-  max-width: 100%;
-  overflow: hidden;
-}
-
-.icon-options {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: min(4vw, 24px);
-  align-items: center;
-}
-
-.icon-button {
-  display: grid;
-  place-items: center;
-  width: 100%;
-  min-height: clamp(160px, 35vw, 280px);
-  padding: min(3vw, 16px);
-}
-
-.icon-symbol svg {
-  width: clamp(120px, 18vw, 180px);
-  height: clamp(120px, 18vw, 180px);
-  display: block;
-}
-
-/* Disable interactions when aria-disabled is true */
-.icon-button[aria-disabled='true'] {
-  opacity: 0.55;
-  filter: grayscale(15%);
-  cursor: not-allowed;
-  pointer-events: none;
-}
-/* === Responsive overrides for two-choice icon layout === */
-@media (max-width: 1024px) {
-  .icon-options-wrapper {
-    max-width: 100%;
-    overflow: hidden;
-  }
-  .icon-options {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: min(4vw, 24px);
-    align-items: center;
-  }
-  .icon-button {
-    width: 100%;
-    min-height: clamp(160px, 35vw, 280px);
-    padding: min(3vw, 16px);
-  }
-  /* Scale symbols cleanly whether they are text or SVG */
-  .icon-symbol,
-  .icon-symbol svg {
-    width: clamp(120px, 18vw, 180px);
-    height: clamp(120px, 18vw, 180px);
-    font-size: clamp(2.5rem, 6vw, 4rem);
-  }
-}
-
-/* Stack vertically on narrow phones */
-@media (max-width: 480px) {
-  .icon-options {
-    grid-template-columns: 1fr;
-  }
-}
-/* Icon-only button layout */
-.icon-only {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-}
-
 /* Envelope SVG sizing (scales with button text size) */
 .envelope-icon {
   width: 1.25em;
@@ -828,5 +793,321 @@ input[type='range']::-webkit-slider-thumb {
   .env .flap,
   .env .seal {
     animation: none;
+  }
+}
+/* ===== 5-CARD RESPONSIVE LAYOUT (non-destructive override) ===== */
+
+/* Center the grid area and keep it tidy */
+.icon-options-wrapper {
+  margin-top: 1rem;
+  max-width: 100%;
+  overflow: visible !important;
+}
+
+/* Base (≥600px): one row of 5 that scales with container width */
+.icon-options {
+  --gap: 14px;
+  display: grid !important;
+  grid-template-columns: repeat(5, minmax(72px, 300px)) !important;
+  gap: var(--gap) !important;
+
+  /* horizontal centering + top alignment for rows */
+  justify-content: center !important; /* center the whole grid */
+  justify-items: center !important; /* center items in their cells */
+  align-content: start !important; /* rows stack from the top */
+  align-items: center !important;
+  padding: 6px 0 !important;
+}
+
+/* Cards: square, scalable, with a hard floor of 72x72 */
+.icon-button {
+  /* kill older width/min-height rules cleanly */
+  width: auto !important;
+  min-width: 72px !important;
+  min-height: 72px !important;
+  aspect-ratio: 1 / 1 !important;
+
+  /* perfect centering of the symbol */
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+
+  /* keep your existing look */
+  background: #fff !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 12px !important;
+  padding: 10px !important;
+  color: #000 !important;
+}
+
+/* Icon sits dead center and scales with the card */
+.icon-symbol {
+  line-height: 0 !important;
+}
+.icon-symbol svg {
+  display: block !important;
+  width: 72% !important;
+  height: 72% !important;
+  margin: 0 auto !important;
+}
+
+/* Small screens: wrap to two rows (3 + 2), auto-shrink but never < 72px */
+@media (max-width: 599.98px) {
+  .icon-options {
+    --gap: 10px;
+    grid-template-columns: repeat(3, minmax(72px, 1fr)) !important;
+  }
+
+  /* Compute card size from width and keep square via aspect-ratio.
+     This guarantees two rows and prevents edge overflow. */
+  .icon-button {
+    /* page padding on your small layout = 16px left/right */
+    --page-pad: 16px;
+
+    /* width-fit: 3 cards across */
+    --cellW: calc(
+      (100vw - (2 * var(--page-pad)) - (2 * var(--gap))) / 3
+    );
+
+    /* final size: min(width-fit, 200px cap), but never below 72px */
+    --cell: max(72px, min(var(--cellW), 200px));
+
+    width: var(--cell) !important;
+    height: var(--cell) !important; /* aspect-ratio keeps it square */
+    aspect-ratio: initial !important; /* let height apply cleanly */
+    padding: 8px !important;
+  }
+}
+/* ===== 5-card layout + true centering ===== */
+
+/* ≥600px: one row of 5, each cell can grow up to ~200px but never below 72px */
+.icon-options {
+  --gap: 14px;
+  display: grid !important;
+  grid-template-columns: repeat(5, minmax(72px, 300px)) !important;
+  gap: var(--gap) !important;
+  justify-content: center !important; /* center entire row */
+  align-content: start !important; /* rows stick to top when wrapping */
+  justify-items: center !important; /* center items in their cells */
+  align-items: center !important;
+}
+
+/* The card itself: make it a grid and center its content perfectly */
+.icon-button {
+  display: grid !important;
+  place-items: center !important; /* centers both axes */
+  width: 100% !important;
+  aspect-ratio: 1 / 1 !important;
+  min-width: 72px !important;
+  min-height: 72px !important;
+  padding: 10px !important;
+
+  background: #fff !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 12px !important;
+  color: #000 !important;
+}
+
+/* Make the icon wrapper fill the card and center the SVG again */
+.icon-button .icon-symbol {
+  width: 100% !important;
+  height: 100% !important;
+  display: grid !important;
+  place-items: center !important;
+  line-height: 0 !important; /* removes inline baseline wobble */
+}
+
+/* SVG scales with the card and stays centered */
+.icon-button .icon-symbol svg {
+  display: block !important;
+  width: 72% !important;
+  height: 72% !important;
+  margin: 0 auto !important;
+}
+
+/* Keep everything visible on phones:
+   wrap to 2 rows (3+2), auto-shrink but never < 72px, no side overflow */
+@media (max-width: 599.98px) {
+  .icon-options {
+    --gap: 10px;
+    grid-template-columns: repeat(3, minmax(72px, 1fr)) !important;
+  }
+  .icon-button {
+    /* small-layout body padding is 16px (adjust if yours differs) */
+    --page-pad: 16px;
+    /* width-fit for 3 across */
+    --cellW: calc(
+      (100vw - (2 * var(--page-pad)) - (2 * var(--gap))) / 3
+    );
+    /* final size: min(width-fit, 200px cap) but never below 72px */
+    --cell: max(72px, min(var(--cellW), 200px));
+    width: var(--cell) !important;
+    height: var(--cell) !important;
+    aspect-ratio: initial !important; /* let height apply cleanly */
+    padding: 8px !important;
+  }
+  /* keep the two-row area inside the viewport slice */
+  .icon-options-wrapper {
+    max-height: min(55svh, 55lvh, 55vh) !important;
+    overflow: hidden !important;
+  }
+}
+
+/* Scoreboard
+/* Cute scoreboard */
+.scoreboard {
+  display: flex;
+  justify-content: center;
+  margin: 8px 0 12px;
+}
+.scoreboard__row {
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
+  border-radius: 10px;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 15px;
+}
+.scoreboard__badge {
+  background: #f5f7ff;
+  color: #3a55e8;
+  border: 1px solid #e4e8ff;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+.scoreboard__totals {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.scoreboard__totals .you b {
+  font-weight: 800;
+}
+.scoreboard__totals .demon b {
+  font-weight: 800;
+}
+.scoreboard__totals .dash {
+  opacity: 0.6;
+}
+.scoreboard__totals .ties {
+  opacity: 0.7;
+}
+
+.match-summary {
+  margin: 6px auto 12px;
+  max-width: 520px;
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.06);
+  border-radius: 12px;
+  padding: 14px;
+  text-align: center;
+}
+.match-summary__title {
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+.match-summary__scoreline {
+  font-size: 16px;
+  margin-bottom: 10px;
+}
+.match-summary__scoreline .result {
+  margin-left: 6px;
+  font-weight: 700;
+}
+.match-summary__scoreline .result.subject {
+  color: #177245;
+} /* green "You win!" */
+.match-summary__scoreline .result.demon {
+  color: #b00020;
+} /* red "Demon wins" */
+.match-summary__cta {
+  margin-top: 4px;
+}
+/* App.css */
+
+.zener {
+  /* icon footprint inside a card */
+  --zener-size: 85%;
+
+  /* responsive stroke thickness in *pixels* (same across all icons) */
+  --zener-stroke: clamp(3px, 0.9vw, 8px);
+
+  /* perception nudges (tweak if needed) */
+  --zener-square-scale: 0.94;
+  --zener-star-scale: 1.06;
+  --zener-plus-scale: 1.02;
+}
+
+.icon-cell {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  display: grid;
+  place-items: center;
+  color: #111; /* drives currentColor for strokes */
+}
+
+.zener-icon {
+  width: var(--zener-size);
+  height: var(--zener-size);
+}
+
+/* unify stroke + make it non-scaling so it looks the same at any SVG size */
+.zener-icon * {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: var(--zener-stroke);
+  vector-effect: non-scaling-stroke; /* key to “same look” when responsive */
+}
+
+/* caps/joins for the shapes that need it */
+.zener-plus line,
+.zener-waves path {
+  stroke-linecap: round;
+}
+
+.zener-star path {
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+/* scale the glyph only (keeps stroke constant thanks to vector-effect) */
+.zener-icon .glyph {
+  transform-origin: 50% 50%;
+}
+.zener-square .glyph {
+  transform: scale(var(--zener-square-scale));
+}
+.zener-star .glyph {
+  transform: scale(var(--zener-star-scale));
+}
+.zener-plus .glyph {
+  transform: scale(var(--zener-plus-scale));
+}
+/* Base (phones): solid default everyone gets */
+.zener {
+  --zener-size: 85%;
+  --zener-stroke: 4.5px; /* good on mobile */
+}
+
+/* Universal tablet fallback (media query) */
+@media (min-width: 400px) and (max-width: 1024px) {
+  .zener {
+    --zener-stroke: 3.2px;
+  }
+}
+@media (min-width: 72px) and (max-width: 399px) {
+  .zener {
+    --zener-stroke: 2.2px;
+  }
+}
+/* Desktop fallback */
+@media (min-width: 1025px) {
+  .zener {
+    --zener-stroke: 6px;
   }
 }

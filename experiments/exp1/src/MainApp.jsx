@@ -1,6 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import './App.css';
-import FoldedSelfCheck from './FoldedSelfCheck.jsx';
 
 // Firebase singletons
 import { db, auth, ensureSignedIn } from './firebase.js';
@@ -27,64 +26,221 @@ import confetti from 'canvas-confetti';
 import { config } from './config.js';
 
 /* =========================
-   Helpers / UI primitives
+   Helpers / UI
+   ========================= */
+// Chance model for 5 options
+const K_OPTIONS = 5;
+const P0 = 1 / K_OPTIONS;
+function isAboveChanceMatch5(hitsInMatch) {
+  return hitsInMatch >= 3;
+}
+
+// Mini-match settings
+const MATCH_SIZE = 5; // 5 trials per match
+const calcTotalMatches = (trialsCount) =>
+  Math.ceil(trialsCount / MATCH_SIZE);
+
+/* =========================
+   Zener Icons (5 symbols)
    ========================= */
 
-const SolidSquare = ({ size = 200, inset = 4 }) => (
+// geometry (viewBox 0..100)
+const VISUAL_R = 46;
+const LEFT = 50 - VISUAL_R;
+const RIGHT = 50 + VISUAL_R;
+
+// All components accept optional className, but also set their own base classes
+export const SolidCircle = ({ className = '' }) => (
   <svg
-    width={size}
-    height={size}
+    className={`zener-icon zener-circle ${className}`}
     viewBox="0 0 100 100"
+    preserveAspectRatio="xMidYMid meet"
     aria-hidden="true"
   >
-    <rect
-      x={inset}
-      y={inset}
-      width={100 - inset * 2}
-      height={100 - inset * 2}
-      fill="currentColor"
-    />
+    <g className="glyph">
+      <circle cx="50" cy="50" r={VISUAL_R} />
+    </g>
   </svg>
 );
 
-const SolidCircle = ({ size = 200 }) => (
+export const SolidSquare = ({ className = '' }) => (
   <svg
-    width={size}
-    height={size}
+    className={`zener-icon zener-square ${className}`}
     viewBox="0 0 100 100"
+    preserveAspectRatio="xMidYMid meet"
     aria-hidden="true"
   >
-    <circle cx="50" cy="50" r="50" fill="currentColor" />
+    <g className="glyph">
+      <rect
+        x={LEFT}
+        y={LEFT}
+        width={VISUAL_R * 2}
+        height={VISUAL_R * 2}
+        rx="2"
+        ry="2"
+      />
+    </g>
   </svg>
 );
 
-const ICONS = [
+export const SolidPlus = ({ className = '' }) => {
+  const reach = VISUAL_R - 3;
+  return (
+    <svg
+      className={`zener-icon zener-plus ${className}`}
+      viewBox="0 0 100 100"
+      preserveAspectRatio="xMidYMid meet"
+      aria-hidden="true"
+    >
+      <g className="glyph">
+        <line x1="50" y1={50 - reach} x2="50" y2={50 + reach} />
+        <line x1={50 - reach} y1="50" x2={50 + reach} y2="50" />
+      </g>
+    </svg>
+  );
+};
+
+export const SolidWaves = ({ className = '' }) => {
+  const rows = [-27, -9, 9, 27];
+  const width = RIGHT - LEFT;
+  const amp = width * 0.08;
+  const q = width / 4;
+  const dFor = (y) =>
+    `M ${LEFT} ${50 + y}
+     C ${LEFT + 0.5 * q} ${50 + y - amp},
+       ${LEFT + 1.5 * q} ${50 + y + amp},
+       ${LEFT + 2 * q} ${50 + y}
+     S ${LEFT + 3.5 * q} ${50 + y + amp},
+       ${RIGHT} ${50 + y}`;
+  return (
+    <svg
+      className={`zener-icon zener-waves ${className}`}
+      viewBox="0 0 100 100"
+      preserveAspectRatio="xMidYMid meet"
+      aria-hidden="true"
+    >
+      <g className="glyph">
+        {rows.map((dy, i) => (
+          <path key={i} d={dFor(dy)} />
+        ))}
+      </g>
+    </svg>
+  );
+};
+
+export const SolidStar = ({ className = '' }) => {
+  const cx = 50,
+    cy = 50;
+  const outerR = VISUAL_R; // base size; CSS will nudge via scale
+  const innerR = outerR * 0.382;
+  const startDeg = -90;
+
+  const pts = [];
+  for (let i = 0; i < 10; i++) {
+    const r = i % 2 === 0 ? outerR : innerR;
+    const a = ((startDeg + i * 36) * Math.PI) / 180;
+    pts.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
+  }
+  const d =
+    `M ${pts[0][0]} ${pts[0][1]} ` +
+    pts
+      .slice(1)
+      .map(([x, y]) => `L ${x} ${y}`)
+      .join(' ') +
+    ' Z';
+
+  return (
+    <svg
+      className={`zener-icon zener-star ${className}`}
+      viewBox="0 0 100 100"
+      preserveAspectRatio="xMidYMid meet"
+      aria-hidden="true"
+    >
+      <g className="glyph">
+        <path d={d} />
+      </g>
+    </svg>
+  );
+};
+
+const ZENER = [
   { id: 'circle', element: <SolidCircle /> },
+  { id: 'plus', element: <SolidPlus /> },
+  { id: 'waves', element: <SolidWaves /> },
   { id: 'square', element: <SolidSquare /> },
+  { id: 'star', element: <SolidStar /> },
 ];
 
-const shuffledPair = () =>
-  Math.random() < 0.5 ? ICONS : [ICONS[1], ICONS[0]];
+// Optional tiny PRNG for reproducible shuffles when you pass a seed
+function mulberry32(seed) {
+  let t = seed >>> 0;
+  return () => {
+    t += 0x6d2b79f5;
+    let r = Math.imul(t ^ (t >>> 15), 1 | t);
+    r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
+    return ((r ^ (r >>> 14)) >>> 0) / 4294967296; // [0,1)
+  };
+}
 
-// Map RNG pair-of-bytes to screen indices (0=left, 1=right) for primary & ghost
-// Map Subject (raw_byte) + Demon (ghost_raw_byte) to left/right indices,
-// while still alternating `primary_pos` as 1,2,1,2,... for integrity checks.
-function assignFromBytes(rawByte, ghostByte, trialIndex1Based) {
-  const primary_pos = trialIndex1Based % 2 === 1 ? 1 : 2; // 1,2,1,2,...
-  const toIndex = (byte) => (byte % 2 === 0 ? 0 : 1); // even→left(0), odd→right(1)
+// Unbiased int in [0, n) from a RNG that returns [0,1)
+function randInt(n, rand01) {
+  // rejection sampling to avoid modulo bias
+  const max = Math.floor(4294967296 / n) * n; // largest multiple of n < 2^32
+  let x;
+  do {
+    // pull 32 bits from the RNG (fast path for seeded; for crypto we replace below)
+    x = Math.floor(rand01() * 4294967296) >>> 0;
+  } while (x >= max);
+  return x % n;
+}
+
+// Crypto-backed [0,1) RNG
+function crypto01() {
+  const u = new Uint32Array(1);
+  crypto.getRandomValues(u);
+  // Map to [0,1) with full 32-bit precision
+  return u[0] / 4294967296;
+}
+
+/**
+ * Secure, unbiased shuffle of the 5 symbols.
+ * - If `seed` is provided (number), the order is deterministic.
+ * - If omitted, uses crypto.getRandomValues for audit-friendly randomness.
+ */
+function shuffledFive(seed /* number? */) {
+  const arr = [...ZENER]; // don't mutate original
+  const rand01 =
+    typeof seed === 'number' ? mulberry32(seed) : crypto01;
+
+  // Fisher–Yates
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = randInt(i + 1, rand01);
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+// Map Subject (raw_byte) + Demon (ghost_raw_byte) to indices in the displayed order
+function assignZenerFromBytes(rawByte, ghostByte, displayIcons) {
+  const toSymIdx = (b) => ((b >>> 0) & 0xff) % 5; // 0..4
+  const subjectSym = ZENER[toSymIdx(rawByte)].id;
+  const ghostSym = ZENER[toSymIdx(ghostByte)].id;
+
+  const idxOf = (id) => displayIcons.findIndex((o) => o.id === id);
+  const primaryIndex = idxOf(subjectSym);
+  const ghostIndex = idxOf(ghostSym);
+
   return {
-    primaryIndex: toIndex(rawByte),
-    ghostIndex: toIndex(ghostByte),
-    primary_pos,
+    primaryIndex, // 0..4 in display order
+    ghostIndex, // 0..4
+    primary_symbol_id: subjectSym,
+    ghost_symbol_id: ghostSym,
     primary_raw: rawByte >>> 0,
     ghost_raw: ghostByte >>> 0,
   };
 }
 
-const randomInt = (min, max) =>
-  Math.floor(Math.random() * (max - min + 1)) + min;
 const getBlock = (id) => cueBlocks.find((b) => b.id === id);
-const getLabel = (id) => getBlock(id)?.buttonLabel || 'RIGHT';
 
 const isAnswered = (q, responses) => {
   const v = responses[q.id];
@@ -99,6 +255,7 @@ const isAnswered = (q, responses) => {
     v === false || v === true || v === 0 || (v !== '' && v != null)
   );
 };
+
 const fieldError = (q, responses) => {
   const v = responses[q.id];
   if (q.type === 'number') {
@@ -110,25 +267,60 @@ const fieldError = (q, responses) => {
   }
   return !isAnswered(q, responses) ? 'Required' : null;
 };
-const binom50 = (N) => {
-  const mu = N / 2;
-  const sd = Math.sqrt(N) / 2;
-  const r = (x) => Math.round(x);
-  const sdPct = 50 / Math.sqrt(N);
-  return {
-    N,
-    muHits: r(mu),
-    sdHits: r(sd),
-    oneHi: r(mu + sd),
-    oneLo: r(mu - sd),
-    twoHi: r(mu + 2 * sd),
-    twoLo: r(mu - 2 * sd),
-    sdPct,
-  };
-};
-const allAnswered = (questions, responses) =>
-  questions.every((q) => isAnswered(q, responses));
-/* ===== Commit–reveal helpers ===== */
+
+/* ==== Round & p-value helpers (define once, above MainApp) ==== */
+function countAboveChanceRoundWins(rows, matchSize = 5) {
+  let wins = 0;
+  const completed = Math.floor(rows.length / matchSize);
+  for (let m = 0; m < completed; m++) {
+    const slice = rows.slice(m * matchSize, (m + 1) * matchSize);
+    const pts = slice.reduce(
+      (a, r) =>
+        a +
+        (Number(r.subject_hit) === 1
+          ? 1
+          : Number(r.matched) === 1
+          ? 1
+          : 0),
+      0
+    );
+    if (pts >= 3) wins++; // "round win" = 3+ hits in 5 trials
+  }
+  return { wins, totalRounds: completed };
+}
+
+// log-factorial (small n exact, fine for your n)
+function logFactorial(n) {
+  let s = 0;
+  for (let i = 2; i <= n; i++) s += Math.log(i);
+  return s;
+}
+function logChoose(n, k) {
+  if (k < 0 || k > n) return -Infinity;
+  return logFactorial(n) - logFactorial(k) - logFactorial(n - k);
+}
+function binomPMF(n, k, p) {
+  const logp =
+    logChoose(n, k) + k * Math.log(p) + (n - k) * Math.log(1 - p);
+  return Math.exp(logp);
+}
+function binomPValueOneSidedAtOrAbove(hits, n, p0) {
+  // P(X >= hits | Binomial(n, p0))
+  let tail = 0;
+  for (let k = hits; k <= n; k++) tail += binomPMF(n, k, p0);
+  // numeric safety
+  if (!Number.isFinite(tail)) return 0;
+  return Math.min(1, Math.max(0, tail));
+}
+// Count per-round wins (≥3 hits in a 5-trial round by default)
+
+// Nicer p-value formatting
+function formatP(p) {
+  if (p < 1e-4) return '<0.0001';
+  if (p > 0.9999) return '≈1.0000';
+  return Number.isFinite(p) ? p.toFixed(4) : '—';
+}
+
 /* ===== Commit–reveal helpers ===== */
 async function sha256Hex(bytes) {
   const digest = await crypto.subtle.digest('SHA-256', bytes);
@@ -147,7 +339,6 @@ function concatBytes(a, b) {
   out.set(b, a.length);
   return out;
 }
-
 function bytesToBase64(bytes) {
   let s = '';
   for (const b of bytes) s += String.fromCharCode(b);
@@ -244,6 +435,45 @@ function fireConfettiSafely() {
   if (prefersReduced) return;
   confetti({ particleCount: 150, spread: 100, origin: { y: 0.6 } });
 }
+// Even bigger/longer finale for block-end significance (about 2.5s)
+// ~1 second celebration used only on significant last rounds
+// Very short "finale" (~0.5–0.7s total)
+function fireConfettiFinale() {
+  const prefersReduced = window.matchMedia?.(
+    '(prefers-reduced-motion: reduce)'
+  )?.matches;
+  if (prefersReduced) return;
+
+  const base = {
+    spread: 120,
+    startVelocity: 55,
+    scalar: 1.2, // medium pieces
+    origin: { y: 0.6 },
+  };
+
+  confetti({ ...base, particleCount: 220 });
+  setTimeout(
+    () =>
+      confetti({
+        ...base,
+        particleCount: 160,
+        spread: 140,
+        startVelocity: 50,
+      }),
+    180
+  );
+  setTimeout(
+    () =>
+      confetti({
+        ...base,
+        particleCount: 120,
+        spread: 160,
+        startVelocity: 45,
+      }),
+    420
+  );
+}
+
 // Simple envelope fold+seal loader (loops)
 function EnvelopeLoader({ label }) {
   return (
@@ -258,7 +488,7 @@ function EnvelopeLoader({ label }) {
         aria-hidden="true"
         focusable="false"
       >
-        {/* Paper slides in */}
+        {/* Paper */}
         <g className="paper">
           <rect
             x="14"
@@ -272,8 +502,7 @@ function EnvelopeLoader({ label }) {
           <line x1="18" y1="16" x2="42" y2="16"></line>
           <line x1="18" y1="20" x2="40" y2="20"></line>
         </g>
-
-        {/* Envelope body */}
+        {/* Body */}
         <g className="body">
           <rect
             x="8"
@@ -285,27 +514,15 @@ function EnvelopeLoader({ label }) {
           ></rect>
           <polyline points="8,20 32,36 56,20"></polyline>
         </g>
-
-        {/* Flap closes */}
+        {/* Flap */}
         <g className="flap">
           <polygon points="8,12 56,12 32,28"></polygon>
         </g>
-
-        {/* Wax seal pops */}
         <circle className="seal" cx="32" cy="26" r="3"></circle>
       </svg>
       <figcaption className="envelope-label">{label}</figcaption>
     </figure>
   );
-}
-// Return which trial indices we still need for this block (0..total-1)
-function getMissingTrialIndices(blockId, total, assignmentCache) {
-  const missing = [];
-  const have = assignmentCache?.[blockId] || {};
-  for (let i = 1; i <= total; i++) {
-    if (!(i in have)) missing.push(i);
-  }
-  return missing;
 }
 
 /* =========================
@@ -407,17 +624,29 @@ function MainApp() {
   const [midResponses, setMidResponses] = useState({});
   const [postResponses, setPostResponses] = useState({});
   const [trialResults, setTrialResults] = useState([]);
+  // Gamification: per-block match tallies + between-match banner
+
+  const [matchSummary, setMatchSummary] = useState(null); // {blockId, matchNumber, subjectPts, demonPts, winner}
   const [currentBlockId, setCurrentBlockId] = useState('full_stack'); // explicit id to avoid races
   const [currentTrial, setCurrentTrial] = useState(0);
   const [lastResult, setLastResult] = useState(null);
+  const [hasGuessedThisTrial, setHasGuessedThisTrial] =
+    useState(false);
+
+  const roundsTally = useMemo(() => {
+    const rows = trialResults.filter(
+      (t) => t.block_type === currentBlockId
+    );
+    return countAboveChanceRoundWins(rows, MATCH_SIZE);
+  }, [trialResults, currentBlockId]);
 
   const [fullStackStats, setFullStackStats] = useState(null);
   const [spoonLoveStats, setSpoonLoveStats] = useState(null);
 
-  // Two-choice task state
-  const [choiceOptions, setChoiceOptions] = useState([]); // [leftIcon, rightIcon]
-  const [correctIndex, setCorrectIndex] = useState(null); // 0 or 1
-  const [ghostIndex, setGhostIndex] = useState(null); // 0 or 1
+  // Five-choice task state
+  const [choiceOptions, setChoiceOptions] = useState([]); // 5 icons
+  const [correctIndex, setCorrectIndex] = useState(null); // 0..4
+  const [ghostIndex, setGhostIndex] = useState(null); // 0..4
   const [rngMeta, setRngMeta] = useState(null);
   const [trialReady, setTrialReady] = useState(false);
   const [sealedEnvelopeId, setSealedEnvelopeId] = useState(null);
@@ -425,10 +654,12 @@ function MainApp() {
   const starTimerRef = useRef(null);
   const isSavingRef = useRef(false);
   const [trialBlockingError, setTrialBlockingError] = useState(null);
+
   // Prefetch/caching for sealed envelopes
   const [assignmentCache, setAssignmentCache] = useState({
-    full_stack: null, // { 1: {assigned, rngMeta}, 2: {...}, ... }
+    full_stack: null, // { 1: {assigned, rngMeta}, ... }
     spoon_love: null,
+    client_local: null,
   });
   const [prefetchStatus, setPrefetchStatus] = useState({
     full_stack: {
@@ -441,59 +672,62 @@ function MainApp() {
       count: 0,
       total: Number(config.trialsPerBlock.spoon_love),
     },
+    client_local: {
+      done: false,
+      count: 0,
+      total: Number(config.trialsPerBlock.client_local || 20),
+    },
   });
   const [isPrefetching, setIsPrefetching] = useState({
     full_stack: false,
     spoon_love: false,
+    client_local: false,
   });
 
-  // One pre-drawn tape per block (each trial uses 2 bytes: primary + ghost)
-  const tapesRef = useRef({}); // { [blockId]: { pairs:Uint8Array, saltHex, hashHex, createdISO, rng_source } }
+  // One pre-drawn tape per server block (each trial uses 2 bytes)
+  const tapesRef = useRef({}); // { [blockId]: { pairs, saltHex, hashHex, createdISO, rng_source } }
+  const spoonCommitTokenRef = useRef(null); // holds commit_token for 'spoon_love' reveal
 
   // Blocks / trials config
   const fullStackBlock = cueBlocks.find((b) => b.id === 'full_stack');
   const spoonLoveBlock = cueBlocks.find((b) => b.id === 'spoon_love');
+  const clientLocalBlock = cueBlocks.find(
+    (b) => b.id === 'client_local'
+  );
   const blockOrder = [
-    { ...fullStackBlock, id: 'full_stack', showFeedback: true },
-    { ...spoonLoveBlock, id: 'spoon_love', showFeedback: true },
+    { ...fullStackBlock, id: 'full_stack', showFeedback: false },
+    { ...spoonLoveBlock, id: 'spoon_love', showFeedback: false },
+    { ...clientLocalBlock, id: 'client_local', showFeedback: false },
   ];
+
   const trialsPerBlock = config.trialsPerBlock;
   const currentBlockObj = getBlock(currentBlockId);
-  // Use server-provided total if available; otherwise fall back to config
-  const totalTrialsFor = (blockId) => {
-    const fromServer = prefetchStatus?.[blockId]?.total;
-    return Number.isFinite(Number(fromServer))
-      ? Number(fromServer)
-      : Number(trialsPerBlock[blockId]);
-  };
+  const totalTrialsFor = (blockId) =>
+    Number(config.trialsPerBlock[blockId]);
 
   const totalTrialsPerBlock = totalTrialsFor(currentBlockId);
 
   // Priming/boost visuals (baseline block only)
-  const [isHighPrime] = useState(() => Math.random() < 0.5);
-  const BOOST_MIN = Number(config.BOOST_MIN);
-  const BOOST_MAX = Number(config.BOOST_MAX);
-
-  // Confetti thresholds
-  const CONFETTI_THRESHOLD_BASELINE = Number(
-    config.confetti.baseline
-  );
-  const CONFETTI_THRESHOLD_QUANTUM = Number(config.confetti.quantum);
+  const [isHighPrime] = useState(() => false);
 
   // Feedback switches
   const FB = {
     full_stack: { STAR: false, ALIGNED_TEXT: false, SCORE: false },
     spoon_love: { STAR: false, ALIGNED_TEXT: false, SCORE: false },
+    client_local: { STAR: false, ALIGNED_TEXT: false, SCORE: false },
   };
+  // Show/Hide "ghost" from participant UI (still logged under the hood)
 
   // Early exit modal
   const [showExitModal, setShowExitModal] = useState(false);
   const [exitReason, setExitReason] = useState('time');
   const [exitNotes, setExitNotes] = useState('');
 
+  // Timer cleanup (capture id once)
   useEffect(() => {
+    const id = starTimerRef.current;
     return () => {
-      if (starTimerRef.current) clearTimeout(starTimerRef.current);
+      if (id) clearTimeout(id);
     };
   }, []);
 
@@ -508,10 +742,6 @@ function MainApp() {
     setter((prev) => ({ ...prev, [id]: value }));
   };
 
-  const statsQuantum = useMemo(
-    () => binom50(trialsPerBlock.spoon_love),
-    [trialsPerBlock.spoon_love]
-  );
   const filteredPreQuestions = useMemo(
     () => (hasDemographics ? [] : preQuestions.filter(filterOutPII)),
     [hasDemographics]
@@ -637,8 +867,124 @@ function MainApp() {
       });
     }
   }
+  async function completeBlockAfterLastRound(blockId) {
+    // Recompute block totals from the log you already have
+    const trialsThisBlock = trialResults.filter(
+      (t) => t.block_type === blockId
+    );
+    const N = trialsThisBlock.length;
+    const hits = trialsThisBlock.reduce((a, t) => {
+      // subject_hit is set; fall back to matched for safety
+      const v =
+        typeof t.subject_hit === 'number'
+          ? t.subject_hit
+          : typeof t.matched === 'number'
+          ? t.matched
+          : 0;
+      return a + (v || 0);
+    }, 0);
+    const pct = N > 0 ? (hits / N) * 100 : 0;
 
-  // Ensure we have ONE parent run document for both blocks (create once; reuse)
+    // One-sided exact binomial vs p0 = 0.2 (5 options)
+    const pValue = binomPValueOneSidedAtOrAbove(hits, N, P0);
+    const significant = pValue <= 0.05;
+
+    // Reveal tape for server blocks (same as your end-of-block code)
+    try {
+      const tape = tapesRef.current[blockId];
+      if (tape && exp1DocId) {
+        const revealRef = doc(
+          db,
+          'experiment1_responses',
+          exp1DocId,
+          'reveal',
+          `reveal_${blockId}`
+        );
+        await setDoc(
+          revealRef,
+          {
+            block_type: blockId,
+            commit_algo: 'SHA-256',
+            commit_hash_hex: tape.hashHex,
+            salt_hex: tape.saltHex,
+            tape_pairs_b64: bytesToBase64(tape.pairs),
+            bytes_per_trial: 2,
+            tape_length_trials: tape.pairs.length / 2,
+            revealed_at: serverTimestamp(),
+            created_iso: tape.createdISO,
+            rng_source: tape.rng_source,
+          },
+          { merge: false }
+        );
+      }
+    } catch (e) {
+      console.warn('Reveal write failed (continuing):', e);
+    }
+
+    // Store stats + navigate, exactly like your original end-of-block
+    if (blockId === 'full_stack') {
+      const basePercent = pct;
+      const displayed = basePercent;
+      setFullStackStats({
+        userPercent: displayed.toFixed(1),
+        basePercent: basePercent.toFixed(1),
+        confettiMetric: displayed.toFixed(1),
+        pValue: Number(pValue.toFixed(4)),
+        significant,
+      });
+      if (significant) fireConfettiFinale(); // BIG confetti only here
+      setStep('breathe-spoon');
+    } else if (blockId === 'spoon_love') {
+      setSpoonLoveStats({
+        userPercent: pct.toFixed(1),
+        pValue: Number(pValue.toFixed(6)),
+        significant,
+      });
+      if (significant) fireConfettiFinale(); // BIG confetti only here
+
+      // === Reveal K for auditors (stateless commit) ===
+      if (config.ENABLE_QUANTUM_REMAP) {
+        try {
+          if (spoonCommitTokenRef.current) {
+            const resp = await fetch(
+              '/.netlify/functions/reveal-block-key',
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  session_id: sessionId,
+                  block: 'spoon_love',
+                  commit_token: spoonCommitTokenRef.current, // stateless reveal
+                }),
+              }
+            );
+            // Optional: read/inspect the body; we don't need to store it client-side
+            await resp.json().catch(() => ({}));
+          } else {
+            console.warn(
+              '[reveal] no commit_token present; skipping reveal'
+            );
+          }
+        } catch (e) {
+          console.warn('reveal-block-key failed (continuing):', e);
+        }
+      }
+
+      setStep('breathe-client');
+    } else {
+      // client_local final block
+      setSpoonLoveStats({
+        userPercent: pct.toFixed(1),
+        pValue: Number(pValue.toFixed(6)),
+        significant,
+      });
+      if (significant) fireConfettiFinale(); // BIG confetti only here
+      setStep('final-results');
+    }
+  }
+
+  // Ensure we have ONE parent run document for all blocks
+  const [exp1DocId, setExp1DocId] = useState(null);
   async function ensureRunDoc() {
     if (exp1DocId) return exp1DocId;
     await ensureSignedIn();
@@ -650,18 +996,15 @@ function MainApp() {
         session_id: sessionId,
         app_version: appVersion,
         created_at: serverTimestamp(),
+        timestamp: serverTimestamp(),
       }
     );
     const parentId = mainRef.id;
-
-    // Make sure participant_id is present & visible before sub-writes
     await setDoc(
       doc(db, 'experiment1_responses', parentId),
       { participant_id },
       { merge: true }
     );
-
-    // tiny settle
     try {
       await getDoc(doc(db, 'experiment1_responses', parentId));
     } catch (_) {}
@@ -671,127 +1014,195 @@ function MainApp() {
 
   // Pre-generate & store sealed envelopes for a whole block, plus local cache
   const prefetchBlock = async (blockId) => {
-    // prevent double-run
     if (isPrefetching?.[blockId] || prefetchStatus?.[blockId]?.done)
       return;
 
+    const totalWanted = Number(config.trialsPerBlock[blockId]);
+
     try {
       setIsPrefetching((p) => ({ ...p, [blockId]: true }));
+      // keep the real total visible; don't flash 0
       setPrefetchStatus((s) => ({
         ...s,
-        [blockId]: { total: 0, count: 0, done: false },
+        [blockId]: { total: totalWanted, count: 0, done: false },
       }));
 
-      // ONE call: server decides how many trials (1..100) for this session+block
+      /* ===============================
+       CLIENT-LOCAL: pre-draw on client
+       =============================== */
+      if (blockId === 'client_local') {
+        const total = totalWanted;
+
+        // Make 2 bytes per trial locally
+        const bytes = new Uint8Array(total * 2);
+        crypto.getRandomValues(bytes);
+        const envs = Array.from({ length: total }, (_, i) => ({
+          trial_index: i + 1, // 1-based
+          raw_byte: bytes[i * 2] >>> 0,
+          ghost_raw_byte: bytes[i * 2 + 1] >>> 0,
+        }));
+
+        // Merge into cache deterministically (fill holes only)
+        const prevBlock = assignmentCache?.[blockId] || {};
+        const nextBlock = { ...prevBlock };
+        for (const e of envs) {
+          const i = e.trial_index >>> 0;
+          if (nextBlock[i]) continue; // only fill holes
+          nextBlock[i] = {
+            assigned: null,
+            raw_byte: e.raw_byte,
+            ghost_raw_byte: e.ghost_raw_byte,
+            rngMeta: {
+              source: 'client_local_predraw',
+              server_time: Date.now(),
+              batch_id: null,
+              qrng_code: null,
+            },
+          };
+        }
+        const nextAll = { ...assignmentCache, [blockId]: nextBlock };
+        setAssignmentCache(nextAll);
+
+        // Build a commit-reveal tape (optional but nice for parity)
+        try {
+          const pairs = new Uint8Array(total * 2);
+          for (const e of envs) {
+            const i0 = (e.trial_index - 1) * 2;
+            pairs[i0] = e.raw_byte & 0xff;
+            pairs[i0 + 1] = e.ghost_raw_byte & 0xff;
+          }
+          const salt = new Uint8Array(16);
+          crypto.getRandomValues(salt);
+          const hashHex = await sha256Hex(concatBytes(salt, pairs));
+          const saltHex = bytesToHex(salt);
+          tapesRef.current[blockId] = {
+            pairs,
+            saltHex,
+            hashHex,
+            createdISO: new Date().toISOString(),
+            rng_source: 'client_local_predraw',
+          };
+          try {
+            const runId = await ensureRunDoc();
+            await setDoc(
+              doc(
+                db,
+                'experiment1_responses',
+                runId,
+                'commits',
+                'client_local_predraw'
+              ),
+              {
+                session_id: sessionId,
+                block: 'client_local',
+                commit_hash: hashHex, // hash only (no salt/pairs yet)
+                created_at: serverTimestamp(),
+              },
+              { merge: true }
+            );
+          } catch (e) {
+            console.warn(
+              'client_local commit save failed (continuing):',
+              e
+            );
+          }
+        } catch (e) {
+          console.warn(
+            'client_local tape build failed (continuing):',
+            e
+          );
+        }
+
+        const countNow = Object.keys(nextBlock).length;
+        setPrefetchStatus((s) => ({
+          ...s,
+          [blockId]: {
+            total,
+            count: countNow,
+            done: countNow === total,
+          },
+        }));
+        return; // ✅ done with client_local
+      }
+
+      /* ===============================
+       FULL_STACK / SPOON_LOVE: server batch
+       =============================== */
       const res = await fetch('/.netlify/functions/envelopes-batch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          sessionId, // keep
-          block: blockId, // the function accepts block or blockId
-          // optional flags—fine to include or omit:
+          sessionId,
+          block: blockId,
           allocate_all: true,
           domain_separation: true,
+          total: totalWanted, // ask for exactly N
         }),
       });
-
       if (!res.ok) {
         const text = await res.text().catch(() => '');
         throw new Error(
           `Batch fetch failed (${res.status}): ${text}`
         );
       }
-
       const payload = await res.json();
-      // Expected shape:
-      // {
-      //   batch_id, rng_source, server_time,
-      //   total, // integer 1..100
-      //   envelopes: [
-      //     { trial_index, raw_byte, ghost_raw_byte, qrng_code }
-      //   ]
-      // }
 
       const envs = Array.isArray(payload.envelopes)
         ? payload.envelopes
         : [];
-      const total = Number.isFinite(payload.total)
-        ? payload.total
-        : envs.length;
+      const total = totalWanted;
+      // console.log(
+      //   `[${blockId}] batch size:`,
+      //   envs.length,
+      //   envs.slice(0, 3)
+      // );
 
-      const missing = getMissingTrialIndices(
-        blockId,
-        total,
-        assignmentCache
-      );
+      // Merge into cache deterministically (fill holes only)
+      const prevBlock = assignmentCache?.[blockId] || {};
+      const nextBlock = { ...prevBlock };
+      for (const e of envs) {
+        const i = e.trial_index >>> 0;
+        if (nextBlock[i]) continue;
+        nextBlock[i] = {
+          assigned: null,
+          raw_byte: e.raw_byte,
+          ghost_raw_byte: e.ghost_raw_byte,
+          rngMeta: {
+            source:
+              payload.rng_source ||
+              (blockId === 'full_stack' ? 'random_org' : 'qrng_api'),
+            server_time: payload.server_time || Date.now(),
+            batch_id: payload.batch_id || null,
+            qrng_code: e.qrng_code ?? null,
+          },
+        };
+      }
+      const nextAll = { ...assignmentCache, [blockId]: nextBlock };
+      setAssignmentCache(nextAll);
 
-      // Cache and (optionally) persist sealed docs
-      let wrote = 0;
-      setAssignmentCache((prev) => {
-        const next = { ...prev };
-        next[blockId] = next[blockId] ? { ...next[blockId] } : {};
-
-        for (const e of envs) {
-          const i = e.trial_index;
-          if (!missing.includes(i)) continue; // skip already-filled slots
-
-          next[blockId][i] = {
-            assigned: null, // prepareTrial will set this later
-            raw_byte: e.raw_byte, // Subject stream
-            ghost_raw_byte: e.ghost_raw_byte, // Demon stream
-            rngMeta: {
-              source: payload.rng_source || 'qrng_api',
-              server_time: payload.server_time || Date.now(),
-              batch_id: payload.batch_id || null,
-              qrng_code: e.qrng_code ?? null,
-            },
-          };
-
-          // If you already write a sealed doc per trial, uncomment & drop your write here:
-          // const sealedId = `${sessionId}-${blockId}-${i}`;
-          // writes.push(
-          //   setDoc(doc(db, 'sealed_envelopes', sealedId), {
-          //     sessionId, blockId, trial_index: i,
-          //     raw_byte: e.raw_byte, ghost_raw_byte: e.ghost_raw_byte,
-          //     rng_source: payload.rng_source || 'qrng_api',
-          //     server_time: payload.server_time || Date.now(),
-          //     qrng_code: e.qrng_code ?? null,
-          //     batch_id: payload.batch_id || null,
-          //   }, { merge: true })
-          // );
-
-          wrote += 1;
-        }
-        return next;
-      });
-      // ---- Build a commit-reveal tape for this block ----
+      // Build commit-reveal tape from server batch
       try {
-        // Order by trial_index and pack Subject/Demon bytes as pairs
         const ordered = [...envs].sort(
           (a, b) => a.trial_index - b.trial_index
         );
         const pairs = new Uint8Array(total * 2);
         for (const e of ordered) {
           const i0 = (e.trial_index - 1) * 2;
-          pairs[i0] = (e.raw_byte >>> 0) & 0xff; // Subject byte
-          pairs[i0 + 1] = (e.ghost_raw_byte >>> 0) & 0xff; // Demon byte
+          pairs[i0] = (e.raw_byte >>> 0) & 0xff;
+          pairs[i0 + 1] = (e.ghost_raw_byte >>> 0) & 0xff;
         }
-
-        // 16-byte random salt
         const salt = new Uint8Array(16);
         crypto.getRandomValues(salt);
-
-        // Commit = SHA-256(salt || pairs)
         const hashHex = await sha256Hex(concatBytes(salt, pairs));
         const saltHex = bytesToHex(salt);
-
-        // Cache locally so the end-of-block reveal writer can use it
         tapesRef.current[blockId] = {
           pairs,
           saltHex,
           hashHex,
           createdISO: new Date().toISOString(),
-          rng_source: payload.rng_source || 'qrng_api',
+          rng_source:
+            payload.rng_source ||
+            (blockId === 'full_stack' ? 'random_org' : 'qrng_api'),
         };
       } catch (e) {
         console.warn(
@@ -800,12 +1211,14 @@ function MainApp() {
         );
       }
 
-      // If you collect `writes`, finish them here:
-      // if (writes.length) await Promise.all(writes);
-
+      const countNow = Object.keys(nextBlock).length;
       setPrefetchStatus((s) => ({
         ...s,
-        [blockId]: { total, count: wrote, done: true },
+        [blockId]: {
+          total,
+          count: countNow,
+          done: countNow === total,
+        },
       }));
     } catch (err) {
       console.error(err);
@@ -815,7 +1228,7 @@ function MainApp() {
       );
       setPrefetchStatus((s) => ({
         ...s,
-        [blockId]: { total: 0, count: 0, done: false },
+        [blockId]: { total: totalWanted, count: 0, done: false },
       }));
     } finally {
       setIsPrefetching((p) => ({ ...p, [blockId]: false }));
@@ -823,23 +1236,25 @@ function MainApp() {
   };
 
   /* =========================
-     Trial lifecycle
-     ========================= */
-
-  const [exp1DocId, setExp1DocId] = useState(null);
+   Trial lifecycle
+   ========================= */
 
   const startTrials = async (index = 0) => {
     const blockId = blockOrder[index].id;
     setCurrentBlockId(blockId);
+
+    // Reset per-run/block state
     if (index === 0) setTrialResults([]); // clear at beginning of FIRST block
     setCurrentTrial(0);
     setLastResult(null);
 
-    // Reuse/create a single parent run document for BOTH blocks
+    // NEW: reset the gamified match counters/banner
+    setMatchSummary(null);
+
     const parentId = await ensureRunDoc();
 
     setStep('trials');
-    await prepareTrial(0, parentId, blockId); // avoid state race by passing blockId
+    await prepareTrial(0, parentId, blockId);
   };
 
   async function prepareTrial(
@@ -847,30 +1262,92 @@ function MainApp() {
     parentId = exp1DocId,
     activeBlockId = currentBlockId
   ) {
-    // Disable until sealed envelope is written; reset one-click guard
     setTrialReady(false);
     setSealedEnvelopeId(null);
     hasGuessedRef.current = false;
     setTrialBlockingError(null);
+    setHasGuessedThisTrial(false); // NEW
+    setLastResult(null); // keep feedback hidden until guess
 
     const trialNum = nextTrialIndex + 1;
 
-    // Show icons in random left/right order
-    const pair = shuffledPair();
-    setChoiceOptions(pair);
-
-    // RNG pair / assignment for this trial
-    let assigned, source, server_time;
-
-    const cached = assignmentCache[activeBlockId]?.[trialNum];
-    if (cached) {
-      const assignedNow = assignFromBytes(
+    // Show icons in random order
+    const five = shuffledFive();
+    setChoiceOptions(five);
+    // ===== Block 3: client_local — PRE-DRAWN/SEALED ON CLIENT =====
+    if (activeBlockId === 'client_local') {
+      const cached = assignmentCache?.client_local?.[trialNum];
+      if (!cached) {
+        setTrialBlockingError(
+          'Client-local envelopes not ready. Please click “Draw Your Sealed Envelopes” on the previous screen.'
+        );
+        return;
+      }
+      // Map cached raw bytes to THIS trial’s shuffled display order
+      const assigned = assignZenerFromBytes(
         cached.raw_byte,
         cached.ghost_raw_byte,
-        trialNum
+        five
       );
+      // Save assigned indices + provenance
+      setCorrectIndex(assigned.primaryIndex);
+      setGhostIndex(assigned.ghostIndex);
+      setRngMeta({
+        source: 'client_local_predraw',
+        k_options: 5,
+        primary_symbol_id: assigned.primary_symbol_id,
+        ghost_symbol_id: assigned.ghost_symbol_id,
+        raw_byte: assigned.primary_raw,
+        ghost_raw_byte: assigned.ghost_raw,
+      });
+      if (parentId) {
+        const sealedId = `${sessionId}-${activeBlockId}-${trialNum}`;
+        try {
+          await setDoc(
+            doc(
+              db,
+              `experiment1_responses/${parentId}/sealed_envelope/${sealedId}`
+            ),
+            {
+              session_id: sessionId,
+              app_version: appVersion,
+              block_type: activeBlockId,
+              trial_index: trialNum,
+              rng_source: 'client_local_predraw',
+              server_time: Date.now(),
+              k_options: 5,
+              raw_byte: assigned.primary_raw,
+              ghost_raw_byte: assigned.ghost_raw,
+              primary_symbol_id: assigned.primary_symbol_id,
+              ghost_symbol_id: assigned.ghost_symbol_id,
+              primary_index_0based: assigned.primaryIndex,
+              ghost_index_0based: assigned.ghostIndex,
+              created_at: serverTimestamp(),
+            },
+            { merge: false }
+          );
+          setSealedEnvelopeId(sealedId);
+        } catch (e) {
+          console.warn(
+            '[sealed_envelope] client_local write failed:',
+            e
+          );
+        }
+      }
+      setTrialReady(true);
+      return;
+    }
 
-      // optional: store back so next time it's already there
+    // ===== Blocks 1 & 2 use sealed envelopes =====
+    let assigned, source, server_time;
+    const cached = assignmentCache[activeBlockId]?.[trialNum];
+
+    if (cached) {
+      const assignedNow = assignZenerFromBytes(
+        cached.raw_byte,
+        cached.ghost_raw_byte,
+        five
+      );
       setAssignmentCache((prev) => {
         const next = { ...prev };
         next[activeBlockId] = { ...(next[activeBlockId] || {}) };
@@ -886,10 +1363,12 @@ function MainApp() {
       server_time = cached.rngMeta.server_time;
 
       const sealedId = `${sessionId}-${activeBlockId}-${trialNum}`;
-
-      // Write sealed envelope on first use of cached assignment
       if (parentId) {
         try {
+          const isRemapBlock =
+            activeBlockId === 'spoon_love' &&
+            config.ENABLE_QUANTUM_REMAP;
+
           const sealedRef = doc(
             db,
             `experiment1_responses/${parentId}/sealed_envelope/${sealedId}`
@@ -903,13 +1382,19 @@ function MainApp() {
               trial_index: trialNum,
               rng_source: source,
               server_time,
-              pair_rule: 'alternate',
-              primary_pos: assignedNow.primary_pos,
+
+              // 5-option sealed data
+              k_options: 5,
               raw_byte: assignedNow.primary_raw,
               ghost_raw_byte: assignedNow.ghost_raw,
-              primary_is_right:
-                assignedNow.primaryIndex === 1 ? 1 : 0,
-              ghost_is_right: assignedNow.ghostIndex === 1 ? 1 : 0,
+              primary_symbol_id: assignedNow.primary_symbol_id,
+              ghost_symbol_id: assignedNow.ghost_symbol_id,
+              primary_index_0based: isRemapBlock
+                ? null // defer index until post-press remap
+                : assignedNow.primaryIndex,
+              ghost_index_0based: isRemapBlock
+                ? null // defer index until post-press remap
+                : assignedNow.ghostIndex,
               created_at: serverTimestamp(),
             },
             { merge: false }
@@ -918,31 +1403,29 @@ function MainApp() {
           console.warn('[sealed_envelope] cached-write failed:', e);
         }
       }
-
       setSealedEnvelopeId(sealedId);
     } else {
-      // No cache → fetch now (old behavior), then write sealed doc
+      // No cache → fetch now (PRNG for full_stack, QRNG for spoon_love)
       if (activeBlockId === 'full_stack') {
         const res = await getPrngPairOrThrow();
         source = res.source || 'random_org';
         server_time = res.server_time ?? null;
-        assigned = assignFromBytes(
+        assigned = assignZenerFromBytes(
           res.bytes[0],
           res.bytes[1],
-          trialNum
+          five
         );
       } else {
         const res = await getQuantumPairOrThrow();
         source = res.source || 'qrng';
         server_time = res.server_time ?? null;
-        assigned = assignFromBytes(
+        assigned = assignZenerFromBytes(
           res.bytes[0],
           res.bytes[1],
-          trialNum
+          five
         );
       }
 
-      // Write the sealed envelope now (idempotent: same ID per trial)
       if (!parentId) {
         console.warn(
           'exp1DocId not ready; skipping sealed_envelope for this trial'
@@ -954,6 +1437,10 @@ function MainApp() {
         db,
         `experiment1_responses/${parentId}/sealed_envelope/${sealedId}`
       );
+
+      const isRemapBlock =
+        activeBlockId === 'spoon_love' && config.ENABLE_QUANTUM_REMAP;
+
       const payload = {
         session_id: sessionId,
         app_version: appVersion,
@@ -961,12 +1448,19 @@ function MainApp() {
         trial_index: trialNum,
         rng_source: source,
         server_time,
-        pair_rule: 'alternate',
-        primary_pos: assigned.primary_pos,
+
+        // 5-option sealed data
+        k_options: 5,
         raw_byte: assigned.primary_raw,
         ghost_raw_byte: assigned.ghost_raw,
-        primary_is_right: assigned.primaryIndex === 1 ? 1 : 0,
-        ghost_is_right: assigned.ghostIndex === 1 ? 1 : 0,
+        primary_symbol_id: assigned.primary_symbol_id,
+        ghost_symbol_id: assigned.ghost_symbol_id,
+        primary_index_0based: isRemapBlock
+          ? null // defer index until post-press remap
+          : assigned.primaryIndex,
+        ghost_index_0based: isRemapBlock
+          ? null // defer index until post-press remap
+          : assigned.ghostIndex,
         created_at: serverTimestamp(),
       };
 
@@ -978,120 +1472,519 @@ function MainApp() {
           sealedRef.path,
           e
         );
-        return; // keep disabled
+        return;
       }
       setSealedEnvelopeId(sealedId);
     }
 
-    // Expose indices/meta & enable guessing
-    setCorrectIndex(assigned.primaryIndex);
-    setGhostIndex(assigned.ghostIndex);
-    setRngMeta({
-      source,
-      server_time,
-      pair_rule: 'alternate',
-      primary_pos: assigned.primary_pos,
-      raw_byte: assigned.primary_raw,
-      ghost_raw_byte: assigned.ghost_raw,
-    });
+    // === Finalize: indices vs defer for spoon_love (based on feature flag)
+    const isRemapBlockActive =
+      activeBlockId === 'spoon_love' && config.ENABLE_QUANTUM_REMAP;
+
+    if (isRemapBlockActive) {
+      // Defer indices; only store bytes + meta now (remap happens after press)
+      setCorrectIndex(null);
+      setGhostIndex(null);
+      setRngMeta({
+        source,
+        server_time,
+        k_options: 5,
+        primary_symbol_id: assigned.primary_symbol_id,
+        ghost_symbol_id: assigned.ghost_symbol_id,
+        raw_byte: assigned.primary_raw,
+        ghost_raw_byte: assigned.ghost_raw,
+        remap_mode: 'qrng_postchoice_remap',
+      });
+    } else {
+      // full_stack behavior (and spoon_love with remap OFF)
+      setCorrectIndex(assigned.primaryIndex);
+      setGhostIndex(assigned.ghostIndex);
+      setRngMeta({
+        source,
+        server_time,
+        k_options: 5,
+        primary_symbol_id: assigned.primary_symbol_id,
+        ghost_symbol_id: assigned.ghost_symbol_id,
+        raw_byte: assigned.primary_raw,
+        ghost_raw_byte: assigned.ghost_raw,
+      });
+    }
+
     setTrialReady(true);
   }
   async function handleGuess(selectedIndex) {
-    // must be ready, must have a sealed envelope, and must not have guessed yet
+    // allow client_local without a sealed envelope; others must have one
+
     if (!trialReady || !sealedEnvelopeId || hasGuessedRef.current)
       return;
     hasGuessedRef.current = true;
+    setHasGuessedThisTrial(true); // NEW: we can now show feedback
 
-    if (
-      choiceOptions.length !== 2 ||
-      correctIndex == null ||
-      ghostIndex == null
-    )
-      return;
+    if (choiceOptions.length < 1) return;
 
     const blockId = currentBlockId;
-    const totalThisBlock =
-      (prefetchStatus?.[blockId]?.total &&
-        Number(prefetchStatus[blockId].total)) ||
-      Number(trialsPerBlock[blockId]);
-
+    const totalThisBlock = totalTrialsFor(blockId);
     const press_start_ts = new Date().toISOString();
 
-    // Did the participant guess the RNG's target?
-    const matched = selectedIndex === correctIndex ? 1 : 0;
-    const correctSide = correctIndex === 1 ? 'right' : 'left';
-    // NEW: per-trial correctness flags
-    const subject_hit = matched; // subject is "right" iff matched
-    const demon_hit = selectedIndex === ghostIndex ? 1 : 0;
+    // We'll compute everything into these local vars for immediate scoring/logging
+    let resolvedCorrectIndex = null;
+    let resolvedGhostIndex = null;
+    let resolvedMeta = null; // carries rng info (bytes/symbols), plus remap data if any
 
+    // Flag to check if we should perform the remap logic
+    const isRemapBlockActive =
+      blockId === 'spoon_love' && config.ENABLE_QUANTUM_REMAP;
+
+    // ===== Block 3: client_local — score pre-drawn assignment (no new randomness) =====
+    if (blockId === 'client_local') {
+      resolvedCorrectIndex = correctIndex;
+      resolvedGhostIndex = ghostIndex;
+      resolvedMeta = rngMeta || {
+        source: 'client_local_predraw',
+        k_options: 5,
+      };
+    }
+    // ===== Block 2: spoon_love (WITH REMAP ENABLED) — POST-PRESS REMAP using server key r =====
+    else if (isRemapBlockActive) {
+      const press_bucket_ms = Math.floor(Date.now() / 10) * 10; // 10ms bucket
+      let remapR = null,
+        proof_hmac = null,
+        server_time = null; // start as null so we can detect failures
+
+      try {
+        const payload = {
+          session_id: sessionId,
+          block: 'spoon_love',
+          trial_index: currentTrial + 1,
+          commit_token: spoonCommitTokenRef.current, // <-- NEW (must be set when you clicked “Draw…”)
+          press_start_ts,
+          press_bucket_ms,
+          selected_index: selectedIndex,
+          options: choiceOptions.map((o) => o.id), // exactly 5 ids in display order
+          raw_byte: rngMeta?.raw_byte >>> 0, // <-- NEW (must be a number)
+        };
+
+        const res = await fetch(
+          '/.netlify/functions/qrng-remap-key',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          }
+        );
+
+        const j = await res.json().catch(() => ({}));
+        if (res.ok && j?.success && typeof j.r === 'number') {
+          remapR = j.r % 5;
+          proof_hmac = j.proof_hmac ?? null;
+          server_time = j.server_time ?? null;
+        } else {
+          const msg = j?.error || `HTTP ${res.status}`;
+          console.warn('remap-key error:', msg, j);
+          setTrialBlockingError(`Remap error: ${msg}`);
+          remapR = null;
+        }
+      } catch (e) {
+        console.warn('qrng-remap-key failed', e);
+        setTrialBlockingError(`Network error: ${String(e)}`);
+        remapR = null;
+      }
+
+      // If we couldn't get a valid remap, reset and let the user try again
+      if (remapR === null) {
+        hasGuessedRef.current = false;
+        setHasGuessedThisTrial(false);
+        setTrialBlockingError(
+          'Network hiccup preparing your remap. Please try again.'
+        );
+        return;
+      }
+      setTrialBlockingError(null);
+      const idxOf = (id) =>
+        choiceOptions.findIndex((o) => o.id === id);
+      const subjectSym = ZENER[(rngMeta.raw_byte >>> 0) % 5].id; // pre-drawn (retrocausal source)
+      const ghostSym = ZENER[(rngMeta.ghost_raw_byte >>> 0) % 5].id;
+
+      const baseIdx = idxOf(subjectSym);
+      const ghostBase = idxOf(ghostSym);
+
+      const remappedIdx = (((baseIdx + remapR) % 5) + 5) % 5;
+      const ghostIdx = (((ghostBase + remapR) % 5) + 5) % 5;
+
+      // Update UI state
+      setCorrectIndex(remappedIdx);
+      setGhostIndex(ghostIdx);
+      setRngMeta((prev) => ({
+        ...(prev || {}),
+        remap_r: remapR,
+        remap_proof: proof_hmac,
+        server_time: server_time || prev?.server_time || null,
+        press_bucket_ms,
+      }));
+
+      // Local resolved values
+      resolvedCorrectIndex = remappedIdx;
+      resolvedGhostIndex = ghostIdx;
+      resolvedMeta = {
+        ...(rngMeta || {}),
+        remap_r: remapR,
+        remap_proof: proof_hmac,
+        server_time: server_time || rngMeta?.server_time || null,
+        press_bucket_ms,
+      };
+
+      // Retrocausal labels for logging/UI
+      var retro_pre_label = subjectSym;
+      var retro_post_label =
+        choiceOptions[remappedIdx]?.id ?? String(remappedIdx);
+    }
+
+    // ===== Block 1 (full_stack) OR Block 2 (spoon_love with REMAP DISABLED) =====
+    else {
+      resolvedCorrectIndex = correctIndex;
+      resolvedGhostIndex = ghostIndex;
+      resolvedMeta = rngMeta || null;
+    }
+
+    // Safety: if something glitched, allow another press
+    if (resolvedCorrectIndex == null || resolvedGhostIndex == null) {
+      hasGuessedRef.current = false;
+      console.warn('Resolved indices not ready; skipping this press');
+      return;
+    }
+
+    // Score this press
+    const matched = selectedIndex === resolvedCorrectIndex ? 1 : 0;
+    const subject_hit = matched;
+    // correct: did the ghost pick the actual target?
+    const demon_hit =
+      resolvedGhostIndex === resolvedCorrectIndex ? 1 : 0;
+
+    const correctLabel =
+      choiceOptions[resolvedCorrectIndex]?.id ??
+      String(resolvedCorrectIndex);
+    const selectedLabel =
+      choiceOptions[selectedIndex]?.id ?? String(selectedIndex);
+    const pre_label =
+      typeof retro_pre_label !== 'undefined'
+        ? retro_pre_label
+        : correctLabel;
+    const post_label =
+      typeof retro_post_label !== 'undefined'
+        ? retro_post_label
+        : correctLabel;
+
+    const isQuantum =
+      blockId === 'spoon_love' && config.ENABLE_QUANTUM_REMAP;
+    const optionsIds = choiceOptions.map((o) => o.id);
+    const commitHash = tapesRef.current[blockId]?.hashHex ?? null;
     const logRow = {
+      // session/meta
       session_id: sessionId,
       app_version: appVersion,
       condition: isHighPrime ? 'primed' : 'control',
       block_type: blockId,
       agent: robotMode ? 'robot' : 'human',
+      k_options: 5,
       timing_arm: timingArm,
+
+      // trial identity
       trial_index: currentTrial + 1,
-
-      sealed_envelope_id: sealedEnvelopeId,
-
+      sealed_envelope_id: sealedEnvelopeId ?? null,
+      commit_hash_hex: commitHash,
+      // timing
       press_time: press_start_ts,
       press_start_ts,
       press_release_ts: new Date().toISOString(),
       hold_duration_ms: null,
+      press_bucket_ms: isQuantum
+        ? resolvedMeta?.press_bucket_ms ?? null
+        : null,
+
+      // scoring
       subject_hit,
       demon_hit,
-      rng_source: rngMeta?.source,
-      raw_byte: rngMeta?.raw_byte ?? null,
-      qrng_code: correctIndex === 1 ? 2 : 1, // 1=LEFT, 2=RIGHT
-      qrng_label: correctSide,
-      primary_is_right: correctIndex === 1 ? 1 : 0,
-      qrng_server_time: rngMeta?.server_time ?? null,
-
-      ghost_raw_byte: rngMeta?.ghost_raw_byte ?? null,
-      ghost_qrng_code: ghostIndex === 1 ? 2 : 1,
-      ghost_is_right: ghostIndex === 1 ? 1 : 0,
-
-      pair_rule: rngMeta?.pair_rule,
-      primary_pos: rngMeta?.primary_pos,
-
-      options: choiceOptions.map((o) => o.id),
-      selected_index: selectedIndex,
-      selected_id: choiceOptions[selectedIndex].id,
-
       matched,
+
+      // target/ghost (resolved indices for this press)
+      target_index_0based: resolvedCorrectIndex,
+      ghost_index_0based: resolvedGhostIndex,
+      target_symbol_id:
+        resolvedMeta?.primary_symbol_id ??
+        rngMeta?.primary_symbol_id ??
+        null,
+      ghost_symbol_id:
+        resolvedMeta?.ghost_symbol_id ??
+        rngMeta?.ghost_symbol_id ??
+        null,
+
+      // selection + options (display order)
+      options: optionsIds,
+      selected_index: selectedIndex,
+      selected_id: selectedLabel,
+
+      // RNG provenance
+      rng_source:
+        resolvedMeta?.source ||
+        rngMeta?.source ||
+        (blockId === 'client_local' ? 'client_local' : null),
+      raw_byte: resolvedMeta?.raw_byte ?? rngMeta?.raw_byte ?? null,
+      ghost_raw_byte:
+        resolvedMeta?.ghost_raw_byte ??
+        rngMeta?.ghost_raw_byte ??
+        null,
+
+      // retrocausal labels — only for quantum block
+      pre_symbol_id: isQuantum ? pre_label : null,
+      post_symbol_id: isQuantum ? post_label : null,
+
+      // remap metadata — only for quantum block
+      remap_mode: isQuantum ? 'qrng_postchoice_remap' : null,
+      remap_r: isQuantum ? resolvedMeta?.remap_r ?? null : null,
+      remap_r_ghost: isQuantum
+        ? resolvedMeta?.remap_r_ghost ?? null
+        : null,
+      remap_proof: isQuantum
+        ? resolvedMeta?.remap_proof ?? null
+        : null,
+
+      // legacy neutral fields (kept for compatibility)
+      // legacy/back-compat flags (now reflect 5-choice scoring)
+      qrng_code: null,
+      qrng_label: correctLabel,
+      primary_is_right: Number(subject_hit === 1),
+      ghost_qrng_code: null,
+      ghost_is_right: Number(demon_hit === 1),
+      primary_pos: null, // 2-choice only; keep null for 5-choice
+      pair_rule: null,
+
+      // audit marker for your proof context shape
+      proof_ctx_version: 1,
+    };
+    // console.log('[LOGROW READY]', {
+    //   block: logRow.block_type,
+    //   trial_index: logRow.trial_index,
+    //   selected_index: logRow.selected_index,
+    //   target_index_0based: logRow.target_index_0based,
+    //   options_len: Array.isArray(logRow.options)
+    //     ? logRow.options.length
+    //     : null,
+    // });
+
+    // Tag this row with match metadata before saving
+    const countThisBlockSoFar =
+      trialResults.filter((t) => t.block_type === blockId).length + 1; // including this one
+    const matchIndex0 = Math.floor(
+      (countThisBlockSoFar - 1) / MATCH_SIZE
+    ); // 0-based
+    const trialInMatch = ((countThisBlockSoFar - 1) % MATCH_SIZE) + 1; // 1..5
+
+    const enrichedRow = {
+      ...logRow,
+      match_index_0based: matchIndex0,
+      trial_in_match: trialInMatch,
     };
 
-    const updatedTrials = [...trialResults, logRow];
+    const updatedTrials = [...trialResults, enrichedRow];
     setTrialResults(updatedTrials);
+    // console.log('[LOG GUARD]', { exp1DocId, sealedEnvelopeId });
 
-    // Append-only log
-    if (exp1DocId && sealedEnvelopeId) {
+    // Append-only Firestore log (skip if no sealed envelope — CL doesn't have one)
+    if (exp1DocId) {
       try {
+        const targetIndex = Number.isFinite(
+          logRow?.target_index_0based
+        )
+          ? logRow.target_index_0based
+          : Number.isFinite(currentTrial?.targetIndex) // <-- your local correct index
+          ? currentTrial.targetIndex
+          : null;
+
+        const optionsArr = Array.isArray(logRow?.options)
+          ? logRow.options
+          : Array.isArray(currentTrial?.options)
+          ? currentTrial.options
+          : null;
+
+        const selectedId =
+          optionsArr && Number.isFinite(selectedIndex)
+            ? optionsArr[selectedIndex] ?? null
+            : null;
+
+        const targetId =
+          optionsArr && Number.isFinite(targetIndex)
+            ? optionsArr[targetIndex] ?? null
+            : null;
+
+        const matchedFlag =
+          Number.isFinite(selectedIndex) &&
+          Number.isFinite(targetIndex)
+            ? selectedIndex === targetIndex
+              ? 1
+              : 0
+            : 0;
+        // console.log('[WILL WRITE LOG]', {
+        //   block: logRow.block_type,
+        //   trial_index: logRow.trial_index,
+        //   selected_index: logRow.selected_index,
+        //   target_index_0based: logRow.target_index_0based,
+        //   options_len: Array.isArray(logRow.options)
+        //     ? logRow.options.length
+        //     : null,
+        // });
+
+        // 🔧 Ensure client_local writes the enriched fields used by the dashboard
+        if (logRow?.block_type === 'client_local') {
+          // options (array of 5)
+          if (!Array.isArray(logRow.options)) {
+            // use whatever your app already has around this scope:
+            // optionsIds OR currentTrial?.options
+            logRow.options =
+              (typeof optionsIds !== 'undefined' &&
+                Array.isArray(optionsIds) &&
+                optionsIds) ||
+              (Array.isArray(currentTrial?.options) &&
+                currentTrial.options) ||
+              null;
+          }
+
+          // selected_index (0..4)
+          if (!Number.isFinite(logRow.selected_index)) {
+            if (
+              typeof selectedIndex !== 'undefined' &&
+              Number.isFinite(selectedIndex)
+            ) {
+              logRow.selected_index = selectedIndex;
+            }
+          }
+
+          // target_index_0based (0..4)
+          if (!Number.isFinite(logRow.target_index_0based)) {
+            // many codebases call this "resolvedCorrectIndex" or "targetIndex"
+            const tIdx = Number.isFinite(resolvedCorrectIndex)
+              ? resolvedCorrectIndex
+              : Number.isFinite(targetIndex)
+              ? targetIndex
+              : Number.isFinite(currentTrial?.targetIndex)
+              ? currentTrial.targetIndex
+              : null;
+            logRow.target_index_0based = tIdx;
+          }
+
+          // ids derived from options
+          if (
+            logRow.selected_id == null &&
+            Array.isArray(logRow.options) &&
+            Number.isFinite(logRow.selected_index)
+          ) {
+            logRow.selected_id =
+              logRow.options[logRow.selected_index] ?? null;
+          }
+          if (
+            logRow.target_symbol_id == null &&
+            Array.isArray(logRow.options) &&
+            Number.isFinite(logRow.target_index_0based)
+          ) {
+            logRow.target_symbol_id =
+              logRow.options[logRow.target_index_0based] ?? null;
+          }
+
+          // matched (0/1)
+          if (!Number.isFinite(logRow.matched)) {
+            logRow.matched =
+              Number.isFinite(logRow.selected_index) &&
+              Number.isFinite(logRow.target_index_0based) &&
+              logRow.selected_index === logRow.target_index_0based
+                ? 1
+                : 0;
+          }
+
+          // client_local has no envelope; make it explicit
+          if (logRow.sealed_envelope_id === undefined) {
+            logRow.sealed_envelope_id = null;
+          }
+
+          // quick sanity print
+          // console.log('[CLIENT_LOCAL READY]', {
+          //   trial_index: logRow.trial_index,
+          //   selected_index: logRow.selected_index,
+          //   target_index_0based: logRow.target_index_0based,
+          //   options_len: Array.isArray(logRow.options)
+          //     ? logRow.options.length
+          //     : null,
+          // });
+        }
+
         await addDoc(
           collection(db, `experiment1_responses/${exp1DocId}/logs`),
           {
+            // meta
             session_id: logRow.session_id,
+            app_version: logRow.app_version,
+            condition: logRow.condition,
+            k_options: logRow.k_options,
             block_type: logRow.block_type,
+
+            // trial identity & timing
             trial_index: logRow.trial_index,
             press_time: logRow.press_time,
             press_start_ts: logRow.press_start_ts,
             press_release_ts: logRow.press_release_ts,
             hold_duration_ms: logRow.hold_duration_ms,
+            press_bucket_ms:
+              typeof logRow.press_bucket_ms === 'number'
+                ? logRow.press_bucket_ms
+                : null,
             timing_arm: logRow.timing_arm,
-            subject_hit: logRow.subject_hit,
-            demon_hit: logRow.demon_hit,
-            agent: logRow.agent,
-            qrng_code: logRow.qrng_code,
-            qrng_label: logRow.qrng_label,
-            primary_is_right: logRow.primary_is_right,
-            ghost_qrng_code: logRow.ghost_qrng_code ?? null,
-            ghost_is_right: logRow.ghost_is_right ?? null,
-            primary_pos: logRow.primary_pos,
+
+            // selection + options (display order)  🔴 REQUIRED for Patterns
+            options: optionsArr,
+            selected_index: selectedIndex,
+            selected_id: selectedId,
+
+            // results
+            subject_hit: Number.isFinite(logRow.subject_hit)
+              ? logRow.subject_hit
+              : matchedFlag,
+            demon_hit: logRow.demon_hit ?? 0,
+            matched: matchedFlag,
+
+            // resolved target/ghost for this press
+            target_index_0based: targetIndex,
+            ghost_index_0based: logRow.ghost_index_0based ?? null,
+            target_symbol_id: targetId,
+            ghost_symbol_id: logRow.ghost_symbol_id ?? null,
+
+            // retrocausal labels (only set in spoon_love; null elsewhere)
+            pre_symbol_id: logRow.pre_symbol_id ?? null,
+            post_symbol_id: logRow.post_symbol_id ?? null,
+
+            // RNG provenance
             rng_source: logRow.rng_source || null,
             raw_byte: logRow.raw_byte ?? null,
             ghost_raw_byte: logRow.ghost_raw_byte ?? null,
+
+            // sealed envelope id (baseline/quantum have it; client_local null)
             sealed_envelope_id: logRow.sealed_envelope_id,
+
+            // remap audit fields (null outside spoon_love)
+            remap_mode: logRow.remap_mode ?? null,
+            remap_r: logRow.remap_r ?? null,
+            remap_r_ghost: logRow.remap_r_ghost ?? null,
+            remap_proof: logRow.remap_proof ?? null,
+
+            // legacy neutrals for back-compat
+            qrng_code: logRow.qrng_code ?? null,
+            qrng_label: logRow.qrng_label ?? null,
+            primary_is_right: logRow.primary_is_right ?? null,
+            ghost_qrng_code: logRow.ghost_qrng_code ?? null,
+            ghost_is_right: logRow.ghost_is_right ?? null,
+            primary_pos: logRow.primary_pos ?? null,
+            pair_rule: logRow.pair_rule ?? null,
+
+            // audit marker for context shape
+            proof_ctx_version: logRow.proof_ctx_version ?? 1,
+
             created_at: serverTimestamp(),
           }
         );
@@ -1099,122 +1992,63 @@ function MainApp() {
         console.warn('guess log write failed', e);
       }
     }
+    // ===== End-of-match detection (show ONLY after each full 5-trial match) =====
+    const trialsThisBlock = updatedTrials.filter(
+      (t) => t.block_type === blockId
+    );
+    const gamesPlayedInBlock = trialsThisBlock.length;
 
-    // Optional visual feedback
-    if (FB[blockId]?.STAR && matched) {
-      if (starTimerRef.current) clearTimeout(starTimerRef.current);
-      setLastResult({ correct: correctSide, matched });
-      starTimerRef.current = setTimeout(
-        () => setLastResult(null),
-        1000
+    // ✅ put this line back:
+    const justCompletedARound =
+      gamesPlayedInBlock > 0 && gamesPlayedInBlock % MATCH_SIZE === 0;
+
+    if (justCompletedARound) {
+      const isLastRoundOfBlock =
+        gamesPlayedInBlock === totalThisBlock;
+
+      const roundStart = gamesPlayedInBlock - MATCH_SIZE; // last 5 only
+      const thisRound = trialsThisBlock.slice(
+        roundStart,
+        gamesPlayedInBlock
       );
-    } else {
-      setLastResult({ correct: correctSide, matched });
+
+      const subjectPts = thisRound.reduce(
+        (a, r) => a + (Number(r.subject_hit ?? r.matched) || 0),
+        0
+      );
+
+      const wonRound = isAboveChanceMatch5(subjectPts);
+      if (
+        !window.matchMedia?.('(prefers-reduced-motion: reduce)')
+          ?.matches &&
+        wonRound
+      ) {
+        fireConfettiSafely();
+      }
+
+      const roundNumber = gamesPlayedInBlock / MATCH_SIZE; // 1-based
+      setMatchSummary({
+        blockId,
+        roundNumber,
+        totalRounds: calcTotalMatches(totalThisBlock),
+        subjectPts,
+        aboveChance: wonRound,
+        isLastRound: isLastRoundOfBlock,
+      });
+
+      return; // show the summary card before continuing
     }
 
-    // End-of-block?
-    const countThisBlock = updatedTrials.filter(
+    // ==== End-of-block fallback (not on a round boundary) ====
+    const trialsThisBlockNow = updatedTrials.filter(
       (t) => t.block_type === blockId
-    ).length;
-    if (countThisBlock === totalThisBlock) {
-      const userCorrect = updatedTrials.filter(
-        (t) => t.block_type === blockId && t.matched === 1
-      ).length;
-      const realPercent = (userCorrect / totalThisBlock) * 100;
-      // Reveal the tape now so the commit can be verified
-      try {
-        const tape = tapesRef.current[blockId];
-        if (tape && exp1DocId) {
-          const revealRef = doc(
-            db,
-            'experiment1_responses',
-            exp1DocId,
-            'reveal',
-            `reveal_${blockId}`
-          );
-          await setDoc(
-            revealRef,
-            {
-              block_type: blockId,
-              commit_algo: 'SHA-256',
-              commit_hash_hex: tape.hashHex, // echo for convenience
-              salt_hex: tape.saltHex,
-              tape_pairs_b64: bytesToBase64(tape.pairs),
-              bytes_per_trial: 2,
-              tape_length_trials: tape.pairs.length / 2,
-              revealed_at: serverTimestamp(),
-              created_iso: tape.createdISO,
-              rng_source: tape.rng_source,
-            },
-            { merge: false }
-          );
-        }
-      } catch (e) {
-        console.warn('Reveal write failed (continuing):', e);
-      }
-
-      if (blockId === 'full_stack') {
-        // control (not primed): show the true score, no floor/boost
-        const basePercent = realPercent;
-        let displayed = basePercent;
-        let boost = 0;
-
-        // primed: apply optional boost + floor
-        // primed: apply conditional boost + random floor (60–70)
-        if (isHighPrime) {
-          const min = Number.isFinite(Number(BOOST_MIN))
-            ? Number(BOOST_MIN)
-            : 0;
-          const max = Number.isFinite(Number(BOOST_MAX))
-            ? Number(BOOST_MAX)
-            : 0;
-
-          // Random floor between 60 and 70 for the displayed score
-          const floorRand = randomInt(60, 70);
-
-          // Pick boost size based on performance:
-          // - below 60 → give max boost
-          // - 60 or above → give min boost
-          if (max >= min) {
-            boost = basePercent < 60 ? max : min;
-            displayed = Math.min(
-              Math.max(basePercent + boost, floorRand),
-              100
-            );
-          } else {
-            // If config is weird (max < min), just apply floor
-            displayed = Math.min(
-              Math.max(basePercent, floorRand),
-              100
-            );
-          }
-        }
-
-        // Use boosted display for primed baseline, real score otherwise
-        const confettiMetric = isHighPrime ? displayed : basePercent;
-        if (confettiMetric >= CONFETTI_THRESHOLD_BASELINE) {
-          fireConfettiSafely();
-        }
-
-        setFullStackStats({
-          userPercent: displayed.toFixed(1),
-          basePercent: basePercent.toFixed(1),
-          boostAmount: boost,
-          boosted: !!(isHighPrime && boost !== 0),
-          confettiMetric: confettiMetric.toFixed(1), // <- optional
-        });
-
-        setStep('fullstack-results');
-      } else {
-        if (realPercent > CONFETTI_THRESHOLD_QUANTUM)
-          fireConfettiSafely();
-        setSpoonLoveStats({ userPercent: realPercent.toFixed(1) });
-        setStep('final-results');
-      }
+    );
+    if (trialsThisBlockNow.length === totalThisBlock) {
+      await completeBlockAfterLastRound(blockId);
       return;
     }
 
-    // Next trial
+    // ===== Next trial =====
     setCurrentTrial((c) => {
       const next = c + 1;
       prepareTrial(next, exp1DocId, currentBlockId);
@@ -1231,7 +2065,9 @@ function MainApp() {
       while (!cancelled && currentTrial < totalTrialsPerBlock) {
         const waitMs = -Math.log(1 - Math.random()) * 900;
         await new Promise((r) => setTimeout(r, waitMs));
-        const guess = Math.random() < 0.5 ? 0 : 1;
+        const guess = Math.floor(
+          Math.random() * Math.max(1, choiceOptions.length)
+        );
         await handleGuess(guess);
       }
     })();
@@ -1249,7 +2085,7 @@ function MainApp() {
     exitedEarly = false,
     earlyExitInfo = null
   ) => {
-    if (isSavingRef.current) return; // prevent double-taps
+    if (isSavingRef.current) return;
     isSavingRef.current = true;
 
     await ensureSignedIn();
@@ -1271,12 +2107,14 @@ function MainApp() {
     const slTrials = trialResults.filter(
       (t) => t.block_type === 'spoon_love'
     );
+    // NEW: client-local (third block)
+    const clTrials = trialResults.filter(
+      (t) => t.block_type === 'client_local'
+    );
 
-    // --- helpers — robust extraction with backfills for older rows ---
     const getSubjectHit = (r) => {
       if (typeof r.subject_hit === 'number') return r.subject_hit;
-      if (typeof r.matched === 'number') return r.matched; // older rows
-      // last-resort backfill if needed:
+      if (typeof r.matched === 'number') return r.matched;
       if (
         typeof r.selected_index === 'number' &&
         typeof r.primary_is_right === 'number'
@@ -1299,16 +2137,14 @@ function MainApp() {
     };
     const sum = (arr) => arr.reduce((a, b) => a + b, 0);
 
-    // --- FULL STACK (baseline) ---
+    // FULL STACK (baseline)
     const fsSub = fsTrials
       .map(getSubjectHit)
       .filter((v) => v != null);
     const fsDem = fsTrials.map(getDemonHit).filter((v) => v != null);
     const fsN = Math.min(fsSub.length, fsDem.length) || 0;
-
     const fsHits = sum(fsSub);
     const fsDemonHits = sum(fsDem);
-
     const fsRealPct = fsN
       ? Number(((fsHits / fsN) * 100).toFixed(1))
       : null;
@@ -1320,13 +2156,11 @@ function MainApp() {
         ? Number((fsRealPct - fsGhostPct).toFixed(1))
         : null;
 
-    // displayed (possibly boosted/floored) baseline percent shown to the user
     const fsDisplayedPct =
       fullStackStats?.userPercent != null
         ? Number(fullStackStats.userPercent)
         : null;
 
-    // paired n10/n01 on overlapping indices only
     let fsN10 = 0,
       fsN01 = 0;
     for (let i = 0; i < fsN; i++) {
@@ -1336,16 +2170,14 @@ function MainApp() {
       else if (s === 0 && d === 1) fsN01++;
     }
 
-    // --- SPOON LOVE (quantum) ---
+    // SPOON LOVE (quantum)
     const slSub = slTrials
       .map(getSubjectHit)
       .filter((v) => v != null);
     const slDem = slTrials.map(getDemonHit).filter((v) => v != null);
     const slN = Math.min(slSub.length, slDem.length) || 0;
-
     const slHits = sum(slSub);
     const slDemonHits = sum(slDem);
-
     const slRealPct = slN
       ? Number(((slHits / slN) * 100).toFixed(1))
       : null;
@@ -1365,11 +2197,37 @@ function MainApp() {
       if (s === 1 && d === 0) n10++;
       else if (s === 0 && d === 1) n01++;
     }
+    // CLIENT LOCAL (third block) — optional summary for the parent doc
+    const clSub = clTrials
+      .map(getSubjectHit)
+      .filter((v) => v != null);
+    const clDem = clTrials.map(getDemonHit).filter((v) => v != null);
+    const clN = Math.min(clSub.length, clDem.length) || 0;
+    const clHits = clSub.reduce((a, b) => a + b, 0);
+    const clDemonHits = clDem.reduce((a, b) => a + b, 0);
+    const clRealPct = clN
+      ? Number(((clHits / clN) * 100).toFixed(1))
+      : null;
+    const clGhostPct = clN
+      ? Number(((clDemonHits / clN) * 100).toFixed(1))
+      : null;
+    const clDeltaPct =
+      clRealPct != null && clGhostPct != null
+        ? Number((clRealPct - clGhostPct).toFixed(1))
+        : null;
+    let clN10 = 0,
+      clN01 = 0;
+    for (let i = 0; i < clN; i++) {
+      const s = clSub[i],
+        d = clDem[i];
+      if (s === 1 && d === 0) clN10++;
+      else if (s === 0 && d === 1) clN01++;
+    }
 
     const sessionSummary = {
       session_id: sessionId,
       app_version: appVersion,
-      assignment: { primed: isHighPrime },
+      assignment: { primed: false },
       consent: {
         version: CONSENT_VERSION,
         consented: !!consentAgree,
@@ -1419,69 +2277,98 @@ function MainApp() {
           n01,
         },
       },
+      client_local: {
+        accuracy_real: clRealPct,
+        percent_ghost_right: clGhostPct,
+        delta_vs_ghost: clDeltaPct,
+        summary: {
+          trials: clTrials.length,
+          hits_primary_right: clHits,
+          hits_ghost_right: clDemonHits,
+          percent_primary_right: clRealPct,
+          percent_ghost_right: clGhostPct,
+          delta_vs_ghost: clDeltaPct,
+          n10: clN10,
+          n01: clN01,
+        },
+      },
       exitedEarly,
       exit_reason: exitedEarly
         ? earlyExitInfo?.reason || 'unspecified'
-        : null,
+        : 'complete',
       exit_reason_notes: exitedEarly
         ? earlyExitInfo?.notes || null
         : null,
+      // Keep this ISO for human/CSV readability; Firestore 'timestamp' is added below
       timestamp: new Date().toISOString(),
     };
 
-    // minimalizer (mirrors log shape)
-    const toMinimalTrial = (r) => ({
-      session_id: r.session_id,
-      sealed_envelope_id: r.sealed_envelope_id ?? null,
-      block_type: r.block_type,
-      trial_index: r.trial_index,
-      press_time: r.press_time,
-      press_start_ts: r.press_start_ts ?? r.press_time ?? null,
-      press_release_ts: r.press_release_ts ?? null,
-      hold_duration_ms: r.hold_duration_ms ?? null,
-      timing_arm: r.timing_arm ?? null,
-      agent: r.agent ?? null,
+    // Keep the small record BUT include picks/targets so analysis can run.
+    const toMinimalTrial = (r) => {
+      const sh = getSubjectHit(r);
+      const dh = getDemonHit(r);
 
-      // side codes / allocation flags
-      qrng_code: r.qrng_code,
-      qrng_label: r.qrng_label,
-      primary_is_right: r.primary_is_right,
-      ghost_qrng_code: r.ghost_qrng_code ?? null,
-      ghost_is_right: r.ghost_is_right ?? null,
-      primary_pos: r.primary_pos,
+      return {
+        // identity
+        session_id: r.session_id,
+        sealed_envelope_id: r.sealed_envelope_id ?? null,
+        block_type: r.block_type,
+        trial_index: r.trial_index,
 
-      // RNG meta + raw bytes
-      rng_source: r.rng_source || null,
-      raw_byte: r.raw_byte ?? null,
-      ghost_raw_byte: r.ghost_raw_byte ?? null,
+        // timing
+        press_time: r.press_time,
+        press_start_ts: r.press_start_ts ?? r.press_time ?? null,
+        press_release_ts: r.press_release_ts ?? null,
+        hold_duration_ms: r.hold_duration_ms ?? null,
+        press_bucket_ms:
+          typeof r.press_bucket_ms === 'number'
+            ? r.press_bucket_ms
+            : null,
+        timing_arm: r.timing_arm ?? null,
+        agent: r.agent ?? null,
 
-      // NEW: correctness flags
-      subject_hit:
-        typeof r.subject_hit === 'number'
-          ? r.subject_hit
-          : typeof r.matched === 'number'
-          ? r.matched
-          : null,
-      demon_hit: typeof r.demon_hit === 'number' ? r.demon_hit : null,
-    });
+        // rng provenance
+        rng_source: r.rng_source || null,
+        raw_byte: r.raw_byte ?? null,
+        ghost_raw_byte: r.ghost_raw_byte ?? null,
+        ghost_qrng_code: r.ghost_qrng_code ?? null,
+
+        // selection + options (needed for Patterns)
+        options: Array.isArray(r.options) ? r.options : null,
+        selected_index:
+          typeof r.selected_index === 'number'
+            ? r.selected_index
+            : null,
+        selected_id: r.selected_id ?? null,
+
+        // resolved target/ghost indices (needed for Patterns)
+        target_index_0based:
+          typeof r.target_index_0based === 'number'
+            ? r.target_index_0based
+            : null,
+        ghost_index_0based:
+          typeof r.ghost_index_0based === 'number'
+            ? r.ghost_index_0based
+            : null,
+        target_symbol_id: r.target_symbol_id ?? null,
+        ghost_symbol_id: r.ghost_symbol_id ?? null,
+
+        // results
+        subject_hit: sh,
+        demon_hit: dh,
+        matched: typeof r.matched === 'number' ? r.matched : null,
+
+        // quantum-only extras (harmless elsewhere)
+        remap_mode: r.remap_mode ?? null,
+        remap_r: typeof r.remap_r === 'number' ? r.remap_r : null,
+        pre_symbol_id: r.pre_symbol_id ?? null,
+        post_symbol_id: r.post_symbol_id ?? null,
+      };
+    };
 
     const fsTrialsMin = fsTrials.map((r, idx, arr) => {
-      const primary =
-        typeof r.primary_is_right === 'number'
-          ? r.primary_is_right
-          : r.qrng_label
-          ? r.qrng_label === 'right'
-            ? 1
-            : 0
-          : r.matched === 1
-          ? 1
-          : 0;
-      const baseRow = toMinimalTrial({
-        ...r,
-        primary_is_right: primary,
-        ghost_is_right:
-          r.ghost_is_right != null ? r.ghost_is_right : null,
-      });
+      const baseRow = toMinimalTrial(r);
+
       const isLastFullStackTrial = idx === arr.length - 1;
       if (!isLastFullStackTrial) return baseRow;
       const basePercent =
@@ -1509,6 +2396,8 @@ function MainApp() {
       };
     });
     const slTrialsMin = slTrials.map(toMinimalTrial);
+    // NEW: client-local minimal trials
+    const clTrialsMin = clTrials.map(toMinimalTrial);
 
     try {
       const mainDocId =
@@ -1529,6 +2418,8 @@ function MainApp() {
           participant_id: uid,
           session_id: sessionId,
           ...sessionSummary,
+          // canonical server time for ordering
+          timestamp: serverTimestamp(),
           updated_at: serverTimestamp(),
         },
         { merge: true }
@@ -1546,10 +2437,12 @@ function MainApp() {
         {
           full_stack_trials: fsTrialsMin,
           spoon_love_trials: slTrialsMin,
+          client_local_trials: clTrialsMin,
         },
         { merge: true }
       );
-      console.log('Saved run', mainDocId);
+
+      // console.log('Saved run', mainDocId);
     } catch (e) {
       console.error('MAIN SAVE FAILED', e);
       const msg = (e && (e.message || e.code)) || String(e);
@@ -1586,15 +2479,24 @@ function MainApp() {
       console.warn('Participant runs update failed:', e);
     }
   };
-
-  const ratingMessage = (percent) => {
-    const p = parseFloat(percent);
-    if (p <= 50) return 'Expected by chance.';
-    if (p <= 59) return 'Slightly above chance.';
-    if (p <= 69) return 'Notably above chance.';
-    if (p <= 79) return 'Strong result.';
-    return 'Very strong alignment — impressive!';
-  };
+  function ratingMessage(pValue, pct) {
+    // Prefer p-value (tells us statistical strength)
+    if (Number.isFinite(pValue)) {
+      if (pValue > 0.2) return 'Within chance range.';
+      if (pValue > 0.05)
+        return 'Slightly above chance (not significant).';
+      if (pValue > 0.01) return 'Significant at the 0.05 level.';
+      return 'Very strong evidence (p < 0.01).';
+    }
+    // Fallback to percent if p-value isn’t available
+    const p = parseFloat(pct);
+    if (!Number.isFinite(p)) return '';
+    if (p <= 20) return 'Within chance range (≈20%).';
+    if (p <= 29) return 'Slightly above chance.';
+    if (p <= 39) return 'Notably above chance.';
+    if (p <= 49) return 'Strong result.';
+    return 'Very strong alignment.';
+  }
 
   /* =========================
      Render
@@ -1607,10 +2509,11 @@ function MainApp() {
         <>
           <h1>Consent to Participate (pilot study)</h1>
           <p>
-            This study examines how focused attention relates to
-            outcomes from a random process. You will press a button
-            across multiple short trials and answer brief questions
-            (15-45 minutes).
+            This study evaluates whether selection accuracy for a
+            preselected symbol exceeds chance levels. You will
+            complete multiple short trials and brief questionnaires at
+            the beginning, midpoint, and end (approximately 15–20
+            minutes).
           </p>
           <p>
             <strong>Important:</strong> To preserve the scientific
@@ -1698,10 +2601,9 @@ function MainApp() {
                         p?.demographics &&
                         p?.demographics_version === 'v1'
                       ) {
-                        // returning participant → go straight to trials
-                        setStep('breathe-fullstack');
+                        setStep('breathe-fullstack'); // returning participant
                       } else {
-                        setStep('pre'); // first-time → pre-questions
+                        setStep('pre'); // first-time
                       }
                     } catch (e) {
                       console.error('Consent continue failed', e);
@@ -1725,70 +2627,73 @@ function MainApp() {
 
       {step === 'pre' && (
         <>
-          <h1>Experiment #1: Sealed Envelope</h1>
+          <h1>Experiment #1: Sealed Envelopes</h1>
           <h2>Welcome!</h2>
-          <p>
-            We’re testing whether one can pick up on a preselected
-            option. If an effect exists, it will likely be very small
-            — but even the smallest effect would be amazing to see!
-          </p>
-          <p>
-            The only way to know is with a mountain of data. That’s
-            where you come in:
-          </p>
-          <ul>
-            <li>
-              Try it again in different moods and frames of mind.
-            </li>
-            <li>
-              Share it with friends, family, and anyone curious.
-            </li>
-            <li>Every single run adds to the bigger picture.</li>
-            <li>
-              The first baseline block uses a physical RNG (like those
-              used in the{' '}
-              <a
-                href="https://pearlab.icrl.org/"
-                target="_blank"
-                rel="noopener noreferrer"
-                title="PEAR experiments used physical RNGs to explore mind–machine interaction."
-              >
-                PEAR experiments
-              </a>
-              ). We switch to a quantum RNG in the second block to see
-              if there’s a detectable difference.
-            </li>
-          </ul>
 
-          <details className="expander">
-            <summary>How scoring works (tap to expand)</summary>
+          <p>
+            In this experiment, you’ll try to choose the{' '}
+            <strong>hidden symbol</strong> out of five options. Since
+            there are five symbols, random guessing would be about
+            <strong> 20% correct</strong>. Trials are grouped into{' '}
+            <strong>rounds of 5</strong>. If you get{' '}
+            <strong>3 or more</strong> right in a round, that counts
+            as a<strong> round win</strong>.
+          </p>
+
+          <h3>How this session works</h3>
+          <ol>
+            <li>
+              <strong>Physical block</strong> (
+              {trialsPerBlock.full_stack} trials,{' '}
+              {calcTotalMatches(trialsPerBlock.full_stack)} rounds): A
+              sealed sequence from a physical hardware random
+              generator is fixed at draw time, and you try to perceive
+              the hidden target.
+            </li>
+            <li>
+              <strong>Quantum block</strong> (
+              {trialsPerBlock.spoon_love} trials,{' '}
+              {calcTotalMatches(trialsPerBlock.spoon_love)} rounds): A
+              sealed sequence from a quantum random generator is fixed
+              at draw time, and you try to perceive the hidden target.
+            </li>
+            <li>
+              <strong>Client-local block</strong> (
+              {trialsPerBlock.client_local} trials,{' '}
+              {calcTotalMatches(trialsPerBlock.client_local)} rounds):
+              Your device pre-draws and commits a sealed sequence, and
+              each trial uses a predrawn value to test for perception
+              of the hidden target generated locally.
+            </li>
+          </ol>
+
+          <p>
+            You’ll answer a few questions at the beginning and a quick
+            wrap-up at the end. Estimated time:{' '}
+            <strong>10-15 minutes</strong>.
+          </p>
+          <p>
+            <strong>Feedback:</strong> Results are summarized{' '}
+            <em>by round</em> only. After every 5 trials, you’ll see
+            your trial and round score and whether it was counted as a
+            win (3+ correct). At the end of all the matches you will
+            see your total score.
+          </p>
+          <details
+            className="expander"
+            style={{ marginTop: '0.75rem' }}
+          >
+            <summary>Why “sealed envelopes”?</summary>
             <div>
-              <p>Over {statsQuantum.N} trials:</p>
-              <ul>
-                <li>
-                  By pure chance, you’d expect about{' '}
-                  <strong>{statsQuantum.muHits} hits</strong> (50%).
-                </li>
-                <li>
-                  Natural variation (“standard deviation”) is about{' '}
-                  <strong>{statsQuantum.sdHits} hits</strong>{' '}
-                  {` (~${statsQuantum.sdPct.toFixed(
-                    1
-                  )} percentage points).`}
-                </li>
-                <li>
-                  {`≥ ${statsQuantum.oneHi}`} is above 1σ (~16% by
-                  luck alone). {`≥ ${statsQuantum.twoHi}`} is about 2σ
-                  — unusual if the RNG is truly random.
-                </li>
-                <li>
-                  Very low scores (e.g., ~33%) are as rare as very
-                  high (~67%) — both are unusual outcomes, not “bad.”
-                </li>
-              </ul>
               <p>
-                In short: 50% is average; 55+/45− notable; 60+/40−
-                rare in either direction.
+                We use “sealed envelopes” (hash commitments) so
+                targets are fixed, hidden, and later verifiable. Three
+                RNG's fix targets on a server the participant never
+                touches. There’s no experimenter and no physical cards
+                to mark. We include a demon under the hood to confirm
+                RNG parity. If, under these conditions, participants
+                beat chance in this pilot, that’s meaningful evidence
+                warranting deeper study.
               </p>
             </div>
           </details>
@@ -1797,19 +2702,57 @@ function MainApp() {
             className="expander"
             style={{ marginTop: '0.75rem' }}
           >
-            <summary>What you’ll do in each block</summary>
+            <summary>What you’ll do in each match</summary>
+            <div>
+              In each match you will try to perceive a hidden target
+              under sealed and auditable randomness. We call this
+              anomalous cognition (perception of hidden information).
+            </div>
+            <div>
+              Some participants prefer to go quickly. Others prefer to
+              pause and focus. Use the pace that feels natural to you.
+              {config.ENABLE_QUANTUM_REMAP && (
+                <>
+                  {' '}
+                  In the Quantum RNG match, your click timing is
+                  included in a small remap of the sealed target.
+                  There is no known “best” timing and no guarantee
+                  that a particular pace will help, but you are
+                  welcome to experiment with what feels right.
+                </>
+              )}
+            </div>
             <ol>
               <li>
-                <strong>Baseline Block</strong> (
-                {trialsPerBlock.full_stack} trials): press the{' '}
-                <strong>{getLabel('full_stack')}</strong> button;
-                outcome from a <em>physical RNG.</em>
+                <strong>Physical RNG Match</strong> (
+                {trialsPerBlock.full_stack} trials): Click{' '}
+                <em>Draw Your Sealed Envelopes</em> to fetch a sealed
+                sequence from a physical hardware random generator. On
+                each trial, pick one of five symbols and the app
+                scores against the sealed target index. After the
+                match, the server reveals the bytes and salt for
+                verification.
               </li>
               <li>
-                <strong>Main Quantum Block</strong> (
-                {trialsPerBlock.spoon_love} trials): press the{' '}
-                <strong>{getLabel('spoon_love')}</strong> button;
-                outcome from a <em>quantum RNG.</em>
+                <strong>Quantum RNG Match</strong> (
+                {trialsPerBlock.spoon_love} trials): Click{' '}
+                <em>Draw Your Sealed Envelopes</em> to fetch a sealed
+                quantum sequence. On each trial, pick a symbol
+                {config.ENABLE_QUANTUM_REMAP
+                  ? '; your click timing applies a small remap to the sealed base symbol before scoring'
+                  : ''}
+                . After the match, the server reveals the bytes and
+                salt for verification.
+              </li>
+              <li>
+                <strong>Client RNG Match</strong> (
+                {trialsPerBlock.client_local} trials): Click{' '}
+                <em>Draw Your Sealed Envelopes</em> to pre-draw and
+                commit a sealed sequence on your device. On each
+                trial, the app uses a predrawn target index held in
+                local memory to score your choice. After the match,
+                your device reveals the bytes and salt for
+                verification.
               </li>
             </ol>
           </details>
@@ -1897,21 +2840,79 @@ function MainApp() {
       {step === 'fullstack-results' && fullStackStats && (
         <>
           <h2>Practice Block Results</h2>
+          <div>
+            <p>
+              <strong>Your Score:</strong>
+            </p>
+
+            {(() => {
+              const rows = trialResults.filter(
+                (t) => t.block_type === 'full_stack'
+              );
+              const hits = rows.reduce(
+                (a, r) =>
+                  a +
+                  (Number(r.subject_hit) === 1
+                    ? 1
+                    : Number(r.matched) === 1
+                    ? 1
+                    : 0),
+                0
+              );
+              const total =
+                rows.length || totalTrialsFor('full_stack');
+              return (
+                <p style={{ marginTop: 4, opacity: 0.85 }}>
+                  Total trial wins: <b>{hits}</b> / <b>{total}</b> (
+                  {fullStackStats.userPercent}%)
+                </p>
+              );
+            })()}
+
+            {(() => {
+              const rows = trialResults.filter(
+                (t) => t.block_type === 'full_stack'
+              );
+              const { wins } = countAboveChanceRoundWins(
+                rows,
+                MATCH_SIZE
+              );
+              const totalRounds = calcTotalMatches(
+                totalTrialsFor('full_stack')
+              );
+              return (
+                <p style={{ opacity: 0.8 }}>
+                  Total round wins (≥3/5): <b>{wins}</b> /{' '}
+                  <b>{totalRounds}</b>
+                </p>
+              );
+            })()}
+
+            <p style={{ opacity: 0.8 }}>
+              <em>One-sided p (X ≥ hits, p₀=20%):</em>{' '}
+              {formatP(fullStackStats.pValue)}{' '}
+              {fullStackStats.significant
+                ? '— Significant at 0.05'
+                : ''}
+            </p>
+          </div>
+
           <p>
-            <strong>Your score:</strong> {fullStackStats.userPercent}%
+            {ratingMessage(
+              fullStackStats.pValue,
+              fullStackStats.userPercent
+            )}
           </p>
-          <p>{ratingMessage(fullStackStats.userPercent)}</p>
+
+          {/* Per-block match tally (baseline / full_stack) */}
+
           <div
             className="instructions"
             dangerouslySetInnerHTML={{
-              __html: (
-                fullStackBlock.resultsMessage || ''
-              ).replaceAll(
-                '{{WORD}}',
-                fullStackBlock.buttonLabel || 'RIGHT'
-              ),
+              __html: fullStackBlock?.resultsMessage || '',
             }}
           />
+
           {midQuestions.map((q, i) => (
             <div key={q.id} className="question-block">
               <label htmlFor={q.id} className="question-label">
@@ -1924,9 +2925,8 @@ function MainApp() {
           ))}
 
           {(() => {
-            const midComplete = allAnswered(
-              midQuestions,
-              midResponses
+            const midComplete = midQuestions.every((q) =>
+              isAnswered(q, midResponses)
             );
             return (
               <>
@@ -1948,8 +2948,7 @@ function MainApp() {
                   }`}
                   aria-disabled={!midComplete}
                   onClick={() => {
-                    if (!midComplete) return;
-                    setStep('breathe-spoon');
+                    if (midComplete) setStep('breathe-spoon');
                   }}
                 >
                   Get Ready For The Quantum Trials
@@ -1967,12 +2966,7 @@ function MainApp() {
           <div
             className="instructions"
             dangerouslySetInnerHTML={{
-              __html: (
-                fullStackBlock.preInstructions || ''
-              ).replaceAll(
-                '{{WORD}}',
-                fullStackBlock.buttonLabel || 'RIGHT'
-              ),
+              __html: fullStackBlock?.preInstructions || '',
             }}
           />
 
@@ -1990,9 +2984,8 @@ function MainApp() {
                     : 'primary-btn'
                 }
                 onClick={() => {
-                  if (!prefetchStatus.full_stack.done) {
+                  if (!prefetchStatus.full_stack.done)
                     prefetchBlock('full_stack');
-                  }
                 }}
                 disabled={
                   isPrefetching.full_stack ||
@@ -2025,25 +3018,59 @@ function MainApp() {
                 </span>
               </button>
             )}
-
+            {/* Status line: show progress & prompt more draws */}
+            <div style={{ fontSize: 12, opacity: 0.8 }}>
+              Envelopes ready: {prefetchStatus.full_stack.count}/
+              {prefetchStatus.full_stack.total}
+              {prefetchStatus.full_stack.count <
+              prefetchStatus.full_stack.total ? (
+                <span>
+                  {' '}
+                  — please click “Draw Your Sealed Envelopes” again.
+                </span>
+              ) : null}
+            </div>
             <button
-              className="primary-btn"
-              onClick={() => startTrials(0)}
+              className={`primary-btn ${
+                !prefetchStatus.full_stack?.done ||
+                prefetchStatus.full_stack.count <
+                  prefetchStatus.full_stack.total
+                  ? 'looks-disabled'
+                  : ''
+              }`}
+              onClick={async () => {
+                // Double-guard in onClick too (cheap and safe)
+                const ps = prefetchStatus.full_stack;
+                if (
+                  isPrefetching.full_stack ||
+                  !ps?.done ||
+                  ps.count < ps.total
+                ) {
+                  return; // don't start yet
+                }
+                await startTrials(0);
+              }}
               disabled={
-                !prefetchStatus.full_stack.done ||
-                isPrefetching.full_stack
+                isPrefetching.full_stack ||
+                !prefetchStatus.full_stack?.done ||
+                prefetchStatus.full_stack.count <
+                  prefetchStatus.full_stack.total
               }
               aria-disabled={
-                !prefetchStatus.full_stack.done ||
-                isPrefetching.full_stack
+                isPrefetching.full_stack ||
+                !prefetchStatus.full_stack?.done ||
+                prefetchStatus.full_stack.count <
+                  prefetchStatus.full_stack.total
               }
               title={
-                !prefetchStatus.full_stack.done
+                !prefetchStatus.full_stack?.done ||
+                prefetchStatus.full_stack.count <
+                  prefetchStatus.full_stack.total
                   ? 'Please prepare sealed envelopes first…'
                   : undefined
               }
             >
-              Start Baseline Trials
+              Start Match One Trials
             </button>
           </div>
         </div>
@@ -2055,12 +3082,7 @@ function MainApp() {
           <div
             className="instructions"
             dangerouslySetInnerHTML={{
-              __html: (
-                spoonLoveBlock.preInstructions || ''
-              ).replaceAll(
-                '{{WORD}}',
-                spoonLoveBlock.buttonLabel || 'RIGHT'
-              ),
+              __html: spoonLoveBlock?.preInstructions || '',
             }}
           />
 
@@ -2077,10 +3099,76 @@ function MainApp() {
                     ? 'secondary-btn looks-disabled'
                     : 'primary-btn'
                 }
-                onClick={() => {
-                  if (!prefetchStatus.spoon_love.done) {
-                    prefetchBlock('spoon_love');
+                onClick={async () => {
+                  if (prefetchStatus.spoon_love.done) return;
+
+                  // If remapping is disabled, just prefetch envelopes and skip commit logic
+                  if (!config.ENABLE_QUANTUM_REMAP) {
+                    await prefetchBlock('spoon_love');
+                    return;
                   }
+
+                  // --- Remapping is ON: Original logic with commit token ---
+                  const runId = await ensureRunDoc();
+                  let tokenResp = null;
+                  try {
+                    const res = await fetch(
+                      '/.netlify/functions/preblock-commit-key',
+                      {
+                        method: 'POST',
+                        headers: {
+                          'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                          session_id: sessionId,
+                          block: 'spoon_love',
+                        }),
+                      }
+                    );
+                    const j = await res.json().catch(() => ({}));
+                    if (!res.ok || !j?.success || !j.commit_token) {
+                      alert(
+                        'Failed to create quantum commit: ' +
+                          (j?.error || `HTTP ${res.status}`)
+                      );
+                      return;
+                    }
+                    tokenResp = j;
+                    spoonCommitTokenRef.current = j.commit_token;
+                  } catch (e) {
+                    alert(
+                      'Network error creating quantum commit: ' +
+                        String(e)
+                    );
+                    return;
+                  }
+
+                  try {
+                    await setDoc(
+                      doc(
+                        db,
+                        'experiment1_responses',
+                        runId,
+                        'commits',
+                        'spoon_love_stateless'
+                      ),
+                      {
+                        session_id: sessionId,
+                        block: 'spoon_love',
+                        commit_token: tokenResp.commit_token,
+                        commit_hash: tokenResp.commit_hash || null,
+                        created_at: serverTimestamp(),
+                      },
+                      { merge: true }
+                    );
+                  } catch (e) {
+                    console.warn(
+                      'commit token save failed (continuing):',
+                      e
+                    );
+                  }
+
+                  await prefetchBlock('spoon_love');
                 }}
                 disabled={
                   isPrefetching.spoon_love ||
@@ -2113,25 +3201,182 @@ function MainApp() {
                 </span>
               </button>
             )}
+            <div style={{ fontSize: 12, opacity: 0.8 }}>
+              Envelopes ready: {prefetchStatus.spoon_love.count}/
+              {prefetchStatus.spoon_love.total}
+              {prefetchStatus.spoon_love.count <
+              prefetchStatus.spoon_love.total ? (
+                <span>
+                  {' '}
+                  — please click “Draw Your Sealed Envelopes” again.
+                </span>
+              ) : null}
+            </div>
 
             <button
               className="primary-btn"
-              onClick={() => startTrials(1)}
+              onClick={async () => {
+                const ps = prefetchStatus.spoon_love;
+                if (
+                  isPrefetching.spoon_love ||
+                  !ps?.done ||
+                  ps.count < ps.total
+                ) {
+                  return;
+                }
+                // If remap is enabled, we MUST have a commit token.
+                if (
+                  config.ENABLE_QUANTUM_REMAP &&
+                  !spoonCommitTokenRef.current
+                ) {
+                  alert(
+                    'Please click “Draw Your Sealed Envelopes” first to get a quantum commit token.'
+                  );
+                  return;
+                }
+                await startTrials(1);
+              }}
               disabled={
-                !prefetchStatus.spoon_love.done ||
-                isPrefetching.spoon_love
+                isPrefetching.spoon_love ||
+                !prefetchStatus.spoon_love?.done ||
+                prefetchStatus.spoon_love.count <
+                  prefetchStatus.spoon_love.total
               }
               aria-disabled={
-                !prefetchStatus.spoon_love.done ||
-                isPrefetching.spoon_love
+                isPrefetching.spoon_love ||
+                !prefetchStatus.spoon_love?.done ||
+                prefetchStatus.spoon_love.count <
+                  prefetchStatus.spoon_love.total
               }
               title={
-                !prefetchStatus.spoon_love.done
+                !prefetchStatus.spoon_love?.done ||
+                prefetchStatus.spoon_love.count <
+                  prefetchStatus.spoon_love.total
                   ? 'Please prepare sealed envelopes first…'
                   : undefined
               }
             >
-              Start Quantum Trials
+              Start Match Two Trials
+            </button>
+          </div>
+        </div>
+      )}
+
+      {step === 'breathe-client' && (
+        <div className="breathe-step">
+          <div className="breathing-circle" aria-hidden="true" />
+          <div
+            className="instructions"
+            dangerouslySetInnerHTML={{
+              __html:
+                clientLocalBlock?.preInstructions ||
+                'Get ready for the client-local trials. Targets will be sealed when you draw envelopes.',
+            }}
+          />
+
+          {/* Prefetch sealed envelopes for CLIENT-LOCAL */}
+          <div style={{ marginTop: 12, display: 'grid', gap: 8 }}>
+            {isPrefetching.client_local ? (
+              <EnvelopeLoader
+                label={`Drawing sealed envelopes… ${prefetchStatus.client_local.count}/${prefetchStatus.client_local.total}`}
+              />
+            ) : (
+              <button
+                className={
+                  prefetchStatus.client_local.done
+                    ? 'secondary-btn looks-disabled'
+                    : 'primary-btn'
+                }
+                onClick={() => {
+                  if (!prefetchStatus.client_local.done)
+                    prefetchBlock('client_local');
+                }}
+                disabled={
+                  isPrefetching.client_local ||
+                  prefetchStatus.client_local.done
+                }
+                aria-disabled={
+                  isPrefetching.client_local ||
+                  prefetchStatus.client_local.done
+                }
+                title={
+                  prefetchStatus.client_local.done
+                    ? 'Sealed envelopes ready'
+                    : undefined
+                }
+              >
+                <span className="btn-icon">
+                  <svg
+                    className="btn-envelope"
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                    focusable="false"
+                  >
+                    <path
+                      d="M20 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2
+                 2 0 0 0 2-2V6a2 2 0 0 0-2-2Zm0 2v.01L12 13
+                 4 6.01V6h16ZM4 18V8l8 7 8-7v10H4Z"
+                    />
+                  </svg>
+                  <span>Draw Your Sealed Envelopes</span>
+                </span>
+              </button>
+            )}
+
+            {/* Status line */}
+            <div style={{ fontSize: 12, opacity: 0.8 }}>
+              Envelopes ready: {prefetchStatus.client_local.count}/
+              {prefetchStatus.client_local.total}
+              {prefetchStatus.client_local.count <
+              prefetchStatus.client_local.total ? (
+                <span>
+                  {' '}
+                  — please click “Draw Your Sealed Envelopes” again.
+                </span>
+              ) : null}
+            </div>
+
+            {/* Start */}
+            <button
+              className={`primary-btn ${
+                !prefetchStatus.client_local?.done ||
+                prefetchStatus.client_local.count <
+                  prefetchStatus.client_local.total
+                  ? 'looks-disabled'
+                  : ''
+              }`}
+              onClick={async () => {
+                const ps = prefetchStatus.client_local;
+                if (
+                  isPrefetching.client_local ||
+                  !ps?.done ||
+                  ps.count < ps.total
+                ) {
+                  return;
+                }
+                await startTrials(2);
+              }}
+              disabled={
+                isPrefetching.client_local ||
+                !prefetchStatus.client_local?.done ||
+                prefetchStatus.client_local.count <
+                  prefetchStatus.client_local.total
+              }
+              aria-disabled={
+                isPrefetching.client_local ||
+                !prefetchStatus.client_local?.done ||
+                prefetchStatus.client_local.count <
+                  prefetchStatus.client_local.total
+              }
+              title={
+                !prefetchStatus.client_local?.done ||
+                prefetchStatus.client_local.count <
+                  prefetchStatus.client_local.total
+                  ? 'Please prepare sealed envelopes first…'
+                  : undefined
+              }
+            >
+              Start Match Three Trials
             </button>
           </div>
         </div>
@@ -2144,25 +3389,48 @@ function MainApp() {
             {totalTrialsFor(currentBlockId)}
           </h2>
 
+          {(() => {
+            const totalRounds = calcTotalMatches(
+              totalTrialsFor(currentBlockId)
+            );
+            const currentRound =
+              Math.floor(currentTrial / MATCH_SIZE) + 1;
+            return (
+              <div
+                style={{
+                  fontSize: '0.9em',
+                  marginTop: '-0.5rem',
+                  marginBottom: '0.75rem',
+                  opacity: 0.8,
+                }}
+              >
+                Round {currentRound} of {totalRounds}
+                <div style={{ fontSize: '0.75em', opacity: 0.7 }}>
+                  {MATCH_SIZE} Trials = 1 Round
+                </div>
+              </div>
+            );
+          })()}
+
           <div
             className="instructions"
             dangerouslySetInnerHTML={{
-              __html: (currentBlockObj?.trialInstructions || '')
-                .replaceAll(
-                  '{{WORD}}',
-                  getLabel ? getLabel(currentBlockId) : 'Primary'
-                )
-                .replaceAll(
-                  '{{ISSUE_MAILTO}}',
-                  buildIssueMailto(sessionId)
-                ),
+              __html: (
+                currentBlockObj?.trialInstructions ||
+                'Tap the symbol you feel is right.'
+              ).replaceAll(
+                '{{ISSUE_MAILTO}}',
+                buildIssueMailto(sessionId)
+              ),
             }}
           />
+
           {!trialReady && !trialBlockingError && (
             <p style={{ marginTop: 8, fontSize: 12, opacity: 0.7 }}>
               Preparing trial…
             </p>
           )}
+
           {trialBlockingError && (
             <div
               role="alert"
@@ -2192,6 +3460,118 @@ function MainApp() {
             </div>
           )}
 
+          {/* Between-round summary card */}
+          {matchSummary && (
+            <div className="match-summary">
+              {(() => {
+                // Round numbers (supports old/new field names)
+                const roundNum =
+                  matchSummary.roundNumber ??
+                  matchSummary.matchNumber;
+                const totalRounds = calcTotalMatches(
+                  totalTrialsFor(currentBlockId)
+                );
+
+                // Win = 3+ hits this round
+                const isWin =
+                  (matchSummary.subjectPts ?? 0) >= MATCH_SIZE - 2; // 3/5
+
+                // Totals so far in this block
+                const rows = trialResults.filter(
+                  (t) => t.block_type === currentBlockId
+                );
+                const hitsSoFar = rows.reduce(
+                  (a, r) =>
+                    a +
+                    (Number(r.subject_hit) === 1
+                      ? 1
+                      : Number(r.matched) === 1
+                      ? 1
+                      : 0),
+                  0
+                );
+
+                const totalTrialsPlanned =
+                  totalTrialsFor(currentBlockId);
+                const pct =
+                  totalTrialsPlanned > 0
+                    ? (
+                        (hitsSoFar / totalTrialsPlanned) *
+                        100
+                      ).toFixed(1)
+                    : '0.0';
+
+                // Round wins so far (completed rounds only)
+                const totalRoundWins = roundsTally.wins;
+
+                const cta = matchSummary.isLastRound
+                  ? 'Continue'
+                  : 'Play Next Round';
+
+                return (
+                  <>
+                    <div className="match-summary__title">
+                      Round {roundNum} of {totalRounds}
+                    </div>
+
+                    <div
+                      className="match-summary__scoreline"
+                      style={{ marginTop: 6 }}
+                    >
+                      <div>
+                        You scored <b>{matchSummary.subjectPts}</b>{' '}
+                        out of <b>5</b> this round.
+                      </div>
+
+                      <div style={{ marginTop: 4 }}>
+                        {isWin
+                          ? 'You won this round.'
+                          : 'You lost this round.'}
+                      </div>
+
+                      <div style={{ marginTop: 4 }}>
+                        Total round wins: <b>{totalRoundWins}</b> /{' '}
+                        <b>{totalRounds}</b>
+                      </div>
+
+                      <div style={{ marginTop: 2 }}>
+                        Total trial wins: <b>{hitsSoFar}</b> /{' '}
+                        <b>{totalTrialsPlanned}</b> ({pct}%)
+                      </div>
+                    </div>
+
+                    <button
+                      className="primary-btn match-summary__cta"
+                      onClick={async () => {
+                        setMatchSummary(null);
+                        if (matchSummary.isLastRound) {
+                          // Last round of this block → compute p, maybe confetti, advance block
+                          await completeBlockAfterLastRound(
+                            currentBlockId
+                          );
+                        } else {
+                          // Not last round → proceed to the very next trial
+                          setCurrentTrial((c) => {
+                            const next = c + 1;
+                            prepareTrial(
+                              next,
+                              exp1DocId,
+                              currentBlockId
+                            );
+                            return next;
+                          });
+                        }
+                      }}
+                    >
+                      {cta}
+                    </button>
+                  </>
+                );
+              })()}
+            </div>
+          )}
+
+          {/* Cards */}
           <div className="icon-options-wrapper">
             <div className="icon-options">
               {choiceOptions.map((icon, idx) => {
@@ -2211,16 +3591,17 @@ function MainApp() {
                         if (!waiting) handleGuess(idx);
                       }
                     }}
-                    // Force solid visuals even while waiting
                     style={{
                       opacity: 1,
                       color: '#000',
                       cursor: waiting ? 'default' : 'pointer',
                       pointerEvents: 'auto',
+                      display: 'grid',
+                      placeItems: 'center',
                     }}
                   >
                     <span
-                      className="icon-symbol"
+                      className="icon-symbol zener"
                       aria-hidden="true"
                       style={{
                         display: 'inline-block',
@@ -2237,19 +3618,23 @@ function MainApp() {
           </div>
 
           <div className="bottom-feedback-slot" aria-live="polite">
-            {!lastResult ? (
+            {currentBlockId !== 'spoon_love' ||
+            !config.ENABLE_QUANTUM_REMAP ||
+            !hasGuessedThisTrial ||
+            !lastResult ? (
+              // Hide on non-quantum blocks and before any guess
               <div className="status-placeholder" aria-hidden="true">
                 &nbsp;
               </div>
             ) : (
               <>
-                {FB[currentBlockId].ALIGNED_TEXT ? (
-                  <p className="aligned-line">
-                    {lastResult.matched
-                      ? 'Correct ✅'
-                      : 'Incorrect ❌'}
-                  </p>
-                ) : null}
+                <p className="aligned-line">
+                  {lastResult.matched ? 'Correct ✅' : 'Incorrect ❌'}{' '}
+                  <span style={{ opacity: 0.75, marginLeft: 8 }}>
+                    (pre: <b>{lastResult.pre_label}</b> → post:{' '}
+                    <b>{lastResult.post_label}</b>)
+                  </span>
+                </p>
                 {FB[currentBlockId].SCORE ? (
                   <h3 className="score-line">
                     Score so far:{' '}
@@ -2392,24 +3777,136 @@ function MainApp() {
 
       {step === 'final-results' && spoonLoveStats && (
         <>
-          <h2>Quantum Block Results</h2>
-          <p>
-            <strong>Your Score:</strong> {spoonLoveStats.userPercent}%
-          </p>
-          <p>{ratingMessage(spoonLoveStats.userPercent)}</p>
+          <h2>Final Results (All 3 Blocks)</h2>
+          <div>
+            <p>
+              <strong>Your Score:</strong>
+            </p>
+
+            {(() => {
+              // Use ALL trials from all blocks
+              const rows = trialResults;
+
+              const hits = rows.reduce(
+                (a, r) =>
+                  a +
+                  (Number(r.subject_hit) === 1
+                    ? 1
+                    : Number(r.matched) === 1
+                    ? 1
+                    : 0),
+                0
+              );
+
+              // Planned total if someone exits weirdly early
+              const plannedTotal =
+                totalTrialsFor('full_stack') +
+                totalTrialsFor('spoon_love') +
+                totalTrialsFor('client_local');
+
+              const total = rows.length || plannedTotal;
+              const pct =
+                total > 0 ? ((hits / total) * 100).toFixed(1) : '0.0';
+
+              return (
+                <p style={{ marginTop: 4, opacity: 0.85 }}>
+                  Total trial wins: <b>{hits}</b> / <b>{total}</b> (
+                  {pct}%)
+                </p>
+              );
+            })()}
+
+            {(() => {
+              // Cumulative round wins across all blocks
+              const rows = trialResults;
+              const blocks = [
+                'full_stack',
+                'spoon_love',
+                'client_local',
+              ];
+
+              let totalRoundWins = 0;
+              let totalPlannedRounds = 0;
+
+              for (const b of blocks) {
+                const rs = rows.filter((t) => t.block_type === b);
+                totalRoundWins += countAboveChanceRoundWins(
+                  rs,
+                  MATCH_SIZE
+                ).wins;
+                totalPlannedRounds += calcTotalMatches(
+                  totalTrialsFor(b)
+                );
+              }
+
+              return (
+                <p style={{ opacity: 0.8 }}>
+                  Total round wins (≥3/5): <b>{totalRoundWins}</b> /{' '}
+                  <b>{totalPlannedRounds}</b>
+                </p>
+              );
+            })()}
+
+            {(() => {
+              // One-sided binomial p-value on cumulative results vs p0=0.2
+              const rows = trialResults;
+              const hits = rows.reduce(
+                (a, r) =>
+                  a +
+                  (Number(r.subject_hit) === 1
+                    ? 1
+                    : Number(r.matched) === 1
+                    ? 1
+                    : 0),
+                0
+              );
+              const total = rows.length;
+              const pValue =
+                total > 0
+                  ? binomPValueOneSidedAtOrAbove(hits, total, P0)
+                  : NaN;
+
+              return (
+                <p style={{ opacity: 0.8 }}>
+                  <em>One-sided p (X ≥ hits, p₀=20%):</em>{' '}
+                  {formatP(pValue)}{' '}
+                  {Number.isFinite(pValue) && pValue <= 0.05
+                    ? '— Significant at 0.05'
+                    : ''}
+                </p>
+              );
+            })()}
+          </div>
+
+          {/* Optional qualitative message based on overall percent */}
+          {(() => {
+            const rows = trialResults;
+            const hits = rows.reduce(
+              (a, r) =>
+                a +
+                (Number(r.subject_hit) === 1
+                  ? 1
+                  : Number(r.matched) === 1
+                  ? 1
+                  : 0),
+              0
+            );
+            const total = rows.length || 1;
+            const pct = ((hits / total) * 100).toFixed(1);
+            return <p>{ratingMessage(NaN, pct)}</p>;
+          })()}
+
           <hr style={{ margin: '1.5rem 0' }} />
-          <FoldedSelfCheck />
+
           <div
             className="instructions"
             dangerouslySetInnerHTML={{
-              __html: (
-                spoonLoveBlock.resultsMessage || ''
-              ).replaceAll(
-                '{{WORD}}',
-                spoonLoveBlock.buttonLabel || 'RIGHT'
-              ),
+              __html:
+                (spoonLoveBlock?.resultsMessage || '') +
+                '<p style="opacity:0.8;margin-top:0.5rem">Scores shown above are cumulative across all three blocks.</p>',
             }}
           />
+
           <button onClick={() => setStep('post')}>
             Continue to Post-Experiment Questions
           </button>
@@ -2432,12 +3929,9 @@ function MainApp() {
 
           {(() => {
             const OPTIONAL_POST_IDS = new Set(['finalThoughts']);
-            const postComplete = allAnswered(
-              filteredPostQuestions.filter(
-                (q) => !OPTIONAL_POST_IDS.has(q.id)
-              ),
-              postResponses
-            );
+            const postComplete = filteredPostQuestions
+              .filter((q) => !OPTIONAL_POST_IDS.has(q.id))
+              .every((q) => isAnswered(q, postResponses));
             const onSubmit = async () => {
               if (!postComplete) return;
               await saveResults();
@@ -2496,7 +3990,7 @@ function MainApp() {
           </ul>
           <button
             onClick={() => window.location.reload()}
-            className="secondary-btn"
+            className="primary-btn"
             style={{ marginTop: '1em' }}
           >
             Run It Again
