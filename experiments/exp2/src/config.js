@@ -7,7 +7,7 @@ export const config = {
 
   // Trial counts
   trialsPerBlock: {
-    full_stack: 30, // Baseline block
+    full_stack: 15, // Baseline block
     spoon_love: 100, // Quantum block
   },
 

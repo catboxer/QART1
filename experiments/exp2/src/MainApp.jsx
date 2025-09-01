@@ -181,6 +181,24 @@ function fireConfettiSafely() {
   if (prefersReduced) return;
   confetti({ particleCount: 150, spread: 100, origin: { y: 0.6 } });
 }
+// --- global experiment constants (not captured by hooks) ---
+const MATCH_SIZE = 5;
+
+// Per-block UI controls
+const FB = {
+  full_stack: {
+    STAR: false,
+    ALIGNED_TEXT: false,
+    SCORE: false,
+    SCOREBOARD: false,
+  },
+  spoon_love: {
+    STAR: true,
+    ALIGNED_TEXT: false,
+    SCORE: false,
+    SCOREBOARD: true,
+  },
+};
 
 function MainApp() {
   // ----- participant profile (demographics stored once) -----
@@ -311,6 +329,8 @@ function MainApp() {
   const [isLoading, setIsLoading] = useState(false);
   const inFlightRef = useRef(false);
 
+  const [matchSummary, setMatchSummary] = useState(null);
+  const [pendingResults, setPendingResults] = useState(null);
   // NEW: highlight-missing flags (only after they try to continue)
   const [showPreMissing, setShowPreMissing] = useState(false);
   const [showMidMissing, setShowMidMissing] = useState(false);
@@ -338,12 +358,6 @@ function MainApp() {
     config.confetti.baseline
   );
   const CONFETTI_THRESHOLD_QUANTUM = Number(config.confetti.quantum);
-
-  // --- Feedback switches per block (live score unblocked for both) ---
-  const FB = {
-    full_stack: { STAR: false, ALIGNED_TEXT: false, SCORE: false },
-    spoon_love: { STAR: false, ALIGNED_TEXT: false, SCORE: false },
-  };
 
   // --- Feedback on early exit ---
   const [showExitModal, setShowExitModal] = useState(false);
@@ -535,7 +549,7 @@ function MainApp() {
               handlePressEnd();
             }
           }}
-          disabled={isLoading || buttonsDisabled}
+          disabled={isLoading || buttonsDisabled || !!matchSummary}
         >
           <span className="btn-label">
             {getLabel(currentBlockObj.id)}
@@ -563,6 +577,7 @@ function MainApp() {
   // --- Press/hold tracking ---
   const pressStartRef = useRef(null);
   const handlePressStart = (e) => {
+    if (matchSummary) return;
     try {
       // Only capture for mouse/pen, never for touch.
       if (e && e.pointerType && e.pointerType !== 'touch') {
@@ -572,6 +587,7 @@ function MainApp() {
     pressStartRef.current = performance.now();
   };
   const handlePressEnd = async () => {
+    if (matchSummary) return;
     const t0 = pressStartRef.current;
     const t1 = performance.now();
     pressStartRef.current = null;
@@ -718,35 +734,61 @@ function MainApp() {
       // ----- score + display (same rule for BOTH blocks) -----
       const matched = rng.qrng_code === 2 ? 1 : 0; // RIGHT = hit
       const correctSide = rng.qrng_code === 2 ? 'right' : 'left';
+      // --- compute per-match indices BEFORE building logRow ---
+      const beforeCount = trialResults.filter(
+        (t) => t.block_type === block.id
+      ).length;
+      const countAfter = beforeCount + 1;
+      const match_index_0based = Math.floor(
+        (countAfter - 1) / MATCH_SIZE
+      );
+      const trial_in_match_1based =
+        ((countAfter - 1) % MATCH_SIZE) + 1;
 
-      // ----- log row -----
+      // ----- log row (neutral naming + extras) -----
       const logRow = {
         session_id: sessionId,
         app_version: appVersion,
+
         condition: isHighPrime ? 'primed' : 'control',
         block_type: block.id,
         agent: robotMode ? 'robot' : 'human',
         timing_arm: timingArm, // 'open' | 'blind' | 'synced' | 'scramble'
-        trial_index: currentTrial + 1,
-        press_time: press_start_ts,
+
+        trial_index: currentTrial + 1, // per-block counter (1..N)
+        match_index_0based, // 0,1,2,... (each 5 trials)
+        trial_in_match_1based, // 1..5 within the match
+
+        // input timings
+        // (dedupe: keep start + release; drop extra press_time)
         press_start_ts,
         press_release_ts,
         hold_duration_ms: holdDurationMs,
+
+        // RNG provenance
+        rng_family: block.id === 'full_stack' ? 'PRNG' : 'QRNG',
         rng_source: rng.source,
-        raw_byte: rng.rawByte ?? null,
-        qrng_code: rng.qrng_code,
-        qrng_label: rng.qrng_code === 2 ? 'right' : 'left',
+        rng_server_time: rng.server_time ?? null, // neutral
+        qrng_server_time: rng.server_time ?? null, // legacy (kept for compatibility)
+
+        // target (primary) outcome — neutral names
+        target_code: rng.qrng_code, // 1=LEFT, 2=RIGHT
+        target_label: rng.qrng_code === 2 ? 'right' : 'left',
         primary_is_right: rng.qrng_code === 2 ? 1 : 0,
-        qrng_server_time: rng.server_time ?? null,
-        ghost_raw_byte: rng.ghost_rawByte ?? null,
-        ghost_qrng_code: rng.ghost_qrng_code ?? null,
+
+        // ghost (“demon”) mirror — neutral names
+        ghost_target_code: rng.ghost_qrng_code ?? null,
         ghost_is_right:
           rng.ghost_qrng_code != null && rng.ghost_qrng_code === 2
             ? 1
             : 0,
-        pair_rule: rng.pair_rule,
-        primary_pos: rng.primary_pos,
-        matched,
+
+        // allocation / RNG bytes
+        pair_rule: rng.pair_rule, // 'alternate'
+        primary_pos: rng.primary_pos, // 1|2
+        raw_byte: rng.rawByte ?? null,
+        ghost_raw_byte: rng.ghost_rawByte ?? null,
+        matched, // 1 if RIGHT, else 0
       };
 
       const newTrials = [...trialResults, logRow];
@@ -772,19 +814,94 @@ function MainApp() {
         (t) => t.block_type === block.id
       ).length;
       if (countThisBlock === totalTrialsPerBlock) {
-        const userCorrect = newTrials.filter(
-          (t) => t.block_type === block.id && t.matched === 1
+        const rowsThisBlock = newTrials.filter(
+          (t) => t.block_type === block.id
+        );
+
+        // If scoreboard is enabled and we just hit a match boundary (multiple of 5),
+        // compute results now but DO NOT navigate yet — wait for the user to hit "Continue".
+        const scoreboardEnabled = !!FB[block.id]?.SCOREBOARD;
+        const landedOnMatchBoundary =
+          rowsThisBlock.length % MATCH_SIZE === 0;
+
+        if (scoreboardEnabled && landedOnMatchBoundary) {
+          if (block.id === 'full_stack') {
+            // Baseline final scoring (your existing logic)
+            const userCorrect = rowsThisBlock.filter(
+              (t) => t.matched === 1
+            ).length;
+            const basePercent =
+              (userCorrect / Math.max(1, rowsThisBlock.length)) * 100;
+
+            let displayed = basePercent;
+            let boost = 0;
+
+            if (isHighPrime) {
+              const min = Number.isFinite(Number(BOOST_MIN))
+                ? Number(BOOST_MIN)
+                : 0;
+              const max = Number.isFinite(Number(BOOST_MAX))
+                ? Number(BOOST_MAX)
+                : 0;
+              const floorRand = randomInt(60, 70);
+              if (max >= min) {
+                boost = basePercent < 60 ? max : min;
+                displayed = Math.min(
+                  Math.max(basePercent + boost, floorRand),
+                  100
+                );
+              } else {
+                displayed = Math.min(
+                  Math.max(basePercent, floorRand),
+                  100
+                );
+              }
+            }
+
+            const confettiMetric = isHighPrime
+              ? displayed
+              : basePercent;
+
+            setPendingResults({
+              type: 'fullstack',
+              payload: {
+                userPercent: displayed.toFixed(1),
+                basePercent: basePercent.toFixed(1),
+                boostAmount: boost,
+                boosted: !!(isHighPrime && boost !== 0),
+                confettiMetric: confettiMetric.toFixed(1),
+              },
+            });
+          } else {
+            // Quantum final scoring
+            const userCorrect = rowsThisBlock.filter(
+              (t) => t.matched === 1
+            ).length;
+            const realPercent =
+              (userCorrect / Math.max(1, rowsThisBlock.length)) * 100;
+
+            setPendingResults({
+              type: 'spoon',
+              payload: { userPercent: realPercent.toFixed(1) },
+            });
+          }
+
+          // Do not navigate here — the modal is showing with blockDone=true.
+          return;
+        }
+
+        // Otherwise (no scoreboard or not on a match boundary), proceed as you already do:
+        const userCorrect = rowsThisBlock.filter(
+          (t) => t.matched === 1
         ).length;
-        const realPercent = (userCorrect / totalTrialsPerBlock) * 100;
+        const realPercent =
+          (userCorrect / Math.max(1, rowsThisBlock.length)) * 100;
 
         if (block.id === 'full_stack') {
-          // CONTROL: show the true score; no floor/boost
           const basePercent = realPercent;
           let displayed = basePercent;
           let boost = 0;
 
-          // PRIMED: apply optional boost + floor
-          // primed: apply conditional boost + random floor (60–70)
           if (isHighPrime) {
             const min = Number.isFinite(Number(BOOST_MIN))
               ? Number(BOOST_MIN)
@@ -792,13 +909,7 @@ function MainApp() {
             const max = Number.isFinite(Number(BOOST_MAX))
               ? Number(BOOST_MAX)
               : 0;
-
-            // Random floor between 60 and 70 for the displayed score
             const floorRand = randomInt(60, 70);
-
-            // Pick boost size based on performance:
-            // - below 60 → give max boost
-            // - 60 or above → give min boost
             if (max >= min) {
               boost = basePercent < 60 ? max : min;
               displayed = Math.min(
@@ -806,7 +917,6 @@ function MainApp() {
                 100
               );
             } else {
-              // If config is weird (max < min), just apply floor
               displayed = Math.min(
                 Math.max(basePercent, floorRand),
                 100
@@ -814,7 +924,6 @@ function MainApp() {
             }
           }
 
-          // Use boosted display for primed baseline, real score otherwise
           const confettiMetric = isHighPrime
             ? displayed
             : basePercent;
@@ -827,9 +936,8 @@ function MainApp() {
             basePercent: basePercent.toFixed(1),
             boostAmount: boost,
             boosted: !!(isHighPrime && boost !== 0),
-            confettiMetric: confettiMetric.toFixed(1), // <- optional
+            confettiMetric: confettiMetric.toFixed(1),
           });
-
           setStep('fullstack-results');
         } else {
           if (realPercent > CONFETTI_THRESHOLD_QUANTUM)
@@ -873,31 +981,100 @@ function MainApp() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [robotMode, step, currentTrial, totalTrialsPerBlock]);
+  useEffect(() => {
+    if (!FB[currentBlock]?.SCOREBOARD) return; // per-block toggle
+
+    const rows = trialResults.filter(
+      (t) => t.block_type === currentBlock
+    );
+    const count = rows.length;
+    if (!count) return;
+
+    // Only at 5, 10, 15, ...
+    if (count % MATCH_SIZE !== 0) return;
+
+    const start = count - MATCH_SIZE;
+    const recent = rows.slice(start, start + MATCH_SIZE);
+
+    const correctThisSet = recent.reduce(
+      (a, r) => a + (r.matched === 1 ? 1 : 0),
+      0
+    );
+    const cumulativeCorrect = rows.reduce(
+      (a, r) => a + (r.matched === 1 ? 1 : 0),
+      0
+    );
+    const cumulativeTotal = rows.length;
+
+    setMatchSummary({
+      blockId: currentBlock,
+      matchNumber: count / MATCH_SIZE,
+      correctThisSet,
+      cumulativeCorrect,
+      cumulativeTotal,
+      // This will be true on the last multiple-of-5 in the block
+      blockDone: count === totalTrialsPerBlock,
+    });
+
+    setButtonsDisabled(true);
+  }, [trialResults, currentBlock, totalTrialsPerBlock]);
 
   // -------- minimize each trial row (only what QAExport needs) --------
+  // -------- minimize each trial row (neutral names, no duplicate times) --------
   const toMinimalTrial = (r) => ({
     session_id: r.session_id,
+
+    // version pinning for long-running studies
+    app_version: r.app_version ?? appVersion,
+
     block_type: r.block_type,
-    trial_index: r.trial_index,
-    press_time: r.press_time,
+    trial_index: r.trial_index, // per-block (1..N)
+
+    // match metadata for easy auditing/slicing
+    match_index_0based:
+      r.match_index_0based != null
+        ? r.match_index_0based
+        : Math.floor(((r.trial_index ?? 1) - 1) / MATCH_SIZE),
+    trial_in_match_1based:
+      r.trial_in_match_1based != null
+        ? r.trial_in_match_1based
+        : (((r.trial_index ?? 1) - 1) % MATCH_SIZE) + 1,
+
+    // timings (deduped)
     press_start_ts: r.press_start_ts ?? r.press_time ?? null,
     press_release_ts: r.press_release_ts ?? null,
     hold_duration_ms: r.hold_duration_ms ?? null,
+
     timing_arm: r.timing_arm ?? null, // 'open' | 'scramble' | 'synced' | 'blind'
     agent: r.agent ?? null, // 'robot' | 'human'
 
-    // primary (subject) fields
-    qrng_code: r.qrng_code, // 1=LEFT, 2=RIGHT
-    qrng_label: r.qrng_label, // 'left'|'right'
-    primary_is_right: r.primary_is_right, // 1|0
+    // neutral target naming (with legacy fallback)
+    target_code: r.target_code ?? r.qrng_code,
+    target_label: r.target_label ?? r.qrng_label,
+    primary_is_right:
+      typeof r.primary_is_right === 'number'
+        ? r.primary_is_right
+        : (r.target_label ?? r.qrng_label) === 'right'
+        ? 1
+        : r.matched === 1
+        ? 1
+        : 0,
 
-    // demon/ghost fields
-    ghost_qrng_code: r.ghost_qrng_code ?? null, // 1|2|null
-    ghost_is_right: r.ghost_is_right ?? null, // 1|0|null
+    // ghost mirror
+    ghost_target_code:
+      r.ghost_target_code ?? r.ghost_qrng_code ?? null,
+    ghost_is_right:
+      r.ghost_is_right != null ? r.ghost_is_right : null,
 
-    // allocation / RNG metadata
-    primary_pos: r.primary_pos, // 1|2 (alternates)
+    // RNG provenance
+    rng_family:
+      r.rng_family ??
+      (r.block_type === 'full_stack' ? 'PRNG' : 'QRNG'),
     rng_source: r.rng_source || null,
+    rng_server_time: r.rng_server_time ?? r.qrng_server_time ?? null,
+
+    // allocation / bytes
+    primary_pos: r.primary_pos, // 1|2 (alternates)
     raw_byte: r.raw_byte ?? null,
     ghost_raw_byte: r.ghost_raw_byte ?? null,
   });
@@ -1129,6 +1306,7 @@ function MainApp() {
       const mainDocRef = await addDoc(colRef, {
         participant_id, // stable per browser/profile
         session_id: sessionId,
+        created_at: serverTimestamp(),
         ...sessionSummary, // NOTE: NO trial arrays here
       });
 
@@ -1234,7 +1412,7 @@ function MainApp() {
             This study examines how focused attention relates to
             outcomes from a random process. You will press a button
             across multiple short trials and answer brief questions
-            (15-45 minutes).
+            (15-20 minutes).
           </p>
           <p>
             <strong>Important:</strong> To preserve the scientific
@@ -1328,7 +1506,7 @@ function MainApp() {
                         p?.demographics_version === 'v1'
                       ) {
                         // Returning participant → go straight to trials
-                        startTrials(0);
+                        setStep('breathe-fullstack');
                       } else {
                         // First-time or incomplete pre → show pre-questions
                         setStep('pre');
@@ -1753,6 +1931,80 @@ function MainApp() {
               ) : null}
             </div>
           </div>
+          {FB[currentBlock]?.SCOREBOARD && matchSummary && (
+            <div
+              role="dialog"
+              aria-modal="true"
+              style={{
+                position: 'fixed',
+                inset: 0,
+                background: 'rgba(0,0,0,0.45)',
+                display: 'grid',
+                placeItems: 'center',
+                zIndex: 9999,
+                padding: 16,
+              }}
+            >
+              <div
+                style={{
+                  background: '#fff',
+                  borderRadius: 12,
+                  maxWidth: 520,
+                  width: '100%',
+                  padding: 16,
+                }}
+              >
+                <h3 style={{ marginTop: 0, marginBottom: 8 }}>
+                  {`Set ${matchSummary.matchNumber}`}
+                </h3>
+                <ul style={{ marginTop: 0, paddingLeft: 20 }}>
+                  <li>{`Correct this set: ${matchSummary.correctThisSet}/${MATCH_SIZE}`}</li>
+                  <li>{`Cumulative: ${
+                    matchSummary.cumulativeCorrect
+                  }/${matchSummary.cumulativeTotal} (${Math.round(
+                    (matchSummary.cumulativeCorrect /
+                      Math.max(1, matchSummary.cumulativeTotal)) *
+                      100
+                  )}%)`}</li>
+                </ul>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'flex-end',
+                    marginTop: 12,
+                  }}
+                >
+                  <button
+                    onClick={() => {
+                      setMatchSummary(null);
+                      setButtonsDisabled(false);
+
+                      if (matchSummary.blockDone && pendingResults) {
+                        if (pendingResults.type === 'fullstack') {
+                          const p = pendingResults.payload;
+                          if (
+                            Number(p.confettiMetric) >=
+                            CONFETTI_THRESHOLD_BASELINE
+                          ) {
+                            fireConfettiSafely();
+                          }
+                          setFullStackStats(p);
+                          setPendingResults(null);
+                          setStep('fullstack-results');
+                        } else if (pendingResults.type === 'spoon') {
+                          setSpoonLoveStats(pendingResults.payload);
+                          setPendingResults(null);
+                          setStep('final-results');
+                        }
+                      }
+                    }}
+                  >
+                    Continue
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           <button
             className="exit-button"
@@ -1982,6 +2234,7 @@ function MainApp() {
           </p>
           <ul>
             <li>Try again in different moods or mindsets.</li>
+            <li>Make sure to save your Session ID to earn prizes.</li>
             <li>Share with friends—large datasets matter here.</li>
             <li>
               We’ll post a full debrief at{' '}
@@ -1991,7 +2244,7 @@ function MainApp() {
           </ul>
           <button
             onClick={() => window.location.reload()}
-            className="secondary-btn"
+            className="primary-btn"
             style={{ display: 'inline-block', marginTop: '1em' }}
           >
             Run It Again

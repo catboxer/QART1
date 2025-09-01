@@ -4023,6 +4023,7 @@ function MainApp() {
           </p>
           <ul>
             <li>Try again in different moods or mindsets.</li>
+            <li>Make sure to save your Session ID to earn prizes.</li>
             <li>Share with friends—large datasets matter here.</li>
             <li>
               We’ll post a full debrief at{' '}
