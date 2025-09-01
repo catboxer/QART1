@@ -845,6 +845,7 @@ function parityPct(trials, rawField) {
   return { n, pctOdd: n ? (100 * odd) / n : null };
 }
 /* ==== NEW: hold-duration vs accuracy helpers ==== */
+
 function quantile(sortedNums, q) {
   if (!sortedNums.length) return null;
   const pos = (sortedNums.length - 1) * q;
@@ -887,6 +888,105 @@ function pearsonR_num(xs, ys) {
   const vy = syy - (sy * sy) / k;
   const denom = Math.sqrt(vx * vy);
   return denom ? cov / denom : null;
+}
+function calcHoldCorr(allSessions, blockKey) {
+  const rows = [];
+  for (const d of allSessions) {
+    const trials = (d?.[blockKey]?.trialResults || []).filter(
+      Boolean
+    );
+    if (!trials.length) continue;
+
+    const rights = trials.reduce(
+      (a, t) => a + (Number(t?.primary_is_right) === 1 ? 1 : 0),
+      0
+    );
+    const pctRight = (100 * rights) / trials.length;
+
+    const holds = trials
+      .map((t) => Number(t?.hold_duration_ms))
+      .filter(Number.isFinite);
+    if (!holds.length) continue;
+
+    const meanHold = holds.reduce((a, b) => a + b, 0) / holds.length;
+    rows.push({ meanHold, pctRight });
+  }
+
+  const xs = rows.map((r) => r.meanHold);
+  const ys = rows.map((r) => r.pctRight);
+  const nPairs = Math.min(xs.length, ys.length);
+
+  let r = null,
+    reason = null;
+
+  const varX = new Set(xs.map((v) => (Number.isFinite(v) ? +v : NaN)))
+    .size;
+  const varY = new Set(ys.map((v) => (Number.isFinite(v) ? +v : NaN)))
+    .size;
+
+  if (nPairs < 3) {
+    reason = 'Need ≥3 sessions with valid mean hold & %RIGHT';
+  } else if (varX <= 1) {
+    reason = 'No variance in mean hold across sessions';
+  } else if (varY <= 1) {
+    reason = 'No variance in %RIGHT across sessions';
+  } else {
+    r = pearsonR(xs, ys);
+  }
+
+  return { r, reason, n: nPairs };
+}
+// ------- Small line-component to show the correct correlation per block -------
+function HoldCorrLine({ qaDebug, blockId }) {
+  if (!qaDebug) return null;
+
+  if (blockId === 'full_stack') {
+    const r = qaDebug?.rHold_prng;
+    const n = qaDebug?.rHold_prngN;
+    const reason = qaDebug?.rHold_prngReason;
+    return (
+      <div>
+        Correlation (mean hold time of button in ms, %RIGHT) — PRNG
+        <br />
+        {Number.isFinite(r) ? (
+          <>
+            r = {r.toFixed(3)}
+            {Number.isFinite(n) ? ` (n=${n})` : ''}
+          </>
+        ) : (
+          <>
+            n/a{reason ? ` — ${reason}` : ''}
+            {Number.isFinite(n) ? ` (n=${n})` : ''}
+          </>
+        )}
+      </div>
+    );
+  }
+
+  if (blockId === 'spoon_love') {
+    const r = qaDebug?.rHold_qrng;
+    const n = qaDebug?.rHold_qrngN;
+    const reason = qaDebug?.rHold_qrngReason;
+    return (
+      <div>
+        Correlation (mean hold time of button in ms, %RIGHT) — QRNG
+        <br />
+        {Number.isFinite(r) ? (
+          <>
+            r = {r.toFixed(3)}
+            {Number.isFinite(n) ? ` (n=${n})` : ''}
+          </>
+        ) : (
+          <>
+            n/a{reason ? ` — ${reason}` : ''}
+            {Number.isFinite(n) ? ` (n=${n})` : ''}
+          </>
+        )}
+      </div>
+    );
+  }
+
+  return null;
 }
 
 function computeHoldReport(
@@ -1408,41 +1508,27 @@ export default function QAExport() {
 
     // --- Correlation: mean hold (ms) vs % RIGHT per session (QRNG) ---
     try {
-      const rowsForCorr = [];
-      for (const d of all) {
-        const trials = (d?.spoon_love?.trialResults || []).filter(
-          Boolean
-        );
-        if (!trials.length) continue;
+      // Compute for BOTH blocks
+      const qr = calcHoldCorr(all, 'spoon_love'); // QRNG (quantum)
+      const pr = calcHoldCorr(all, 'full_stack'); // PRNG (baseline)
 
-        const rights = trials.reduce(
-          (a, t) => a + (Number(t?.primary_is_right) === 1 ? 1 : 0),
-          0
-        );
-        const pctRight = (100 * rights) / trials.length;
+      setQaDebug((prev) => ({
+        ...(prev || {}),
+        // keep legacy keys if other UI expects them (QRNG)
+        rHoldVsScore: qr.r,
+        rHoldReason: qr.reason,
+        rHoldN: qr.n,
+        // explicit keys per block
+        rHold_qrng: qr.r,
+        rHold_qrngReason: qr.reason,
+        rHold_qrngN: qr.n,
+        rHold_prng: pr.r,
+        rHold_prngReason: pr.reason,
+        rHold_prngN: pr.n,
+      }));
 
-        const holds = trials
-          .map((t) => Number(t?.hold_duration_ms))
-          .filter(Number.isFinite);
-
-        if (!holds.length) continue;
-        const meanHold =
-          holds.reduce((a, b) => a + b, 0) / holds.length;
-
-        rowsForCorr.push({ meanHold, pctRight });
-      }
-      const xs = rowsForCorr.map((r) => r.meanHold);
-      const ys = rowsForCorr.map((r) => r.pctRight);
-      const rHoldVsScore = pearsonR(xs, ys);
-
-      // Keep it in qaDebug and log it
-      setQaDebug((prev) => ({ ...(prev || {}), rHoldVsScore }));
-      if (rHoldVsScore != null) {
-        console.log(
-          '[QA] Corr(mean hold ms, %RIGHT) =',
-          rHoldVsScore.toFixed(3)
-        );
-      }
+      console.log('[QA] Corr QRNG r=', qr.r, 'n=', qr.n);
+      console.log('[QA] Corr PRNG r=', pr.r, 'n=', pr.n);
     } catch (e) {
       console.warn('Hold-vs-score correlation failed:', e);
     }
@@ -1619,7 +1705,7 @@ export default function QAExport() {
     [allQRNGTrials]
   );
 
-  const FactsCard = ({ report }) => {
+  const FactsCard = ({ report, corrBlockId }) => {
     if (!report) return null;
     const t = report.totals;
     return (
@@ -1633,20 +1719,6 @@ export default function QAExport() {
           marginBottom: 8,
         }}
       >
-        {qaDebug?.rHoldVsScore != null && (
-          <div
-            style={{
-              margin: '8px 0',
-              padding: '8px 12px',
-              border: '1px solid #ddd',
-              borderRadius: 8,
-            }}
-          >
-            <strong>Corr(mean hold ms, % RIGHT, QRNG):</strong>{' '}
-            {qaDebug.rHoldVsScore.toFixed(3)}
-          </div>
-        )}
-
         <div
           style={{
             padding: '8px 12px',
@@ -1708,6 +1780,7 @@ export default function QAExport() {
     firstTen,
     extraBadges,
     diagnostics,
+    blockId,
   }) => {
     if (!report) return null;
     const usingSessionWeighted =
@@ -1790,18 +1863,18 @@ export default function QAExport() {
             label="n10 vs n01 symmetry (Subject↔︎Demon)"
             p={report.tests.symmetryN10vsN01.p}
           />
-          {qaDebug?.rHoldVsScore != null && (
-            <PBadge
-              label="Corr(mean hold ms, %RIGHT) — QRNG"
-              p={Math.abs(qaDebug.rHoldVsScore)}
-            />
-          )}
           {extraBadges}
         </div>
 
+        {/* Correlation line (shown only when caller passes a blockId) */}
+        {blockId ? (
+          <div style={{ margin: '4px 0 8px' }}>
+            <HoldCorrLine qaDebug={qaDebug} blockId={blockId} />
+          </div>
+        ) : null}
+
         {/* Quick facts (percentages + counts) */}
         <FactsCard report={report} />
-
         {/* Diagnostics (optional) */}
         {diagnostics}
 
@@ -2611,6 +2684,43 @@ export default function QAExport() {
           <div style={{ marginTop: 6 }}>
             <details>
               <summary>Show details</summary>
+
+              <div
+                style={{
+                  margin: '8px 0',
+                  padding: '8px 12px',
+                  border: '1px solid #ddd',
+                  borderRadius: 8,
+                  display: 'inline-block',
+                  background: '#fff',
+                }}
+              >
+                <div>
+                  <strong>Corr(mean hold ms, %RIGHT) — PRNG:</strong>{' '}
+                  {Number.isFinite(qaDebug?.rHold_prng)
+                    ? qaDebug.rHold_prng.toFixed(3)
+                    : 'n/a'}
+                  {qaDebug?.rHold_prngN != null
+                    ? ` (n=${qaDebug.rHold_prngN})`
+                    : ''}
+                  {qaDebug?.rHold_prngReason
+                    ? ` — ${qaDebug.rHold_prngReason}`
+                    : ''}
+                </div>
+                <div>
+                  <strong>Corr(mean hold ms, %RIGHT) — QRNG:</strong>{' '}
+                  {Number.isFinite(qaDebug?.rHold_qrng)
+                    ? qaDebug.rHold_qrng.toFixed(3)
+                    : 'n/a'}
+                  {qaDebug?.rHold_qrngN != null
+                    ? ` (n=${qaDebug.rHold_qrngN})`
+                    : ''}
+                  {qaDebug?.rHold_qrngReason
+                    ? ` — ${qaDebug.rHold_qrngReason}`
+                    : ''}
+                </div>
+              </div>
+
               <pre style={{ whiteSpace: 'pre-wrap' }}>
                 {JSON.stringify(qaDebug, null, 2)}
               </pre>
@@ -2658,6 +2768,7 @@ export default function QAExport() {
         title="PRNG — Full Stack (Primed only)"
         report={reportPRNGPrimed}
         firstTen={firstTenPRNGPrimed}
+        corrBlockId={null}
         extraBadges={
           abPvalsPRNG ? (
             <>
@@ -2691,12 +2802,14 @@ export default function QAExport() {
         title="PRNG — Full Stack (Not primed)"
         report={reportPRNGUnprimed}
         firstTen={firstTenPRNGUnprimed}
+        corrBlockId={null}
       />
 
       <Section
         title="QRNG — Spoon Love (all)"
         report={reportQRNG}
         firstTen={firstTenQRNG}
+        blockId="spoon_love"
         extraBadges={
           abPvals ? (
             <>
@@ -2988,11 +3101,13 @@ export default function QAExport() {
         title="QRNG — Spoon Love (Primed only)"
         report={reportQRNGPrimed}
         firstTen={firstTenPrimed}
+        corrBlockId={null}
       />
       <Section
         title="QRNG — Spoon Love (Not primed)"
         report={reportQRNGUnprimed}
         firstTen={firstTenUnprimed}
+        corrBlockId={null}
       />
     </div>
   );

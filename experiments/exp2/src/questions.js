@@ -97,11 +97,11 @@ export const cueBlocks = [
       <h2><strong>Your Task:</strong> </h2>
 <ul>
   <li>You will see a green button labeled <strong>{{WORD}}</strong>.</li>
-  <li>Your challenge is to keep your attention on this word and see if you can nudge the Random Number Generator ever so slightly—beyond pure chance.</li>
+  <li>Your challenge is to keep your attention on this word and see if you can nudge the Random Number Generator ever so slightly—beyond pure chance—to select the same word.</li>
   <li><strong>PRESS</strong> and <strong>HOLD</strong> the {{WORD}} button as you bring your focus fully onto the concept it represents to you.</li>
-  <li>Do not release until you feel truly refocused and sense the right moment to act.</li>
+  <li>Do not release until you feel refocused and sense the right moment to act.</li>
   <li>If your mind drifts (and it probably will), simply notice the distraction and gently return your focus to {{WORD}}.</li>
-  <li><strong>RELEASE</strong> the button only when you feel calm, steady, and ready.</li>
+  <li><strong>RELEASE</strong> the button when you feel ready.</li>
 </ul>
  `,
     trialInstructions: `
@@ -127,16 +127,17 @@ export const cueBlocks = [
       <h2><strong>Your Task:</strong> </h2>
 <ul>
   <li>You will see a green button labeled <strong>{{WORD}}</strong>.</li>
-  <li>Your challenge is to keep your attention on this word and see if you can nudge the RNG ever so slightly—beyond pure chance.</li>
-  <li><strong>PRESS</strong> and <strong>HOLD</strong> the {{WORD}} button as you bring your focus fully onto the concept it represents for you.</li>
-  <li>Do not release until you feel truly refocused and sense the right moment to act.</li>
+  <li>Your challenge is to keep your attention on this word and see if you can nudge the Random Number Generator ever so slightly—beyond pure chance—to select the same word.</li>
+  <li><strong>PRESS</strong> and <strong>HOLD</strong> the {{WORD}} button as you bring your focus fully onto the concept it represents to you.</li>
+  <li>Do not release until you feel refocused and sense the right moment to act.</li>
   <li>If your mind drifts (and it probably will), simply notice the distraction and gently return your focus to {{WORD}}.</li>
-  <li><strong>RELEASE</strong> the button only when you feel calm, steady, and ready.</li>
+  <li><strong>RELEASE</strong> the button when you feel ready.</li>
+  <li>You will see a gold star for each button push that is aligned with the QRNG. After every 5th Trial (A Match) you will see a scoreboard with your match and cumulative score.</li>
 </ul>
       <div class="why-this-matters">
   <p><strong>Why this matters</strong></p>
   <p>
-    This block is long and boring; and that’s intentional. The challenge is staying focused despite wandering thoughts. That skill tends to improve with practice. We’re exploring whether better focus correlates with better-than-chance scores.
+    The challenge is staying focused despite wandering thoughts. That skill tends to improve with practice. We’re exploring whether better focus correlates with better-than-chance scores.
   </p>
   <p>
     <em>Goal:</em> Work toward completing all ${N_QUANTUM} trials with minimal lapses in focus. Treat it like a growth exercise and notice how your focus (and score) change over time. 
@@ -144,16 +145,17 @@ export const cueBlocks = [
   </p>
 </div> `,
     trialInstructions: `
-      <h2>Main Experiment</h2>
-      <ul>
+      <h2>Quantum Main Experiment</h2>
+        <ul>
         <li><strong>PRESS </strong> the {{WORD}} button.</li>
-        <li><strong>HOLD</strong></li>
+        <li><strong>HOLD</strong> the button down.</li>
         <li><strong>REFOCUS</strong> when distracted.</li>
         <li><strong>RELEASE </strong>when it feels right.</li>
+        <li><strong>PRESS</strong> the CONTINUE button at the end of each match.</li>
       </ul>
-      <p style="margin:0">Wait until the button text {{WORD}} turns black before pressing again.</p>
+        <p style="margin:0">Wait until the button text {{WORD}} turns black before pressing again.</p>
       <p style="margin:0">If the network hiccups you will receive an alert. Press again.</p>
-    <p style="margin:0">Encountering issues? <a href="{{ISSUE_MAILTO}}">Email us about the problem</a>.</p>
+    <p style="margin:0">Encountering issues? <a href="{{ISSUE_MAILTO}}">Email us at h@whatthequark.com</a> about the problem.</p>
       `,
     showFeedback: false,
   },
