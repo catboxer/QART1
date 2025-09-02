@@ -2,8 +2,7 @@ export const config = {
   // Versioning
   CONSENT_VERSION: 'v1-2025-08-14',
   QA_SECRET: 'WHAT_THE_QUARK_EXP_2',
-  DEBRIEF_URL:
-    'https://experiments.whatthequark.com/debriefs/experiment2',
+  DEBRIEF_URL: 'https://whatthequark.com/debriefs/',
 
   // Trial counts
   trialsPerBlock: {
