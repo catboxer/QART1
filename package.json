@@ -8,7 +8,9 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "exp0": "netlify dev --functions=netlify/functions --command=\"npm start --prefix experiments/exp0\" --target-port=3000 --port=8888",
     "exp1": "netlify dev --functions=netlify/functions --command=\"npm start --prefix experiments/exp1\" --target-port=3000 --port=8888",
-    "exp2": "netlify dev --functions=netlify/functions --command=\"npm start --prefix experiments/exp2\" --target-port=3000 --port=8888"
+    "exp2": "netlify dev --functions=netlify/functions --command=\"npm start --prefix experiments/exp2\" --target-port=3000 --port=8888",
+    "exp3": "netlify dev --functions=netlify/functions --command=\"npm start --prefix experiments/exp3\" --target-port=3000 --port=8888",
+    "exp4": "netlify dev --functions=netlify/functions --command=\"npm start --prefix experiments/exp4\" --target-port=3000 --port=8888"
   },
   "keywords": [],
   "author": "",

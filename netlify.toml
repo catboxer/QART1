@@ -12,5 +12,5 @@
   targetPort = 3000
   functions = "netlify/functions"
   # You can change this line when you switch experiments:
-  command = "npm start --prefix experiments/exp2"
+  command = "npm start --prefix experiments/exp1"
 

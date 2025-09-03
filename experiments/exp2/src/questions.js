@@ -40,6 +40,13 @@ export const preQuestions = [
     options: ['Yes', 'No', 'Not sure / Self-diagnosed'],
   },
   {
+    id: 'autism',
+    question:
+      'Do you have any autism spectrum diagnoses (ASD, autism, etc.)?',
+    type: 'select',
+    options: ['Yes', 'No', 'Not sure / Self-diagnosed'],
+  },
+  {
     id: 'screenTime',
     question:
       'How many hours per day do you spend on a screen (not counting work)?',
