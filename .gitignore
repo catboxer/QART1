@@ -38,4 +38,5 @@ experiments/*/build/
 .env
 /experiments/exp0/
 /experiments/exp3/
+/experiments/exp4/
 
