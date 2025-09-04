@@ -1,0 +1,1113 @@
+/* =========================
+   Design Tokens
+   ========================= */
+:root {
+  --bg: #f5f7fa;
+  --text: #2b2b2b;
+  --heading: #222;
+  --muted: #666;
+
+  --primary: #28a745;
+  --primary-hover: #218838;
+
+  --danger: #e74c3c;
+
+  --border: #ccc;
+  --card: #fff;
+
+  --radius-lg: 12px;
+  --radius-md: 10px;
+  --radius-sm: 8px;
+
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.15);
+  --focus: #1976d2;
+
+  --missing-outline: #f7b3b3;
+  --missing-bg: #fff6f6;
+  --missing-text: #b00020;
+  --hint-text: #a40000;
+
+  --anim-fast: 0.2s ease;
+  --anim-med: 0.25s ease;
+}
+
+/* =========================
+   Global
+   ========================= */
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  min-height: 100%;
+  height: auto;
+}
+body {
+  margin: 0;
+  padding: 2rem;
+  font-family: 'Segoe UI', Roboto, Arial, Helvetica, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+.App {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+h1 {
+  margin: 0 0 1rem;
+  font-size: 2rem;
+  color: var(--heading);
+}
+h2 {
+  font-size: 2rem;
+  color: #333;
+  text-align: left;
+  margin: 1.5rem 0 1.25rem;
+}
+
+/* =========================
+   Buttons
+   ========================= */
+button {
+  display: block;
+  margin: 2rem auto 1rem;
+  padding: 1rem 2rem;
+  font-size: 1.1rem;
+  border: none;
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition: background var(--anim-med), transform 0.05s ease,
+    opacity var(--anim-fast), filter var(--anim-fast);
+  color: #fff;
+  background: var(--primary);
+}
+@media (hover: hover) {
+  button:hover {
+    background: var(--primary-hover);
+  }
+}
+button:active {
+  transform: scale(0.98);
+}
+
+.primary-btn {
+  background: var(--primary);
+}
+@media (hover: hover) {
+  .primary-btn:hover {
+    background: var(--primary-hover);
+  }
+}
+.secondary-btn {
+  background: #f0f0f0;
+  color: #333;
+}
+@media (hover: hover) {
+  .secondary-btn:hover {
+    background: #e8e8e8;
+  }
+}
+
+/* IMPORTANT: use aria-disabled + looks-disabled (not native disabled) */
+.primary-btn[aria-disabled='true'],
+.primary-btn.looks-disabled,
+.secondary-btn[aria-disabled='true'],
+.secondary-btn.looks-disabled {
+  opacity: 0.55;
+  filter: grayscale(15%);
+  cursor: not-allowed;
+  /* keep pointer-events so clicking still triggers red highlights */
+}
+
+/* Floating exit button */
+.exit-button {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #f8f8f8;
+  color: #333;
+  border: 1px solid var(--border);
+  padding: 8px 14px;
+  border-radius: 20px;
+  font-size: 1rem;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: all var(--anim-fast);
+  z-index: 9999;
+}
+@media (hover: hover) {
+  .exit-button:hover {
+    background: var(--danger);
+    color: #fff;
+    border-color: var(--danger);
+  }
+}
+
+/* =========================
+   Focus
+   ========================= */
+:focus {
+  outline: none;
+}
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* =========================
+   Question Layout & Inputs
+   ========================= */
+.question-block {
+  margin-bottom: 2.25rem;
+  text-align: left;
+}
+.question-label {
+  font-weight: 600;
+  font-size: 1.1rem;
+  display: block;
+  margin-bottom: 0.6rem;
+  color: var(--heading);
+}
+.question-number {
+  color: #444;
+  margin-right: 0.4rem;
+  font-weight: bold;
+}
+
+.answer-wrapper {
+  display: flex;
+  flex-direction: column;
+  max-width: 600px;
+}
+
+.number-input,
+.textarea-input,
+.text-input,
+.select-input {
+  font-size: 1rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--card);
+}
+.number-input {
+  width: 90px;
+  padding: 0.5rem;
+}
+.text-input,
+.answer-wrapper input[type='email'] {
+  width: 100%;
+  max-width: 600px;
+  padding: 0.5rem 0.6rem;
+}
+.textarea-input {
+  width: 100%;
+  max-width: 600px;
+  height: 120px;
+  padding: 0.6rem;
+  resize: vertical;
+}
+.select-input {
+  width: 100%;
+  max-width: 300px;
+  padding: 0.5rem 0.6rem;
+}
+
+/* Missing highlight (shown after user attempts to continue) */
+.question-block.missing {
+  outline: 2px solid var(--missing-outline);
+  background: var(--missing-bg);
+  border-radius: 6px;
+}
+.question-block.missing .question-label {
+  color: var(--missing-text);
+}
+.question-block.missing .answer-wrapper {
+  box-shadow: inset 0 0 0 2px rgba(176, 0, 32, 0.08);
+}
+.field-hint {
+  font-size: 12px;
+  margin-top: 4px;
+  color: var(--hint-text);
+}
+
+/* Also show a red border on the specific field that’s invalid */
+input[aria-invalid='true'],
+select[aria-invalid='true'],
+textarea[aria-invalid='true'] {
+  border-color: var(--missing-text) !important;
+  outline-color: var(--missing-text);
+  box-shadow: 0 0 0 2px rgba(176, 0, 32, 0.12);
+}
+
+/* =========================
+   Sliders
+   ========================= */
+.slider-container {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 0.4rem;
+  max-width: 400px;
+}
+.slider-label {
+  font-size: 0.85rem;
+  color: var(--muted);
+  width: 80px;
+  text-align: center;
+}
+.slider {
+  flex-grow: 1;
+}
+
+input[type='range'] {
+  -webkit-appearance: none;
+  width: 100%;
+  height: 8px;
+  border-radius: 5px;
+  background: linear-gradient(to right, #c2e9fb, #005ecb);
+  outline: none;
+  margin: 0;
+}
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #0077ff;
+  border: 2px solid white;
+  cursor: pointer;
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.2);
+  transition: background var(--anim-med);
+}
+@media (hover: hover) {
+  input[type='range']::-webkit-slider-thumb:hover {
+    background: #005ecb;
+  }
+}
+
+/* =========================
+   Zener icon grid (5 choices)
+   ========================= */
+
+/* Keep the icon area tidy; on phones we reserve a slice of viewport so 2 rows fit */
+.icon-options-wrapper {
+  margin-top: 1rem;
+  --icons-area: min(55svh, 55lvh, 55vh);
+  max-width: 100%;
+  overflow: hidden; /* prevents side scroll on tiny screens */
+}
+
+/* ≥600px: one row of 5, centered, each cell 72–200px wide */
+.icon-options {
+  --gap: 14px;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(72px, 300px));
+  gap: var(--gap);
+  justify-content: center; /* center the entire row */
+  justify-items: center; /* center items inside their cells */
+  align-content: start; /* rows (if any) stick to the top */
+  align-items: center;
+  padding: 6px 0;
+}
+
+/* The card: square, scalable, true centering, NO forced min-height */
+.icon-button {
+  display: grid; /* grid makes perfect centering trivial */
+  place-items: center;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  min-width: 72px;
+  min-height: 72px;
+  /* appearance */
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px;
+  color: #000;
+  transition: background 0.2s ease;
+}
+@media (hover: hover) {
+  .icon-button:hover {
+    background: #f5f9ff;
+  }
+}
+.icon-button:focus-visible {
+  outline: 3px solid #1a73e8;
+  outline-offset: 3px;
+}
+.icon-button:active {
+  transform: scale(0.98);
+}
+.icon-button[aria-disabled='true'] {
+  opacity: 0.55;
+  filter: grayscale(15%);
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* Make the icon wrapper fill the card and center the SVG dead-center */
+.icon-button .icon-symbol {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  line-height: 0; /* kill inline-SVG baseline wobble */
+}
+.icon-button .icon-symbol svg {
+  display: block;
+  width: 72%;
+  height: 72%;
+  margin: 0 auto;
+}
+
+/* <600px: wrap to 2 rows (3 + 2), auto-shrink but never <72px,
+   and ensure both rows stay inside the reserved viewport slice */
+@media (max-width: 599.98px) {
+  .icon-options {
+    --gap: 10px;
+    grid-template-columns: repeat(3, minmax(72px, 1fr));
+  }
+  .icon-button {
+    /* width-fit: 3 across, respecting page padding (16px) and gaps */
+    --page-pad: 16px;
+    --cellW: calc(
+      (100vw - (2 * var(--page-pad)) - (2 * var(--gap))) / 3
+    );
+
+    /* height-fit: two rows inside the reserved area */
+    --cellH: calc((var(--icons-area) - (1 * var(--gap))) / 2);
+
+    /* width-limited size with hard floor and soft cap */
+    --sizeW: clamp(72px, var(--cellW), 200px);
+
+    /* final square = min(width-fit, height-fit) */
+    width: min(var(--sizeW), var(--cellH));
+    height: min(var(--sizeW), var(--cellH));
+    aspect-ratio: initial; /* let explicit height apply cleanly */
+    padding: 8px;
+  }
+}
+
+/* =========================
+   Trial layout / feedback
+   ========================= */
+.trial-ui {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.top-feedback-slot {
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.bottom-feedback-slot {
+  margin-top: 96px;
+  min-height: 96px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  text-align: center;
+}
+.status-line,
+.aligned-line,
+.score-line {
+  margin: 4px 0;
+}
+
+/* =========================
+   Star burst
+   ========================= */
+.star-burst {
+  font-size: 2.5rem;
+  text-align: center;
+  animation: popstar 0.8s ease-in-out;
+  margin-top: 0.6rem;
+}
+@keyframes popstar {
+  0% {
+    transform: scale(0.5) rotate(0deg);
+    opacity: 0;
+  }
+  50% {
+    transform: scale(1.4) rotate(20deg);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1) rotate(0deg);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .star-burst {
+    animation: none;
+    opacity: 1;
+  }
+}
+
+/* =========================
+   Breathing step
+   ========================= */
+.breathing-circle {
+  width: 100px;
+  height: 100px;
+  margin: 2rem auto;
+  border-radius: 50%;
+  background: #aee;
+  animation: breathe 7s ease-in-out infinite;
+}
+@keyframes breathe {
+  0% {
+    transform: scale(1);
+    opacity: 0.7;
+  }
+  50% {
+    transform: scale(1.5);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 0.7;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .breathing-circle {
+    animation: none;
+  }
+}
+
+.breathe-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  max-width: 600px;
+  margin: 0 auto;
+}
+.breathe-step p {
+  max-width: 500px;
+  margin: 0.5rem 0 1rem;
+  font-size: 1.1rem;
+  line-height: 1.6;
+}
+.breathe-step h2 {
+  width: 100%;
+  text-align: center;
+}
+
+/* =========================
+   Misc
+   ========================= */
+.status-placeholder {
+  min-height: 1.2em;
+}
+.results-display {
+  min-height: 7em;
+}
+
+/* =========================
+   Responsive
+   ========================= */
+@media (max-width: 900px) {
+  body {
+    padding: 1.5rem;
+  }
+  .icon-options .icon-button {
+    width: 16rem;
+    font-size: 2.2rem;
+  }
+}
+@media (max-width: 600px) {
+  body {
+    padding: 1rem;
+  }
+  .icon-options {
+    gap: 1rem;
+  }
+  .icon-button {
+    width: 42vw;
+    max-width: 260px;
+    font-size: 1.6rem;
+    padding: 0.85rem;
+  }
+  .icon-button[aria-disabled='true'] {
+    opacity: 0.55;
+    filter: grayscale(15%);
+    cursor: not-allowed;
+    pointer-events: none; /* prevent accidental taps while committing */
+  }
+  h2 {
+    font-size: 1.6rem;
+  }
+  button {
+    font-size: 1rem;
+    padding: 0.8rem 1.2rem;
+    margin: 1rem auto 0.75rem;
+  }
+  .top-feedback-slot {
+    height: 45px;
+  }
+  .bottom-feedback-slot {
+    margin-top: 40px;
+  }
+}
+@media (max-width: 400px) {
+  .icon-options {
+    flex-direction: column;
+    align-items: center;
+  }
+  .icon-button {
+    width: 55vw;
+    max-width: none;
+    font-size: 1.5rem;
+    padding: 0.9rem;
+  }
+}
+
+/* Loading status fade (no looping animation) */
+.status-line {
+  opacity: 0;
+  transition: opacity 180ms ease-in;
+}
+.status-line.show {
+  opacity: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .status-line {
+    transition: none;
+  }
+}
+
+/* Expander */
+.expander {
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  background: #fafafa;
+}
+.expander > summary {
+  cursor: pointer;
+  font-weight: 600;
+  list-style: none;
+}
+.expander[open] {
+  background: #f6f6f6;
+}
+.expander > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* Instruction blocks align left */
+.instructions ul,
+.instructions .why-this-matters,
+.instructions .why-this-matters p {
+  text-align: left !important;
+}
+.instructions .why-this-matters,
+.instructions .why-this-matters * {
+  font-size: 0.9rem !important;
+  line-height: 1.45;
+}
+.instructions .why-this-matters {
+  display: inline-block;
+  margin: 1em auto 0 auto;
+}
+/* Visually hide but keep for screen readers */
+/* Visually hide but keep for screen readers */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Envelope SVG sizing (scales with button text size) */
+.envelope-icon {
+  width: 1.25em;
+  height: 1.25em;
+  display: inline-block;
+  vertical-align: -0.15em;
+}
+
+/* Visually hidden but accessible (for screen readers) */
+.sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 1px, 1px) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+/* === Prepare button small icon === */
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.btn-envelope {
+  width: 1.1em;
+  height: 1.1em;
+  display: inline-block;
+  vertical-align: -0.15em;
+}
+
+/* === Envelope fold+seal loader === */
+.envelope-loader {
+  display: grid;
+  place-items: center;
+  gap: 0.5rem;
+  padding: 12px 8px;
+  min-height: 88px; /* keeps layout steady where the button was */
+  text-align: center;
+}
+
+.envelope-label {
+  font-size: 0.95rem;
+  line-height: 1.2;
+}
+
+/* Base SVG look */
+.env {
+  width: 64px;
+  height: 48px;
+  overflow: visible;
+}
+
+/* Colors tie into your button palette; adjust if needed */
+.env .body rect,
+.env .body polyline,
+.env .flap polygon,
+.env .paper rect,
+.env .paper line,
+.env .seal {
+  stroke: currentColor;
+  stroke-width: 2;
+  fill: transparent;
+}
+
+/* Paper is lighter for contrast */
+.env .paper rect,
+.env .paper line {
+  stroke-opacity: 0.85;
+}
+
+/* Seal uses fill to pop when it appears */
+.env .seal {
+  fill: currentColor;
+  opacity: 0;
+  transform-origin: 32px 26px;
+}
+
+/* Animation timeline (loops) */
+@keyframes paper-slide {
+  0% {
+    transform: translateY(14px);
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  45% {
+    transform: translateY(0);
+  }
+  55% {
+    transform: translateY(0);
+  }
+  100% {
+    transform: translateY(12px);
+    opacity: 0;
+  }
+}
+
+@keyframes flap-close {
+  0% {
+    transform: rotateX(160deg);
+    opacity: 1;
+  }
+  45% {
+    transform: rotateX(0deg);
+  }
+  60% {
+    transform: rotateX(0deg);
+  }
+  100% {
+    transform: rotateX(160deg);
+    opacity: 1;
+  }
+}
+
+@keyframes seal-pop {
+  0%,
+  55% {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  65% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  85% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+}
+
+/* Apply animations with offsets so it looks sequential */
+.env .paper {
+  animation: paper-slide 1.8s ease-in-out infinite;
+  transform-origin: 32px 18px;
+}
+.env .flap {
+  transform-origin: 32px 12px;
+  animation: flap-close 1.8s cubic-bezier(0.2, 0.7, 0.2, 1) infinite;
+  animation-delay: 0.1s;
+  transform-style: preserve-3d;
+  backface-visibility: hidden;
+}
+.env .seal {
+  animation: seal-pop 1.8s ease-in-out infinite;
+  animation-delay: 0.3s;
+}
+
+/* Respect reduced-motion preferences */
+@media (prefers-reduced-motion: reduce) {
+  .env .paper,
+  .env .flap,
+  .env .seal {
+    animation: none;
+  }
+}
+/* ===== 5-CARD RESPONSIVE LAYOUT (non-destructive override) ===== */
+
+/* Center the grid area and keep it tidy */
+.icon-options-wrapper {
+  margin-top: 1rem;
+  max-width: 100%;
+  overflow: visible !important;
+}
+
+/* Base (≥600px): one row of 5 that scales with container width */
+.icon-options {
+  --gap: 14px;
+  display: grid !important;
+  grid-template-columns: repeat(5, minmax(72px, 300px)) !important;
+  gap: var(--gap) !important;
+
+  /* horizontal centering + top alignment for rows */
+  justify-content: center !important; /* center the whole grid */
+  justify-items: center !important; /* center items in their cells */
+  align-content: start !important; /* rows stack from the top */
+  align-items: center !important;
+  padding: 6px 0 !important;
+}
+
+/* Cards: square, scalable, with a hard floor of 72x72 */
+.icon-button {
+  /* kill older width/min-height rules cleanly */
+  width: auto !important;
+  min-width: 72px !important;
+  min-height: 72px !important;
+  aspect-ratio: 1 / 1 !important;
+
+  /* perfect centering of the symbol */
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+
+  /* keep your existing look */
+  background: #fff !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 12px !important;
+  padding: 10px !important;
+  color: #000 !important;
+}
+
+/* Icon sits dead center and scales with the card */
+.icon-symbol {
+  line-height: 0 !important;
+}
+.icon-symbol svg {
+  display: block !important;
+  width: 72% !important;
+  height: 72% !important;
+  margin: 0 auto !important;
+}
+
+/* Small screens: wrap to two rows (3 + 2), auto-shrink but never < 72px */
+@media (max-width: 599.98px) {
+  .icon-options {
+    --gap: 10px;
+    grid-template-columns: repeat(3, minmax(72px, 1fr)) !important;
+  }
+
+  /* Compute card size from width and keep square via aspect-ratio.
+     This guarantees two rows and prevents edge overflow. */
+  .icon-button {
+    /* page padding on your small layout = 16px left/right */
+    --page-pad: 16px;
+
+    /* width-fit: 3 cards across */
+    --cellW: calc(
+      (100vw - (2 * var(--page-pad)) - (2 * var(--gap))) / 3
+    );
+
+    /* final size: min(width-fit, 200px cap), but never below 72px */
+    --cell: max(72px, min(var(--cellW), 200px));
+
+    width: var(--cell) !important;
+    height: var(--cell) !important; /* aspect-ratio keeps it square */
+    aspect-ratio: initial !important; /* let height apply cleanly */
+    padding: 8px !important;
+  }
+}
+/* ===== 5-card layout + true centering ===== */
+
+/* ≥600px: one row of 5, each cell can grow up to ~200px but never below 72px */
+.icon-options {
+  --gap: 14px;
+  display: grid !important;
+  grid-template-columns: repeat(5, minmax(72px, 300px)) !important;
+  gap: var(--gap) !important;
+  justify-content: center !important; /* center entire row */
+  align-content: start !important; /* rows stick to top when wrapping */
+  justify-items: center !important; /* center items in their cells */
+  align-items: center !important;
+}
+
+/* The card itself: make it a grid and center its content perfectly */
+.icon-button {
+  display: grid !important;
+  place-items: center !important; /* centers both axes */
+  width: 100% !important;
+  aspect-ratio: 1 / 1 !important;
+  min-width: 72px !important;
+  min-height: 72px !important;
+  padding: 10px !important;
+
+  background: #fff !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 12px !important;
+  color: #000 !important;
+}
+
+/* Make the icon wrapper fill the card and center the SVG again */
+.icon-button .icon-symbol {
+  width: 100% !important;
+  height: 100% !important;
+  display: grid !important;
+  place-items: center !important;
+  line-height: 0 !important; /* removes inline baseline wobble */
+}
+
+/* SVG scales with the card and stays centered */
+.icon-button .icon-symbol svg {
+  display: block !important;
+  width: 72% !important;
+  height: 72% !important;
+  margin: 0 auto !important;
+}
+
+/* Keep everything visible on phones:
+   wrap to 2 rows (3+2), auto-shrink but never < 72px, no side overflow */
+@media (max-width: 599.98px) {
+  .icon-options {
+    --gap: 10px;
+    grid-template-columns: repeat(3, minmax(72px, 1fr)) !important;
+  }
+  .icon-button {
+    /* small-layout body padding is 16px (adjust if yours differs) */
+    --page-pad: 16px;
+    /* width-fit for 3 across */
+    --cellW: calc(
+      (100vw - (2 * var(--page-pad)) - (2 * var(--gap))) / 3
+    );
+    /* final size: min(width-fit, 200px cap) but never below 72px */
+    --cell: max(72px, min(var(--cellW), 200px));
+    width: var(--cell) !important;
+    height: var(--cell) !important;
+    aspect-ratio: initial !important; /* let height apply cleanly */
+    padding: 8px !important;
+  }
+  /* keep the two-row area inside the viewport slice */
+  .icon-options-wrapper {
+    max-height: min(55svh, 55lvh, 55vh) !important;
+    overflow: hidden !important;
+  }
+}
+
+/* Scoreboard
+/* Cute scoreboard */
+.scoreboard {
+  display: flex;
+  justify-content: center;
+  margin: 8px 0 12px;
+}
+.scoreboard__row {
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
+  border-radius: 10px;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 15px;
+}
+.scoreboard__badge {
+  background: #f5f7ff;
+  color: #3a55e8;
+  border: 1px solid #e4e8ff;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+.scoreboard__totals {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.scoreboard__totals .you b {
+  font-weight: 800;
+}
+.scoreboard__totals .demon b {
+  font-weight: 800;
+}
+.scoreboard__totals .dash {
+  opacity: 0.6;
+}
+.scoreboard__totals .ties {
+  opacity: 0.7;
+}
+
+.match-summary {
+  margin: 6px auto 12px;
+  max-width: 520px;
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.06);
+  border-radius: 12px;
+  padding: 14px;
+  text-align: center;
+}
+.match-summary__title {
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+.match-summary__scoreline {
+  font-size: 16px;
+  margin-bottom: 10px;
+}
+.match-summary__scoreline .result {
+  margin-left: 6px;
+  font-weight: 700;
+}
+.match-summary__scoreline .result.subject {
+  color: #177245;
+} /* green "You win!" */
+.match-summary__scoreline .result.demon {
+  color: #b00020;
+} /* red "Demon wins" */
+.match-summary__cta {
+  margin-top: 4px;
+}
+/* App.css */
+
+.zener {
+  /* icon footprint inside a card */
+  --zener-size: 85%;
+
+  /* responsive stroke thickness in *pixels* (same across all icons) */
+  --zener-stroke: clamp(3px, 0.9vw, 8px);
+
+  /* perception nudges (tweak if needed) */
+  --zener-square-scale: 0.94;
+  --zener-star-scale: 1.06;
+  --zener-plus-scale: 1.02;
+}
+
+.icon-cell {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  display: grid;
+  place-items: center;
+  color: #111; /* drives currentColor for strokes */
+}
+
+.zener-icon {
+  width: var(--zener-size);
+  height: var(--zener-size);
+}
+
+/* unify stroke + make it non-scaling so it looks the same at any SVG size */
+.zener-icon * {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: var(--zener-stroke);
+  vector-effect: non-scaling-stroke; /* key to “same look” when responsive */
+}
+
+/* caps/joins for the shapes that need it */
+.zener-plus line,
+.zener-waves path {
+  stroke-linecap: round;
+}
+
+.zener-star path {
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+/* scale the glyph only (keeps stroke constant thanks to vector-effect) */
+.zener-icon .glyph {
+  transform-origin: 50% 50%;
+}
+.zener-square .glyph {
+  transform: scale(var(--zener-square-scale));
+}
+.zener-star .glyph {
+  transform: scale(var(--zener-star-scale));
+}
+.zener-plus .glyph {
+  transform: scale(var(--zener-plus-scale));
+}
+/* Base (phones): solid default everyone gets */
+.zener {
+  --zener-size: 85%;
+  --zener-stroke: 4.5px; /* good on mobile */
+}
+
+/* Universal tablet fallback (media query) */
+@media (min-width: 400px) and (max-width: 1024px) {
+  .zener {
+    --zener-stroke: 3.2px;
+  }
+}
+@media (min-width: 72px) and (max-width: 399px) {
+  .zener {
+    --zener-stroke: 2.2px;
+  }
+}
+/* Desktop fallback */
+@media (min-width: 1025px) {
+  .zener {
+    --zener-stroke: 6px;
+  }
+}

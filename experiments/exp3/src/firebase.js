@@ -1,0 +1,102 @@
+import { initializeApp, getApp, getApps } from 'firebase/app';
+
+// Auth
+import {
+  getAuth,
+  setPersistence,
+  browserSessionPersistence,
+  inMemoryPersistence,
+  signInWithEmailAndPassword,
+  signInAnonymously,
+  onAuthStateChanged,
+} from 'firebase/auth';
+
+// Firestore
+import { getFirestore } from 'firebase/firestore';
+
+// 1) PASTE YOUR WORKING CONFIG HERE
+const firebaseConfig = {
+  apiKey: 'AIzaSyBnZiiYdnaTxa6Zn-QOPhgNJ8lt6PAi2uU',
+  authDomain: 'qartexperiment1.firebaseapp.com',
+  projectId: 'qartexperiment1',
+  storageBucket: 'qartexperiment1.appspot.com',
+  messagingSenderId: '922467950974',
+  appId: '1:922467950974:web:7fc4054ad2854b8e21532f',
+  measurementId: 'G-TB0M38XPBC',
+};
+
+// 2) Initialize exactly once (safe even if multiple bundles import this)
+const app = getApps().length
+  ? getApp()
+  : initializeApp(firebaseConfig);
+
+// 3) Core singletons
+const authInstance = getAuth(app);
+const dbInstance = getFirestore(app);
+
+// 4) Session (clears on browser close). Fallback: in-memory (clears on refresh).
+export const persistenceReady = (async () => {
+  try {
+    await setPersistence(authInstance, browserSessionPersistence);
+  } catch (e) {
+    console.warn(
+      'Session persistence not available; falling back to in-memory.',
+      e
+    );
+    await setPersistence(authInstance, inMemoryPersistence);
+  }
+})();
+
+// 5) Auth helpers
+export async function signInWithEmailPassword(email, password) {
+  await persistenceReady;
+  const cred = await signInWithEmailAndPassword(
+    authInstance,
+    email,
+    password
+  );
+  return cred.user;
+}
+
+// Ensure we have a user (anonymous) before Firestore ops where needed.
+// (You can choose NOT to call this on pages where you don't want anon sign-in.)
+export async function ensureSignedIn() {
+  await persistenceReady;
+  if (authInstance.currentUser) return authInstance.currentUser;
+  await signInAnonymously(authInstance);
+  return new Promise((resolve, reject) => {
+    const off = onAuthStateChanged(
+      authInstance,
+      (u) => {
+        if (!u) return;
+        off();
+        resolve(u);
+      },
+      reject
+    );
+  });
+}
+
+// 6) Public exports used by your app
+export const auth = authInstance;
+export const db = dbInstance;
+
+// 7) Debug helpers (handy in DevTools)
+if (typeof window !== 'undefined') {
+  window._auth = authInstance;
+  window.__FBDEBUG__ = {
+    get projectId() {
+      return authInstance.app.options.projectId;
+    },
+    get email() {
+      return authInstance.currentUser?.email || null;
+    },
+    async provider() {
+      const u = authInstance.currentUser;
+      if (!u) return null;
+      const t = await u.getIdTokenResult();
+      return t.signInProvider || null; // "password", "anonymous", etc.
+    },
+  };
+  // console.log('[FBDEBUG] projectId:', window.__FBDEBUG__.projectId);
+}
