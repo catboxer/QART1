@@ -1,0 +1,680 @@
+/* =========================
+   Design Tokens
+   ========================= */
+:root {
+  --bg: #f5f7fa;
+  --text: #2b2b2b;
+  --heading: #222;
+  --muted: #666;
+
+  --primary: #28a745;
+  --primary-hover: #218838;
+  --primary-dim: #1e7a1e;
+
+  --danger: #e74c3c;
+
+  --border: #ccc;
+  --card: #fff;
+
+  --radius-lg: 12px;
+  --radius-md: 10px;
+  --radius-sm: 8px;
+
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.15);
+
+  --focus: #1976d2;
+
+  --missing-outline: #f7b3b3;
+  --missing-bg: #fff6f6;
+  --missing-text: #b00020;
+  --hint-text: #a40000;
+
+  --anim-fast: 0.2s ease;
+  --anim-med: 0.25s ease;
+}
+
+/* =========================
+   Global
+   ========================= */
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  min-height: 100%;
+  height: auto;
+}
+
+body {
+  margin: 0;
+  padding: 2rem;
+  font-family: 'Segoe UI', Roboto, Arial, Helvetica, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.App {
+  max-width: 700px;
+  margin: 0 auto;
+}
+
+/* Headings */
+h1 {
+  margin: 0 0 1rem;
+  font-size: 2rem;
+  color: var(--heading);
+}
+h2 {
+  font-size: 2rem;
+  color: #333;
+  text-align: left;
+  margin: 1.5rem 0 1.25rem;
+}
+
+/* =========================
+   Buttons
+   ========================= */
+button {
+  display: block;
+  margin: 2rem auto 1rem;
+  padding: 1rem 2rem;
+  font-size: 1.1rem;
+  border: none;
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition: background var(--anim-med), transform 0.05s ease,
+    opacity var(--anim-fast), filter var(--anim-fast);
+  color: #fff;
+  background: var(--primary);
+}
+@media (hover: hover) {
+  button:hover {
+    background: var(--primary-hover);
+  }
+}
+button:active {
+  transform: scale(0.98);
+}
+
+.primary-btn {
+  background: var(--primary);
+}
+@media (hover: hover) {
+  .primary-btn:hover {
+    background: var(--primary-hover);
+  }
+}
+
+.secondary-btn {
+  background: #f0f0f0;
+  color: #333;
+}
+@media (hover: hover) {
+  .secondary-btn:hover {
+    background: #e8e8e8;
+  }
+}
+
+/* Global disabled styling — but NOT for the big RIGHT .icon-button */
+button:disabled:not(.icon-button),
+button[aria-disabled='true']:not(.icon-button),
+.primary-btn:disabled,
+.primary-btn[aria-disabled='true'],
+.secondary-btn:disabled,
+.secondary-btn[aria-disabled='true'] {
+  opacity: 0.5;
+  cursor: not-allowed;
+  filter: grayscale(100%);
+}
+
+.exit-button {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #f8f8f8;
+  color: #333;
+  border: 1px solid var(--border);
+  padding: 8px 14px;
+  border-radius: 20px;
+  font-size: 1rem;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: all var(--anim-fast);
+  z-index: 9999;
+}
+@media (hover: hover) {
+  .exit-button:hover {
+    background: var(--danger);
+    color: #fff;
+    border-color: var(--danger);
+  }
+}
+
+/* =========================
+   Focus
+   ========================= */
+:focus {
+  outline: none;
+}
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* =========================
+   Question Layout & Inputs
+   ========================= */
+.question-block {
+  margin-bottom: 2.25rem;
+  text-align: left;
+}
+.question-label {
+  font-weight: 600;
+  font-size: 1.1rem;
+  display: block;
+  margin-bottom: 0.6rem;
+  color: var(--heading);
+}
+.question-number {
+  color: #444;
+  margin-right: 0.4rem;
+  font-weight: bold;
+}
+
+.number-input,
+.textarea-input,
+.text-input,
+.select-input {
+  font-size: 1rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--card);
+}
+
+.number-input {
+  width: 90px;
+  padding: 0.5rem;
+}
+.textarea-input {
+  width: 100%;
+  max-width: 600px;
+  height: 120px;
+  padding: 0.6rem;
+  resize: vertical;
+}
+.text-input,
+.answer-wrapper input[type='email'] {
+  width: 100%;
+  max-width: 600px;
+  padding: 0.5rem 0.6rem;
+}
+.select-input {
+  width: 100%;
+  max-width: 300px;
+  padding: 0.5rem 0.6rem;
+}
+
+.question-block.missing {
+  outline: 2px solid var(--missing-outline);
+  background: var(--missing-bg);
+  border-radius: 6px;
+}
+.question-block.missing .question-label {
+  color: var(--missing-text);
+}
+.question-block.missing .answer-wrapper {
+  box-shadow: inset 0 0 0 2px rgba(176, 0, 32, 0.08);
+}
+.field-hint {
+  font-size: 12px;
+  margin-top: 4px;
+  color: var(--hint-text);
+}
+
+/* =========================
+   Sliders
+   ========================= */
+.slider-container {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 0.4rem;
+  max-width: 400px;
+}
+.slider-label {
+  font-size: 0.85rem;
+  color: var(--muted);
+  width: 80px;
+  text-align: center;
+}
+.slider {
+  flex-grow: 1;
+}
+
+input[type='range'] {
+  -webkit-appearance: none;
+  width: 100%;
+  height: 8px;
+  border-radius: 5px;
+  background: linear-gradient(to right, #c2e9fb, #005ecb);
+  outline: none;
+  margin: 0;
+}
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #0077ff;
+  border: 2px solid white;
+  cursor: pointer;
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.2);
+  transition: background var(--anim-med);
+}
+@media (hover: hover) {
+  input[type='range']::-webkit-slider-thumb:hover {
+    background: #005ecb;
+  }
+}
+
+/* =========================
+   RIGHT Button + Trial UI
+   ========================= */
+.icon-options-wrapper {
+  display: flex;
+  justify-content: center;
+  margin-top: 1rem;
+}
+.icon-options {
+  display: flex;
+  justify-content: center;
+  align-items: stretch;
+  gap: 2rem;
+  flex-wrap: wrap;
+}
+
+.icon-button {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  background: #fff;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  font-family: Arial, Helvetica, sans-serif;
+  font-weight: 700;
+  color: #000;
+  width: 16rem;
+  aspect-ratio: 1 / 1;
+  font-size: 2rem;
+  padding: 1rem;
+  position: relative;
+  overflow: hidden;
+  transition: background-color 0.2s ease-in; /* smooth color shift only */
+
+  /* Long-press / callout hardening (non-visual) */
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: pan-y;
+}
+@media (hover: hover) {
+  .icon-button:hover {
+    background-color: #eef6ff;
+  }
+}
+.icon-button:active {
+  transform: scale(0.97);
+}
+
+/* Prevent disabled from going gray (lock to your colors) */
+.icon-button:disabled {
+  background-color: green; /* keep your original intent */
+  color: #fff;
+  opacity: 1;
+  filter: none;
+  cursor: not-allowed;
+}
+
+/* Large variant = the big RIGHT button base */
+.icon-options.large-buttons .icon-button {
+  width: 18rem;
+  font-size: 2.5rem;
+  background-color: #4cd964;
+  color: #000; /* high contrast as you had */
+}
+
+/* Hide/show text while disabled via your logic */
+.icon-options.text-hidden .icon-button {
+  color: inherit; /* keep label visible */
+  pointer-events: none;
+}
+.icon-options.text-visible .icon-button {
+  /* no override */
+}
+
+/* =========================
+   Fetching state — keep your original green shift
+   ========================= */
+@keyframes text-glow {
+  from {
+    text-shadow: 0 0 4px rgba(255, 255, 255, 0.5);
+  }
+  to {
+    text-shadow: 0 0 12px rgba(255, 255, 255, 0.9);
+  }
+}
+
+/* Keep your "green" fetching color + glow */
+.icon-options.large-buttons .icon-button.is-fetching,
+.icon-options.large-buttons .icon-button.is-fetching:disabled {
+  background-color: green; /* as in your file */
+  color: #fff;
+}
+.icon-options.large-buttons .icon-button.is-fetching .btn-label,
+.icon-options.large-buttons
+  .icon-button.is-fetching:disabled
+  .btn-label {
+  animation: text-glow 1s ease-in-out infinite alternate;
+}
+@media (prefers-reduced-motion: reduce) {
+  .icon-options.large-buttons .icon-button.is-fetching .btn-label,
+  .icon-options.large-buttons
+    .icon-button.is-fetching:disabled
+    .btn-label {
+    animation: none;
+    text-shadow: 0 0 6px rgba(255, 255, 255, 0.7);
+  }
+}
+
+/* =========================
+   Trial layout
+   ========================= */
+.trial-ui {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.top-feedback-slot {
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.bottom-feedback-slot {
+  margin-top: 96px;
+  min-height: 96px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  text-align: center;
+}
+.status-line,
+.aligned-line,
+.score-line {
+  margin: 4px 0;
+}
+
+/* Button label base state */
+.icon-button .btn-label {
+  display: inline-block;
+  transform-origin: center;
+}
+
+/* =========================
+   Star burst
+   ========================= */
+.star-burst {
+  font-size: 2.5rem;
+  text-align: center;
+  animation: popstar 0.8s ease-in-out;
+  margin-top: 0.6rem;
+}
+@keyframes popstar {
+  0% {
+    transform: scale(0.5) rotate(0deg);
+    opacity: 0;
+  }
+  50% {
+    transform: scale(1.4) rotate(20deg);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1) rotate(0deg);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .star-burst {
+    animation: none;
+    opacity: 1;
+  }
+}
+
+/* =========================
+   Breathing step
+   ========================= */
+.breathing-circle {
+  width: 100px;
+  height: 100px;
+  margin: 2rem auto;
+  border-radius: 50%;
+  background: #aee;
+  animation: breathe 7s ease-in-out infinite;
+}
+@keyframes breathe {
+  0% {
+    transform: scale(1);
+    opacity: 0.7;
+  }
+  50% {
+    transform: scale(1.5);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 0.7;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .breathing-circle {
+    animation: none;
+  }
+}
+
+.breathe-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  max-width: 600px;
+  margin: 0 auto;
+}
+.breathe-step p {
+  max-width: 500px;
+  margin: 0.5rem 0 1rem;
+  font-size: 1.1rem;
+  line-height: 1.6;
+}
+.breathe-step h2 {
+  width: 100%;
+  text-align: center;
+}
+
+/* =========================
+   Save error banner
+   ========================= */
+.save-error-banner {
+  background: #fee;
+  border: 1px solid #f99;
+  padding: 12px;
+  margin: 0 0 12px 0;
+  border-radius: var(--radius-sm);
+}
+.save-error-banner p {
+  margin: 0 0 8px 0;
+}
+.save-error-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* =========================
+   Misc
+   ========================= */
+.status-placeholder {
+  min-height: 1.2em;
+}
+.results-display {
+  min-height: 7em;
+}
+
+/* =========================
+   Responsive
+   ========================= */
+@media (max-width: 900px) {
+  body {
+    padding: 1.5rem;
+  }
+  .icon-options.large-buttons .icon-button {
+    width: 16rem;
+    font-size: 2.2rem;
+  }
+}
+@media (max-width: 600px) {
+  body {
+    padding: 1rem;
+  }
+  .icon-options {
+    gap: 1rem;
+  }
+  .icon-button,
+  .icon-options.large-buttons .icon-button {
+    width: 42vw;
+    max-width: 260px;
+    font-size: 1.6rem;
+    padding: 0.85rem;
+  }
+  h2 {
+    font-size: 1.6rem;
+  }
+  button {
+    font-size: 1rem;
+    padding: 0.8rem 1.2rem;
+  }
+}
+@media (max-width: 400px) {
+  .icon-options {
+    flex-direction: column;
+    align-items: center;
+  }
+  .icon-button,
+  .icon-options.large-buttons .icon-button {
+    width: 55vw;
+    max-width: none;
+    font-size: 1.5rem;
+    padding: 0.9rem;
+  }
+}
+
+/* Soft fade for the loading line (no looping animation) */
+.status-line {
+  opacity: 0;
+  transition: opacity 180ms ease-in;
+}
+.status-line.show {
+  opacity: 1;
+}
+
+/* Reduce even this tiny motion if user prefers */
+@media (prefers-reduced-motion: reduce) {
+  .status-line {
+    transition: none;
+  }
+}
+
+/* Expander */
+.expander {
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  background: #fafafa;
+}
+.expander > summary {
+  cursor: pointer;
+  font-weight: 600;
+  list-style: none;
+}
+.expander[open] {
+  background: #f6f6f6;
+}
+.expander > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* Left-align list + "why" block inside .instructions, even if parent is centered */
+.instructions ul,
+.instructions .why-this-matters,
+.instructions .why-this-matters p {
+  text-align: left !important;
+}
+
+/* Shrink the "why" block text reliably */
+.instructions .why-this-matters,
+.instructions .why-this-matters * {
+  font-size: 0.9rem !important;
+  line-height: 1.45;
+}
+
+/* Optional: tidy spacing and width */
+.instructions .why-this-matters {
+  display: inline-block;
+  margin: 1em auto 0 auto;
+}
+
+/* ==== Mobile polish fixes ==== */
+@media (max-width: 600px) {
+  /* 1) Shrink space between instructions and the BIG green trial button */
+  .top-feedback-slot {
+    height: 45px;
+  } /* was 48px */
+  .bottom-feedback-slot {
+    margin-top: 40px;
+  } /* was 96px */
+  .icon-options-wrapper {
+    margin-top: 0.5rem;
+  } /* was 1rem */
+
+  /* Tighten on the “breathe” instruction screens */
+  .breathe-step .instructions + button {
+    margin-top: 0.75rem;
+  } /* override global 2rem */
+
+  /* Prevent details/expanders from blowing off-screen */
+  .expander {
+    max-width: 100%;
+    overflow-x: auto;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+  }
+  .expander img,
+  .expander table {
+    max-width: 100%;
+  }
+
+  /* Give green continue buttons breathing room above the browser bottom/safe area */
+  .primary-btn {
+    margin-bottom: calc(env(safe-area-inset-bottom, 0px) + 20px);
+  }
+
+  /* Slightly reduce global button spacing on mobile */
+  button {
+    margin: 1rem auto 0.75rem;
+  } /* was 2rem auto 1rem */
+}
