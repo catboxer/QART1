@@ -1353,8 +1353,8 @@ function MainApp() {
 
     // ===== Block 3: client_local — score pre-drawn assignment (no new randomness) =====
     if (blockId === 'client_local') {
-      resolvedCorrectIndex = correctIndex;
-      resolvedGhostIndex = ghostIndex;
+      resolvedCorrectIndex = rngMeta?.calculated_primary_index ?? correctIndex;
+      resolvedGhostIndex = rngMeta?.calculated_ghost_index ?? ghostIndex;
       resolvedMeta = rngMeta || {
         source: 'client_local_predraw',
         k_options: 5,
@@ -1457,8 +1457,8 @@ function MainApp() {
 
     // ===== Block 1 (full_stack) OR Block 2 (spoon_love with REMAP DISABLED) =====
     else {
-      resolvedCorrectIndex = correctIndex;
-      resolvedGhostIndex = ghostIndex;
+      resolvedCorrectIndex = rngMeta?.calculated_primary_index ?? correctIndex;
+      resolvedGhostIndex = rngMeta?.calculated_ghost_index ?? ghostIndex;
       resolvedMeta = rngMeta || null;
     }
 
@@ -1484,6 +1484,12 @@ function MainApp() {
     // correct: did the ghost pick the actual target?
     const demon_hit =
       resolvedGhostIndex === resolvedCorrectIndex ? 1 : 0;
+    console.log('DEMON HIT CALC:', {
+      resolvedGhostIndex,
+      resolvedCorrectIndex,
+      demon_hit,
+      equal: resolvedGhostIndex === resolvedCorrectIndex
+    });
 
     const correctLabel =
       choiceOptions[resolvedCorrectIndex]?.id ??
@@ -1528,7 +1534,7 @@ function MainApp() {
 
       // scoring
       subject_hit,
-      demon_hit,
+      ghost_hit: demon_hit,
       matched,
 
       // target/ghost (resolved indices for this press)
@@ -1602,6 +1608,31 @@ function MainApp() {
 
     const updatedTrials = [...trialResults, enrichedRow];
     setTrialResults(updatedTrials);
+
+    // Calculate and log running percentages for this block
+    const allRows = updatedTrials.filter(t => t.block_type === blockId);
+    const validRows = allRows.filter(t =>
+      t.target_index_0based !== null && t.target_index_0based !== undefined &&
+      t.selected_index !== null && t.selected_index !== undefined &&
+      t.ghost_index_0based !== null && t.ghost_index_0based !== undefined
+    );
+    // Calculate percentages before and after filtering
+    if (allRows.length > 0) {
+      const allSubjectHits = allRows.reduce((sum, t) => sum + (t.subject_hit || 0), 0);
+      const allDemonHits = allRows.reduce((sum, t) => sum + (t.ghost_hit || 0), 0);
+      const allSubjectPct = (allSubjectHits / allRows.length * 100);
+      const allDemonPct = (allDemonHits / allRows.length * 100);
+      console.log(`${currentBlockId} BEFORE filtering: ${allRows.length} trials, Subject: ${allSubjectPct.toFixed(1)}%, Demon: ${allDemonPct.toFixed(1)}%`);
+    }
+    if (validRows.length > 0) {
+      const validSubjectHits = validRows.reduce((sum, t) => sum + (t.subject_hit || 0), 0);
+      const validDemonHits = validRows.reduce((sum, t) => sum + (t.ghost_hit || 0), 0);
+      const validSubjectPct = (validSubjectHits / validRows.length * 100);
+      const validDemonPct = (validDemonHits / validRows.length * 100);
+      console.log(`${currentBlockId} AFTER filtering: ${validRows.length} trials, Subject: ${validSubjectPct.toFixed(1)}%, Demon: ${validDemonPct.toFixed(1)}%`);
+      console.log(`${currentBlockId} Filtered out: ${allRows.length - validRows.length} trials`);
+    }
+
     // console.log('[LOG GUARD]', { exp1DocId, sealedEnvelopeId });
 
     // Append-only Firestore log (skip if no sealed envelope — CL doesn't have one)
@@ -1752,7 +1783,7 @@ function MainApp() {
             subject_hit: Number.isFinite(logRow.subject_hit)
               ? logRow.subject_hit
               : matchedFlag,
-            demon_hit: logRow.demon_hit ?? 0,
+            ghost_hit: logRow.demon_hit ?? 0,
             matched: matchedFlag,
 
             // resolved target/ghost for this press
@@ -1869,6 +1900,7 @@ function MainApp() {
     parentId = exp1DocId,
     activeBlockId = currentBlockId
   ) {
+    console.log('🎯 PREPARE TRIAL DEBUG:', { nextTrialIndex, parentId, activeBlockId });
     const myRunId = ++prepRunIdRef.current; // mark this invocation; newer runs cancel older ones
 
     setTrialReady(false);
@@ -1919,7 +1951,9 @@ function MainApp() {
     let ghost_symbol_id = null;
 
     // ===== Block 3: client_local (predrawn on client) =====
+    console.log('🟡 CHECKING: client_local path, activeBlockId:', activeBlockId);
     if (activeBlockId === 'client_local') {
+      console.log('✅ TAKING: client_local path');
       const cached = assignmentCache?.client_local?.[trialNum];
       if (!cached) {
         setTrialBlockingError(
@@ -1965,6 +1999,7 @@ function MainApp() {
     }
     // ===== Server-backed blocks =====
     else {
+      console.log('✅ TAKING: server-backed path (full_stack or spoon_love)', activeBlockId);
       const cached = assignmentCache[activeBlockId]?.[trialNum];
 
       const pullBytesNow = async () => {
@@ -2049,9 +2084,23 @@ function MainApp() {
     }
 
     // After the final flash, compute indices against this SAME layout:
+    console.log('BYTE DEBUG:', { primary_raw, ghost_raw, same: primary_raw === ghost_raw });
     const assigned = assignZenerFromBytes(primary_raw, ghost_raw, baseLayout);
+    console.log('ASSIGNMENT DEBUG:', {
+      rawByte: primary_raw,
+      ghostByte: ghost_raw,
+      rawByte_mod5: primary_raw % 5,
+      ghostByte_mod5: ghost_raw % 5,
+      subjectSym: assigned.primary_symbol_id,
+      ghostSym: assigned.ghost_symbol_id,
+      primaryIndex: assigned.primaryIndex,
+      ghostIndex: assigned.ghostIndex,
+      displayIcons: baseLayout.map(opt => opt.id)
+    });
+    console.log('BEFORE setState:', { primaryIndex: assigned.primaryIndex, ghostIndex: assigned.ghostIndex });
     setCorrectIndex(assigned.primaryIndex);
     setGhostIndex(assigned.ghostIndex);
+    console.log('AFTER setState - SET TO:', { correctIndex: assigned.primaryIndex, ghostIndex: assigned.ghostIndex });
     setRngMeta({
       source: rng_source,
       server_time,
@@ -2063,6 +2112,8 @@ function MainApp() {
       redundancy_mode: useMotionSafe ? 'single' : (isRedundant ? 'redundant' : 'single'),
       redundancy_count: R,
       punctuation: { flash_ms: FLASH_MS, isi_ms: ISI_MS },
+      calculated_primary_index: assigned.primaryIndex,
+      calculated_ghost_index: assigned.ghostIndex,
     });
 
     setRedundancyTimestamps(ts);

@@ -784,11 +784,11 @@ function computeStats(sessions, getTrials, sessionFilter) {
     for (let i = 0; i < N; i++) {
       const t = trials[i] || {};
       const p = Number(t.subject_hit) === 1 ? 1 : 0;
-      const g = Number(t.demon_hit) === 1 ? 1 : 0;
+      const g = Number(t.ghost_hit) === 1 ? 1 : 0;
 
       // Debug: log first few trials to see actual values
       if (i < 3) {
-        console.log(`Trial ${i}: subject_hit=${t.subject_hit}, demon_hit=${t.demon_hit}, p=${p}, g=${g}`);
+        console.log(`Trial ${i}: subject_hit=${t.subject_hit}, ghost_hit=${t.ghost_hit}, p=${p}, g=${g}`);
       }
 
       hp += p;
@@ -811,7 +811,7 @@ function computeStats(sessions, getTrials, sessionFilter) {
     const pctG = (100 * hg) / N;
 
     // Debug logging for demon percentage investigation
-    console.log(`DEMON DEBUG computeStats: N=${N}, hp=${hp} (${pctP.toFixed(1)}%), hg=${hg} (${pctG.toFixed(1)}%), trials with demon_hit=1: ${trials.filter(t => Number(t.demon_hit) === 1).length}`);
+    console.log(`DEMON DEBUG computeStats: N=${N}, hp=${hp} (${pctP.toFixed(1)}%), hg=${hg} (${pctG.toFixed(1)}%), trials with ghost_hit=1: ${trials.filter(t => Number(t.ghost_hit) === 1).length}`);
 
     per.push({
       session_id: doc.session_id || `row_${idx}`,
@@ -971,7 +971,7 @@ function computeStatsSessionWeighted(
     for (let i = 0; i < N; i++) {
       const t = trials[i] || {};
       const p = Number(t.subject_hit) === 1 ? 1 : 0;
-      const g = Number(t.demon_hit) === 1 ? 1 : 0;
+      const g = Number(t.ghost_hit) === 1 ? 1 : 0;
 
       hp += p;
       hg += g;
@@ -2086,7 +2086,7 @@ export default function QAExport() {
                 return {
                   // core correctness
                   subject_hit: toInt(r.subject_hit) === 1 ? 1 : 0,
-                  demon_hit: toInt(r.demon_hit) === 1 ? 1 : 0,
+                  ghost_hit: toInt(r.ghost_hit) === 1 ? 1 : 0,
                   matched: toInt(r.matched) === 1 ? 1 : 0,
 
                   // indexing & ordering
@@ -2523,7 +2523,7 @@ export default function QAExport() {
       (d) => d?.spoon_love?.trialResults || []
     )) {
       const src = String(t?.rng_source ?? 'unknown');
-      const g = Number(t?.demon_hit) === 1 ? 1 : 0;
+      const g = Number(t?.ghost_hit) === 1 ? 1 : 0;
       const row = m.get(src) || { source: src, n: 0, k: 0 };
       row.n += 1;
       row.k += g;
@@ -2547,7 +2547,7 @@ export default function QAExport() {
       (d) => d?.full_stack?.trialResults || []
     )) {
       const src = String(t?.rng_source ?? 'unknown');
-      const g = Number(t?.demon_hit) === 1 ? 1 : 0;
+      const g = Number(t?.ghost_hit) === 1 ? 1 : 0;
 
       const row = m.get(src) || { source: src, n: 0, k: 0 };
       row.n += 1;
@@ -3155,7 +3155,7 @@ export default function QAExport() {
             </tr>
             <tr>
               <td style={{ padding: '6px 8px' }}>
-                <code>demon_hit</code>
+                <code>ghost_hit</code>
               </td>
               <td style={{ padding: '6px 8px' }}>Demon</td>
               <td style={{ padding: '6px 8px' }}>0/1</td>
