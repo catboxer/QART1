@@ -15,7 +15,6 @@ import { signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { twoPropZ, twoSidedP, normalCdf } from './stats';
 import { config } from './config.js';
 
-
 /* ---------------- CIR²S Analysis Functions ---------------- */
 // Helper functions
 function computeEntropy(bytes) {
@@ -66,7 +65,7 @@ function analyzeCoherenceByRedundancy(trials) {
     return {
       label,
       count: group.length,
-      hit_rate: hits / group.length,
+      hit_rate: group.length > 0 ? hits / group.length : 0,
       entropy: computeEntropy(bytes),
       autocorr: computeAutocorrelation(bytes, 5),
       mean_byte: bytes.length > 0 ? bytes.reduce((a, b) => a + b, 0) / bytes.length : 0
@@ -98,7 +97,7 @@ function analyzeByRNGSource(trials) {
     return {
       source,
       count: trials.length,
-      hit_rate: hits / trials.length,
+      hit_rate: trials.length > 0 ? hits / trials.length : 0,
       entropy: computeEntropy(bytes),
       autocorr: computeAutocorrelation(bytes, 5),
       variance: bytes.length > 0 ? computeVariance(bytes) : 0
@@ -110,8 +109,8 @@ function analyzeByRNGSource(trials) {
 
 function computeVariance(values) {
   if (values.length === 0) return 0;
-  const mean = values.reduce((a, b) => a + b, 0) / values.length;
-  return values.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / values.length;
+  const mean = values.length > 0 ? values.reduce((a, b) => a + b, 0) / values.length : 0;
+  return values.length > 0 ? values.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / values.length : 0;
 }
 
 // 6. Sequential Dependency Analysis
@@ -232,7 +231,7 @@ function analyzeTimingOutcome(trials) {
   const results = Array.from(bucketMap.entries())
     .map(([bucket, data]) => ({
       bucket_ms: bucket,
-      hit_rate: data.hits / data.total,
+      hit_rate: data.total > 0 ? data.hits / data.total : 0,
       count: data.total,
       hits: data.hits
     }))
@@ -254,7 +253,7 @@ function analyzeTrialPositionEffects(trials) {
     results.push({
       position_start: i + 1,
       position_end: Math.min(i + binSize, totalTrials),
-      hit_rate: hits / binTrials.length,
+      hit_rate: binTrials.length > 0 ? hits / binTrials.length : 0,
       count: binTrials.length,
       hits
     });
@@ -291,8 +290,8 @@ function CompletePSIAnalysisPanel({ trials, title = 'Complete PSI Signatures' })
                 <div style={{ fontSize: 13, lineHeight: 1.4 }}>
                   <div>Trials: {group.count}</div>
                   <div>Hit Rate: {(group.hit_rate * 100).toFixed(1)}%</div>
-                  <div>Entropy: {group.entropy.toFixed(3)} bits</div>
-                  <div>Autocorr(1): {group.autocorr[1]?.correlation.toFixed(4) || 'N/A'}</div>
+                  <div>Entropy: {(group.entropy).toFixed(3)} bits</div>
+                  <div>Autocorr(1): {(group.autocorr[1]?.correlation).toFixed(4) || 'N/A'}</div>
                 </div>
               </div>
             ))}
@@ -318,7 +317,7 @@ function CompletePSIAnalysisPanel({ trials, title = 'Complete PSI Signatures' })
                     <td style={{ padding: '4px 8px' }}>{row.source}</td>
                     <td style={{ padding: '4px 8px', textAlign: 'right' }}>{row.count}</td>
                     <td style={{ padding: '4px 8px', textAlign: 'right' }}>{(row.hit_rate * 100).toFixed(1)}%</td>
-                    <td style={{ padding: '4px 8px', textAlign: 'right' }}>{row.entropy.toFixed(3)}</td>
+                    <td style={{ padding: '4px 8px', textAlign: 'right' }}>{(row.entropy).toFixed(3)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -385,13 +384,13 @@ function CompletePSIAnalysisPanel({ trials, title = 'Complete PSI Signatures' })
             <div>
               <strong>Hit Streaks:</strong>
               <div>Longest: {clusteringAnalysis.longest_hit_streak}</div>
-              <div>Average: {clusteringAnalysis.avg_hit_streak.toFixed(1)}</div>
+              <div>Average: {(clusteringAnalysis.avg_hit_streak).toFixed(1)}</div>
               <div>Count: {clusteringAnalysis.hit_streaks.length}</div>
             </div>
             <div>
               <strong>Miss Streaks:</strong>
               <div>Longest: {clusteringAnalysis.longest_miss_streak}</div>
-              <div>Average: {clusteringAnalysis.avg_miss_streak.toFixed(1)}</div>
+              <div>Average: {(clusteringAnalysis.avg_miss_streak).toFixed(1)}</div>
               <div>Count: {clusteringAnalysis.miss_streaks.length}</div>
             </div>
           </div>
@@ -757,7 +756,6 @@ function runRngSanityTest() {
 
 /* ---------------- general stats over sessions (pooled) ---------------- */
 function computeStats(sessions, getTrials, sessionFilter) {
-  console.log('DEMON DEBUG: computeStats called with', sessions.length, 'sessions');
   const per = [];
   let n10sum = 0,
     n01sum = 0,
@@ -785,12 +783,6 @@ function computeStats(sessions, getTrials, sessionFilter) {
       const t = trials[i] || {};
       const p = Number(t.subject_hit) === 1 ? 1 : 0;
       const g = Number(t.demon_hit) === 1 ? 1 : 0;
-
-      // Debug: log first few trials to see actual values
-      if (i < 3) {
-        console.log(`Trial ${i}: subject_hit=${t.subject_hit}, demon_hit=${t.demon_hit}, p=${p}, g=${g}`);
-      }
-
       hp += p;
       hg += g;
 
@@ -809,9 +801,6 @@ function computeStats(sessions, getTrials, sessionFilter) {
 
     const pctP = (100 * hp) / N;
     const pctG = (100 * hg) / N;
-
-    // Debug logging for demon percentage investigation
-    console.log(`DEMON DEBUG computeStats: N=${N}, hp=${hp} (${pctP.toFixed(1)}%), hg=${hg} (${pctG.toFixed(1)}%), trials with demon_hit=1: ${trials.filter(t => Number(t.demon_hit) === 1).length}`);
 
     per.push({
       session_id: doc.session_id || `row_${idx}`,
@@ -1455,28 +1444,7 @@ function PatternsPanel({ trials, title = 'Patterns' }) {
 
 // Main Results Summary Component
 const MainResultsSummary = ({ reportPRNG, reportQRNG, reportCL }) => {
-  if (!reportPRNG || !reportQRNG || !reportCL ||
-      !reportPRNG.totals || !reportQRNG.totals || !reportCL.totals ||
-      reportPRNG.totals.pctPrimary == null || reportQRNG.totals.pctPrimary == null || reportCL.totals.pctPrimary == null) {
-    return (
-      <div style={{
-        marginTop: 16,
-        padding: '16px 20px',
-        border: '2px solid #e5e7eb',
-        borderRadius: 12,
-        background: '#f9fafb',
-        marginBottom: 24,
-        textAlign: 'center'
-      }}>
-        <h2 style={{ margin: '0 0 16px 0', fontSize: 24, color: '#1f2937' }}>
-          🎯 EXPERIMENT RESULTS SUMMARY
-        </h2>
-        <div style={{ fontSize: 16, color: '#6b7280' }}>
-          No data available
-        </div>
-      </div>
-    );
-  }
+  if (!reportPRNG || !reportQRNG || !reportCL) return null;
 
   const getStatus = (report) => {
     const pValue = report.tests.primaryVsChance.p;
@@ -1522,10 +1490,10 @@ const MainResultsSummary = ({ reportPRNG, reportQRNG, reportCL }) => {
         }}>
           <div style={{ fontSize: 14, color: '#6b7280', marginBottom: 4 }}>Physical RNG</div>
           <div style={{ fontSize: 20, fontWeight: 'bold', color: physicalStatus.color }}>
-            {physicalStatus.icon} {reportPRNG.totals.pctPrimary.toFixed(1)}%
+            {physicalStatus.icon} {(reportPRNG.totals.pctPrimary).toFixed(1)}%
           </div>
           <div style={{ fontSize: 12, color: '#6b7280' }}>
-            vs 20% chance (p={reportPRNG.tests.primaryVsChance.p.toFixed(3)})
+            vs 20% chance (p={(reportPRNG.tests.primaryVsChance.p).toFixed(3)})
           </div>
         </div>
 
@@ -1538,10 +1506,10 @@ const MainResultsSummary = ({ reportPRNG, reportQRNG, reportCL }) => {
         }}>
           <div style={{ fontSize: 14, color: '#6b7280', marginBottom: 4 }}>Quantum RNG</div>
           <div style={{ fontSize: 20, fontWeight: 'bold', color: quantumStatus.color }}>
-            {quantumStatus.icon} {reportQRNG.totals.pctPrimary.toFixed(1)}%
+            {quantumStatus.icon} {(reportQRNG.totals.pctPrimary).toFixed(1)}%
           </div>
           <div style={{ fontSize: 12, color: '#6b7280' }}>
-            vs 20% chance (p={reportQRNG.tests.primaryVsChance.p.toFixed(3)})
+            vs 20% chance (p={(reportQRNG.tests.primaryVsChance.p).toFixed(3)})
           </div>
         </div>
 
@@ -1554,10 +1522,10 @@ const MainResultsSummary = ({ reportPRNG, reportQRNG, reportCL }) => {
         }}>
           <div style={{ fontSize: 14, color: '#6b7280', marginBottom: 4 }}>Local RNG</div>
           <div style={{ fontSize: 20, fontWeight: 'bold', color: localStatus.color }}>
-            {localStatus.icon} {reportCL.totals.pctPrimary.toFixed(1)}%
+            {localStatus.icon} {(reportCL.totals.pctPrimary).toFixed(1)}%
           </div>
           <div style={{ fontSize: 12, color: '#6b7280' }}>
-            vs 20% chance (p={reportCL.tests.primaryVsChance.p.toFixed(3)})
+            vs 20% chance (p={(reportCL.tests.primaryVsChance.p).toFixed(3)})
           </div>
         </div>
       </div>
@@ -1710,7 +1678,6 @@ const MetricExplanations = () => (
 
 /* ---------------------- COMPONENT ---------------------- */
 export default function QAExport() {
-  console.log('DEMON DEBUG: QAExport component rendering');
   const [rows, setRows] = useState([]);
   const [busy, setBusy] = useState(false);
   const [reportPRNG, setReportPRNG] = useState(null); // full_stack (Physical)
@@ -2278,36 +2245,9 @@ export default function QAExport() {
       baseSessionFilter(d) && passesShuffleSession(d);
 
     // trial extractors for each block
-    const getPRNG = (doc) => {
-      const all = doc?.full_stack?.trialResults || [];
-      const valid = all.filter(
-        (t) => t.target_index_0based !== null && t.target_index_0based !== undefined &&
-               t.selected_index !== null && t.selected_index !== undefined &&
-               t.ghost_index_0based !== null && t.ghost_index_0based !== undefined
-      );
-      console.log(`PRNG: ${all.length} total trials, ${valid.length} valid, ${all.length - valid.length} dropped`);
-      return all; // Return unfiltered for now
-    };
-    const getQRNG = (doc) => {
-      const all = doc?.spoon_love?.trialResults || [];
-      const valid = all.filter(
-        (t) => t.target_index_0based !== null && t.target_index_0based !== undefined &&
-               t.selected_index !== null && t.selected_index !== undefined &&
-               t.ghost_index_0based !== null && t.ghost_index_0based !== undefined
-      );
-      console.log(`QRNG: ${all.length} total trials, ${valid.length} valid, ${all.length - valid.length} dropped`);
-      return all; // Return unfiltered for now
-    };
-    const getCL = (doc) => {
-      const all = doc?.client_local?.trialResults || [];
-      const valid = all.filter(
-        (t) => t.target_index_0based !== null && t.target_index_0based !== undefined &&
-               t.selected_index !== null && t.selected_index !== undefined &&
-               t.ghost_index_0based !== null && t.ghost_index_0based !== undefined
-      );
-      console.log(`CL: ${all.length} total trials, ${valid.length} valid, ${all.length - valid.length} dropped`);
-      return all; // Return unfiltered for now
-    };
+    const getPRNG = (doc) => doc?.full_stack?.trialResults || [];
+    const getQRNG = (doc) => doc?.spoon_love?.trialResults || [];
+    const getCL = (doc) => doc?.client_local?.trialResults || [];
     let rPRNG, rQRNG, rCL;
     if (mode === 'sessionWeighted') {
       rPRNG = computeStatsSessionWeighted(
@@ -3837,13 +3777,22 @@ export default function QAExport() {
         </p>
       ) : null}
 
-
+      {/* NEW LAYOUT - REPLACE EVERYTHING FROM "Sections" ONWARD */}
 
       {/* Main Results Summary at the top */}
       <MainResultsSummary
         reportPRNG={reportPRNG}
         reportQRNG={reportQRNG}
         reportCL={reportCL}
+      />
+      <Section
+        title="Physical"
+        report={reportPRNG}
+        firstTen={firstTenPRNG}
+      />
+      <PatternsPanel
+        trials={trialsFSAll}
+        title="Patterns — Physical RNG"
       />
 
       {/* RNG Validation Summary */}

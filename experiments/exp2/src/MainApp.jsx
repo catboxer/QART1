@@ -25,6 +25,7 @@ import {
 } from './questions';
 import confetti from 'canvas-confetti';
 import { config } from './config.js';
+import HighScoreEmailGate from "./HighScoreEmailGate";
 
 // ---------- helpers ----------
 const randomInt = (min, max) =>
@@ -339,6 +340,8 @@ function MainApp() {
   // ----- blocks & trials -----
   const fullStackBlock = cueBlocks.find((b) => b.id === 'full_stack');
   const spoonLoveBlock = cueBlocks.find((b) => b.id === 'spoon_love');
+
+
   const [blockOrder] = useState([
     { ...fullStackBlock, id: 'full_stack', showFeedback: true },
     { ...spoonLoveBlock, id: 'spoon_love', showFeedback: true },
@@ -562,7 +565,10 @@ function MainApp() {
   // ----- live score (memoized) -----
   const liveScore = useMemo(() => {
     const rows = trialResults.filter(
-      (t) => t.block_type === currentBlock
+      (t) => t.block_type === currentBlock &&
+             t.target_index_0based !== null && t.target_index_0based !== undefined &&
+             t.selected_index !== null && t.selected_index !== undefined &&
+             t.ghost_index_0based !== null && t.ghost_index_0based !== undefined
     );
     const hits = rows.filter((t) => t.matched === 1).length;
     return {
@@ -736,7 +742,10 @@ function MainApp() {
       const correctSide = rng.qrng_code === 2 ? 'right' : 'left';
       // --- compute per-match indices BEFORE building logRow ---
       const beforeCount = trialResults.filter(
-        (t) => t.block_type === block.id
+        (t) => t.block_type === block.id &&
+               t.target_index_0based !== null && t.target_index_0based !== undefined &&
+               t.selected_index !== null && t.selected_index !== undefined &&
+               t.ghost_index_0based !== null && t.ghost_index_0based !== undefined
       ).length;
       const countAfter = beforeCount + 1;
       const match_index_0based = Math.floor(
@@ -985,7 +994,10 @@ function MainApp() {
     if (!FB[currentBlock]?.SCOREBOARD) return; // per-block toggle
 
     const rows = trialResults.filter(
-      (t) => t.block_type === currentBlock
+      (t) => t.block_type === currentBlock &&
+             t.target_index_0based !== null && t.target_index_0based !== undefined &&
+             t.selected_index !== null && t.selected_index !== undefined &&
+             t.ghost_index_0based !== null && t.ghost_index_0based !== undefined
     );
     const count = rows.length;
     if (!count) return;
@@ -1019,8 +1031,6 @@ function MainApp() {
     setButtonsDisabled(true);
   }, [trialResults, currentBlock, totalTrialsPerBlock]);
 
-  // -------- minimize each trial row (only what QAExport needs) --------
-  // -------- minimize each trial row (neutral names, no duplicate times) --------
   const toMinimalTrial = (r) => ({
     session_id: r.session_id,
 
@@ -1099,10 +1109,16 @@ function MainApp() {
 
     // Split trials by block
     const fsTrials = trialResults.filter(
-      (t) => t.block_type === 'full_stack'
+      (t) => t.block_type === 'full_stack' &&
+             t.target_index_0based !== null && t.target_index_0based !== undefined &&
+             t.selected_index !== null && t.selected_index !== undefined &&
+             t.ghost_index_0based !== null && t.ghost_index_0based !== undefined
     );
     const slTrials = trialResults.filter(
-      (t) => t.block_type === 'spoon_love'
+      (t) => t.block_type === 'spoon_love' &&
+             t.target_index_0based !== null && t.target_index_0based !== undefined &&
+             t.selected_index !== null && t.selected_index !== undefined &&
+             t.ghost_index_0based !== null && t.ghost_index_0based !== undefined
     );
 
     // Primary (RIGHT) hits
@@ -2219,9 +2235,18 @@ function MainApp() {
           })()}
         </>
       )}
-
       {step === 'done' && (
         <>
+          <HighScoreEmailGate
+            experiment="exp2"
+            step={step}
+            sessionId={sessionId}
+            participantId={auth.currentUser?.uid ?? null}
+            spoonLoveStats={spoonLoveStats}
+            fullStackStats={fullStackStats}
+          />
+
+
           <h2>Thank you for participating!</h2>
           <p>Your data has been submitted.</p>
           <p>

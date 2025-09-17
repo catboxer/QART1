@@ -1,4 +1,5 @@
-// exp3/src/MainApp.jsx
+// src/MainApp.jsx
+import './App.css';
 import React, {
   useEffect,
   useMemo,
@@ -15,93 +16,156 @@ import {
   hurstApprox,
   lag1Autocorr,
 } from './stats/index.js';
+
 import { db, ensureSignedIn } from './firebase';
 import {
-  collection,
-  doc,
-  addDoc,
-  setDoc,
-  serverTimestamp,
+  collection, doc, addDoc, setDoc, serverTimestamp,
 } from 'firebase/firestore';
 
+import { useLiveStreamQueue } from './useLiveStreamQueue';
+// import RedundancyGate from './RedundancyGate.jsx';
+import { MappingDisplay } from './SelectionMappings.jsx';
+
+import { preQuestions, postQuestions } from './questions';
+import { QuestionsForm } from './Forms.jsx';
+import { BlockScoreboard, SessionSummary } from './Scoring.jsx';
+import HighScoreEmailGate from './ui/HighScoreEmailGate.jsx';
+import ConsentGate from './ui/ConsentGate.jsx';
+
 const QRNG_URL = '/.netlify/functions/qrng-race';
-// const RNG_PROXY = '/.netlify/functions/random-org-proxy'; // optional
-// Stable, module-scoped fetch for QRNG bytes
-async function fetchBytes(n) {
-  const res = await fetch(`${QRNG_URL}?n=${n}&nonce=${Date.now()}`, {
-    cache: 'no-store',
-  });
-  if (!res.ok) throw new Error('qrng_http_' + res.status);
-  const j = await res.json();
-  if (!j?.bytes || j.bytes.length < n) throw new Error('qrng_shape');
-  return {
-    bytes: new Uint8Array(j.bytes),
-    source: j.source || 'qrng',
-  };
-}
 
-// --- crypto helpers ---
+// ===== live buffer policy (auto-scales with VISUAL_HZ) =====
+const TICK_MS = Math.round(1000 / C.VISUAL_HZ);
+const WARMUP_BITS_START = 24;
+const WARMUP_TIMEOUT_MS = 1500;
+const PAUSE_THRESHOLD_LT = 6; //when the buffer drops below this, we pause.
+const RESUME_THRESHOLD_GTE = 20; //We resume only once the buffer reaches this.
+const MAX_PAUSES = 3; //How many pauses we will tolerate before invalidating the minute.
+const MAX_TOTAL_PAUSE_MS = 5 * TICK_MS;
+const MAX_SINGLE_PAUSE_MS = 3 * TICK_MS;
+
+const fmtSec = (ms) => `${(ms / 1000).toFixed(ms % 1000 ? 1 : 0)}s`;
+const POLICY_TEXT = {
+  warmup: `Warm-up until buffer ≥ ${WARMUP_BITS_START} bits (~${(WARMUP_BITS_START / C.VISUAL_HZ).toFixed(1)}s @ ${C.VISUAL_HZ}Hz)`,
+  pause: `Pause if buffer < ${PAUSE_THRESHOLD_LT} bits`,
+  resume: `Resume when buffer ≥ ${RESUME_THRESHOLD_GTE} bits`,
+  guardrails: `Invalidate if >${MAX_PAUSES} pauses, total pauses > ${fmtSec(MAX_TOTAL_PAUSE_MS)}, or any pause > ${fmtSec(MAX_SINGLE_PAUSE_MS)}`
+};
+
+// ===== helpers (module scope) =====
+async function fetchBytes(n, { timeoutMs = 3500, retries = 2, requireQRNG = false } = {}) {
+  async function tryOnce() {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(`${QRNG_URL}?n=${n}&nonce=${Date.now()}`, { cache: 'no-store', signal: ctrl.signal });
+      if (!res.ok) {
+        let detail = '';
+        try {
+          const j = await res.json();
+          if (j?.trace) detail = `:${(j.trace || []).join('|')}`;
+          else if (j?.detail || j?.error) detail = `:${j.detail || j.error}`;
+        } catch { }
+        throw new Error('http_' + res.status + detail);
+      }
+      const j = await res.json();
+      if (!j?.bytes || j.bytes.length < n) throw new Error('shape');
+      return { ok: true, bytes: new Uint8Array(j.bytes), source: j.source || 'qrng' };
+    } finally {
+      clearTimeout(t);
+    }
+  }
+  let lastErr = null;
+  for (let r = 0; r <= retries; r++) {
+    try { return await tryOnce(); }
+    catch (e) { lastErr = e?.message || String(e); await new Promise(s => setTimeout(s, 200 * (r + 1))); }
+  }
+  if (requireQRNG) throw new Error('qrng_unavailable_after_retries:' + lastErr);
+  const bytes = new Uint8Array(n);
+  crypto.getRandomValues(bytes);
+  console.warn('[exp3] QRNG unavailable; using local_prng. Last error:', lastErr);
+  return { ok: true, bytes, source: 'local_prng', fallback: true, lastErr };
+}
 async function sha256Hex(bytes) {
-  const buf =
-    bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  const buf = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
   const digest = await crypto.subtle.digest('SHA-256', buf);
-  return [...new Uint8Array(digest)]
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+function localPairs(n) {
+  const bytes = new Uint8Array(n * 2);
+  crypto.getRandomValues(bytes);
+  const subj = [], ghost = [];
+  for (let i = 0; i < n; i++) {
+    subj.push(bytes[2 * i] & 1);
+    ghost.push(bytes[2 * i + 1] & 1);
+  }
+  return { subj, ghost, source: 'local_prng' };
+}
+function bytesToBits(bytes, nBits) {
+  const bits = [];
+  for (let i = 0; i < nBits; i++) bits.push((bytes[i >> 3] >>> (i & 7)) & 1);
+  return bits;
+}
+function shuffleInPlace(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = crypto.getRandomValues(new Uint8Array(1))[0] % (i + 1);
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+function makeRedundancyPlan(numRetro) {
+  const base = ['R0', 'R1', 'R2'];
+  const plan = [];
+  while (plan.length < numRetro) plan.push(...shuffleInPlace(base.slice()));
+  return plan.slice(0, numRetro);
 }
 
-// --- UI bits ---
-function FlashPanel({ bit, lowContrast, patterns }) {
-  const isRed = bit === 1;
-  const base = isRed
-    ? lowContrast
-      ? '#ffefef'
-      : '#cc0000'
-    : lowContrast
-    ? '#efffee'
-    : '#008a00';
-  const style = {
-    width: '90vw',
-    height: '80vh',
-    borderRadius: 16,
-    boxShadow: '0 8px 40px rgba(0,0,0,0.35)',
-    background: base,
-    backgroundImage: patterns
-      ? isRed
-        ? 'repeating-linear-gradient(45deg, rgba(0,0,0,0.2) 0 8px, transparent 8px 16px)'
-        : 'repeating-linear-gradient(135deg, rgba(0,0,0,0.15) 0 10px, transparent 10px 20px)'
-      : 'none',
-    backgroundBlendMode: 'multiply',
-  };
-  return <div style={style} />;
+function ExitDoorButton({ onClick, title = 'Exit and save' }) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      aria-label={title}
+      style={{
+        position: 'fixed',
+        right: 16,
+        bottom: 16,
+        zIndex: 9999,
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: 44,
+        height: 44,
+        borderRadius: 10,
+        // make it visually “floating” with no square/black background:
+        background: 'transparent',
+        border: 'none',
+        boxShadow: 'none',
+        cursor: 'pointer',
+        fontSize: 28,
+        lineHeight: 1,
+        // subtle glow so it’s visible over any background
+        textShadow: '0 1px 2px rgba(0,0,0,0.6)',
+      }}
+    >
+      <span role="img" aria-hidden="true">🚪</span>
+    </button>
+  );
 }
-function CircularGauge({
-  value = 0.5,
-  targetBit = 1,
-  width = 220,
-  label = 'Short-term avg',
-  subLabel,
-}) {
-  // value in [0,1]
-  const r = Math.round((width * 0.72) / 2); // radius for the half-circle
+
+
+function CircularGauge({ value = 0.5, targetBit = 1, width = 220, label = 'Short-term avg', subLabel }) {
+  const r = Math.round((width * 0.72) / 2);
   const cx = width / 2;
-  const cy = r + 16; // leave a little top padding
-  const halfLen = Math.PI * r; // length of the semicircle path
+  const cy = r + 16;
+  const halfLen = Math.PI * r;
   const pct = Math.round(value * 100);
-
-  // Colors
-  const main = targetBit === 1 ? '#cc0000' : '#008a00'; // RED/GREEN
+  const main = targetBit === 1 ? '#cc0000' : '#008a00';
   const track = '#e6e6e6';
   const text = '#222';
-
-  // Semicircle path (left to right)
   const d = `M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`;
-
-  // Foreground arc length based on value
   const dashArray = `${halfLen} ${halfLen}`;
   const dashOffset = halfLen * (1 - Math.max(0, Math.min(1, value)));
-
-  // 50% tick marker (top center)
   const tickLen = 8;
   const tickX = cx;
   const tickY1 = cy - r - 2;
@@ -109,242 +173,155 @@ function CircularGauge({
 
   return (
     <div style={{ display: 'inline-block' }}>
-      <svg
-        width={width}
-        height={r + 72}
-        viewBox={`0 0 ${width} ${r + 72}`}
-      >
-        {/* Track */}
+      <svg width={width} height={r + 72} viewBox={`0 0 ${width} ${r + 72}`}>
         <path d={d} stroke={track} strokeWidth="14" fill="none" />
-        {/* Foreground arc */}
-        <path
-          d={d}
-          stroke={main}
-          strokeWidth="14"
-          fill="none"
-          strokeLinecap="round"
-          style={{
-            strokeDasharray: dashArray,
-            strokeDashoffset: dashOffset,
-            transition: 'stroke-dashoffset 120ms linear',
-          }}
-        />
-        {/* 50% tick */}
-        <line
-          x1={tickX}
-          y1={tickY1}
-          x2={tickX}
-          y2={tickY2}
-          stroke="#999"
-          strokeWidth="2"
-        />
-        {/* Left/right end labels */}
-        <text
-          x={cx - r}
-          y={cy + 14}
-          textAnchor="start"
-          fontSize="11"
-          fill={targetBit === 1 ? '#008a00' : '#cc0000'}
-        >
-          0%
-        </text>
-        <text
-          x={cx + r}
-          y={cy + 14}
-          textAnchor="end"
-          fontSize="11"
-          fill={main}
-        >
-          100%
-        </text>
-
-        {/* Big number */}
-        <text
-          x={cx}
-          y={cy - 10}
-          textAnchor="middle"
-          fontSize="22"
-          fill={text}
-          fontWeight="700"
-        >
-          {pct}%
-        </text>
-        {/* Labels */}
-        <text
-          x={cx}
-          y={cy + 28}
-          textAnchor="middle"
-          fontSize="12"
-          fill={text}
-          style={{ opacity: 0.8 }}
-        >
-          {label}
-        </text>
-        {subLabel ? (
-          <text
-            x={cx}
-            y={cy + 44}
-            textAnchor="middle"
-            fontSize="12"
-            fill="#666"
-          >
-            {subLabel}
-          </text>
-        ) : null}
+        <path d={d} stroke={main} strokeWidth="14" fill="none" strokeLinecap="round"
+          style={{ strokeDasharray: dashArray, strokeDashoffset: dashOffset, transition: 'stroke-dashoffset 120ms linear' }} />
+        <line x1={tickX} y1={tickY1} x2={tickX} y2={tickY2} stroke="#999" strokeWidth="2" />
+        <text x={cx - r} y={cy + 14} textAnchor="start" fontSize="11" fill={targetBit === 1 ? '#008a00' : '#cc0000'}>0%</text>
+        <text x={cx + r} y={cy + 14} textAnchor="end" fontSize="11" fill={main}>100%</text>
+        <text x={cx} y={cy - 10} textAnchor="middle" fontSize="22" fill={text} fontWeight="700">{pct}%</text>
+        <text x={cx} y={cy + 28} textAnchor="middle" fontSize="12" fill={text} style={{ opacity: 0.8 }}>{label}</text>
+        {subLabel ? <text x={cx} y={cy + 44} textAnchor="middle" fontSize="12" fill="#666">{subLabel}</text> : null}
       </svg>
     </div>
   );
 }
 
-function AutoAdvance({ seconds = 10, onDone }) {
-  const [left, setLeft] = useState(seconds);
-  useEffect(() => {
-    const id = setInterval(() => {
-      setLeft((s) => {
-        if (s <= 1) {
-          clearInterval(id);
-          onDone?.();
-          return 0;
-        }
-        return s - 1;
-      });
-    }, 1000);
-    return () => clearInterval(id);
-  }, [seconds, onDone]);
-  return (
-    <div style={{ opacity: 0.7, marginTop: 8 }}>
-      Continuing in {left}s…
-    </div>
-  );
-}
-
-// --- main ---
+// ===== main =====
 export default function MainApp() {
-  // auth
+  // ---- auth
   const [userReady, setUserReady] = useState(false);
   const [uid, setUid] = useState(null);
-  useEffect(() => {
-    (async () => {
-      try {
-        const u = await ensureSignedIn();
-        setUid(u?.uid || null);
-      } finally {
-        setUserReady(true);
-      }
-    })();
-  }, []);
-  async function requireUid() {
-    const u = await ensureSignedIn(); // your helper should sign in (anon or email/pass)
-    if (!u || !u.uid)
-      throw new Error(
-        'auth/no-user: sign-in required before writing'
-      );
-    return u.uid;
-  }
+  const {
+    connect: liveConnect,
+    disconnect: liveDisconnect,
+    popBit: livePopBit,
+    bufferedBits: liveBufferedBits,
+    connected: liveConnected,
+    lastSource: liveLastSource,
+  } = useLiveStreamQueue({ durationMs: C.LIVE_STREAM_DURATION_MS });
 
-  // toggles
+  // ---- toggles
   const [lowContrast, setLowContrast] = useState(C.LOW_CONTRAST_MODE);
   const [patternsMode, setPatternsMode] = useState(true);
-  // Debug UI gate: enable extra labels only if URL hash has #qa or #debug
   const [debugUI, setDebugUI] = useState(false);
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const check = () =>
-      setDebugUI(/(#qa|#\/qa|#debug)/i.test(window.location.hash));
-    check(); // initial
+    const check = () => setDebugUI(/(#qa|#\/qa|#debug)/i.test(window.location.hash));
+    check();
     window.addEventListener('hashchange', check);
     return () => window.removeEventListener('hashchange', check);
   }, []);
 
-  // target & prime
-  const [target, setTarget] = useState(null); // 'RED' | 'GREEN'
-  const [primeCond, setPrimeCond] = useState(null); // 'prime' | 'neutral'
+  // ---- target & prime
+  const [target, setTarget] = useState(null);
+  const [primeCond, setPrimeCond] = useState(null);
   useEffect(() => {
     if (target) return;
-    const t =
-      crypto.getRandomValues(new Uint8Array(1))[0] & 1
-        ? 'RED'
-        : 'GREEN';
+    const t = (crypto.getRandomValues(new Uint8Array(1))[0] & 1) ? 'RED' : 'GREEN';
     setTarget(t);
     const r = crypto.getRandomValues(new Uint8Array(1))[0] / 255;
     setPrimeCond(r < C.PRIME_PROB ? 'prime' : 'neutral');
   }, [target]);
-  // Debug UI gate: only true if URL hash contains #qa or #debug
 
-  // tapes
+  // ---- tapes
   const [tapeA, setTapeA] = useState(null);
   const [tapeB, setTapeB] = useState(null);
   const [tapeGhost, setTapeGhost] = useState(null);
   const [tapeMeta, setTapeMeta] = useState(null);
   const [busyTape, setBusyTape] = useState(false);
-  const liveBufRef = useRef({ subj: [], ghost: [] }); // Preloaded RNG for the *next* live minute
+  const [tapesReady, setTapesReady] = useState(false); // gray out create button when complete
+
+  // ---- returning participant (skip preQ on same device)
+  // returning participant (skip preQ on same device)
+  const [preDone, setPreDone] = useState(() => {
+    try { return localStorage.getItem(`pre_done_global:${C.EXPERIMENT_ID}`) === '1'; }
+    catch { return false; }
+  });
+  const [checkedReturning, setCheckedReturning] = useState(false);  // ← add this
+
+
+
+  // live prefetch model (only used when NOT using streaming)
+  const liveBufRef = useRef({ subj: [], ghost: [] });
   const nextLiveBufRef = useRef(null);
 
-  // Fail-safe: generate local PRNG pairs if QRNG is slow/unavailable
-  function localPairs(n) {
-    const bytes = new Uint8Array(n * 2);
-    crypto.getRandomValues(bytes);
-    const subj = [],
-      ghost = [];
-    for (let i = 0; i < n; i++) {
-      subj.push(bytes[2 * i] & 1);
-      ghost.push(bytes[2 * i + 1] & 1);
-    }
-    return { subj, ghost, source: 'local_prng' };
+  const prefetchLivePairs = useCallback(async () => {
+    // If you're using the real live stream, don't prefetch at all
+    if (C.USE_LIVE_STREAM) return null;
+
+    const n = Math.round((C.BLOCK_MS / 1000) * C.VISUAL_HZ);
+
+    const qrngPromise = (async () => {
+      const { bytes, source } = await fetchBytes(n * 2);
+      const subj = [], ghost = [];
+      for (let i = 0; i < n; i++) {
+        subj.push(bytes[2 * i] & 1);
+        ghost.push(bytes[2 * i + 1] & 1);
+      }
+      return { subj, ghost, source };
+    })();
+
+    // small timeout to fall back to local if QRNG is slow
+    const timeout = new Promise((resolve) =>
+      setTimeout(() => resolve(localPairs(n)), 1500)
+    );
+
+    const pairset = await Promise.race([qrngPromise, timeout]);
+    nextLiveBufRef.current = pairset;
+    return pairset;
+  }, []);
+ 
+  // ---- sign-in (local-only returning check)
+    useEffect(() => {
+        (async () => {
+         try {
+             const u = await ensureSignedIn();
+             setUid(u?.uid || null);
+             // fast local skip for preQ if they've done it on this device
+               try {
+                   const globalKey = `pre_done_global:${C.EXPERIMENT_ID}`;
+                   if (localStorage.getItem(globalKey) === '1') {
+                       setPreDone(true);
+                     }
+                 } catch { }
+           } finally {
+             setUserReady(true);
+             setCheckedReturning(true);
+           }
+          })();
+      }, []);
+
+
+  async function requireUid() {
+    const u = await ensureSignedIn();
+    if (!u || !u.uid) throw new Error('auth/no-user: sign-in required before writing');
+    return u.uid;
   }
 
-  function bytesToBits(bytes, nBits) {
-    const bits = [];
-    for (let i = 0; i < nBits; i++)
-      bits.push((bytes[i >> 3] >>> (i & 7)) & 1);
-    return bits;
-  }
   async function makeTape(label = 'A') {
-    const uidNow = uid || (await requireUid()); // ← guarantee a UID here too
-
+    const uidNow = uid || (await requireUid());
     const nBytes = Math.ceil(C.RETRO_TAPE_BITS / 8);
-    const { bytes, source } = await fetchBytes(nBytes);
+    const { bytes, source, fallback, lastErr } = await fetchBytes(nBytes);
     const H_tape = await sha256Hex(bytes);
     const createdISO = new Date().toISOString();
-    const commitStr = [
-      label,
-      C.RETRO_TAPE_BITS,
-      source,
-      createdISO,
-      H_tape,
-    ].join('|');
-    const H_commit = await sha256Hex(
-      new TextEncoder().encode(commitStr)
-    );
+    const commitStr = [label, C.RETRO_TAPE_BITS, source, createdISO, H_tape].join('|');
+    const H_commit = await sha256Hex(new TextEncoder().encode(commitStr));
     const bits = bytesToBits(bytes, C.RETRO_TAPE_BITS);
-
     try {
-      const tapesCol = collection(db, C.FIRESTORE_TAPES); // should be 'tapes'
+      const tapesCol = collection(db, C.FIRESTORE_TAPES);
       const tapeDocRef = await addDoc(tapesCol, {
-        label,
-        lenBits: C.RETRO_TAPE_BITS,
-        createdAt: serverTimestamp(),
-        createdAtISO: createdISO,
-        providers: source,
-        H_tape,
-        H_commit,
-        created_by: uidNow, // REQUIRED by your rules
-        // (optional: add AES-GCM fields later if you encrypt client-side)
+        label, lenBits: C.RETRO_TAPE_BITS,
+        createdAt: serverTimestamp(), createdAtISO: createdISO,
+        providers: source, H_tape, H_commit,
+        created_by: uidNow,
+        qrng_fallback: !!fallback || null,
+        qrng_error: fallback ? (lastErr || 'unknown') : null,
       });
-      console.log('tapes/addDoc OK', tapeDocRef.id);
-      return {
-        label,
-        bits,
-        H_tape,
-        H_commit,
-        createdISO,
-        tapeId: tapeDocRef.id,
-      };
+      return { label, bits, H_tape, H_commit, createdISO, tapeId: tapeDocRef.id, source };
     } catch (e) {
-      console.error('tapes/addDoc failed', {
-        code: e.code,
-        message: e.message,
-      });
+      console.error('tapes/addDoc failed', e);
       throw e;
     }
   }
@@ -355,563 +332,652 @@ export default function MainApp() {
       const A = await makeTape('A');
       const G = await makeTape('GHOST');
       const B = C.RETRO_USE_TAPE_B_LAST ? await makeTape('B') : null;
-      setTapeA(A);
-      setTapeGhost(G);
-      setTapeB(B);
-      setTapeMeta({
-        H_tape: A.H_tape,
-        H_commit: A.H_commit,
-        tapeId: A.tapeId,
-        createdISO: A.createdISO,
-      });
+      setTapeA(A); setTapeGhost(G); setTapeB(B);
+      setTapeMeta({ H_tape: A.H_tape, H_commit: A.H_commit, tapeId: A.tapeId, createdISO: A.createdISO });
+      setTapesReady(true);
     } finally {
       setBusyTape(false);
     }
   }
 
-  // schedule: 12 minutes alternating; start side counterbalanced from uid
+  // ---- schedule (18×150 driven by config: VISUAL_HZ * (BLOCK_MS/1000) should be 150; BLOCKS_TOTAL=18)
   const schedule = useMemo(() => {
     const startLive = (uid || 'x').charCodeAt(0) % 2 === 0;
-    return Array.from({ length: C.MINUTES_TOTAL }, (_, i) => {
-      const live = i % 2 === 0 ? startLive : !startLive;
-      return live ? 'live' : 'retro';
-    });
+    return Array.from({ length: C.BLOCKS_TOTAL }, (_, i) => (i % 2 === 0 ? startLive : !startLive) ? 'live' : 'retro');
   }, [uid]);
+  const trialsPerBlock = Math.round((C.BLOCK_MS / 1000) * C.VISUAL_HZ);
 
-  // find the index of the last retro minute (for Tape B)
   const lastRetroIdx = useMemo(() => {
-    let last = -1;
-    schedule.forEach((k, i) => {
-      if (k === 'retro') last = i;
-    });
-    return last;
+    let last = -1; schedule.forEach((k, i) => { if (k === 'retro') last = i; }); return last;
   }, [schedule]);
 
+  // Redundancy tiers plan (balanced)
+  const redundancyPlan = useMemo(() => {
+    const countRetro = schedule.filter(k => k === 'retro').length;
+    return makeRedundancyPlan(countRetro);
+  }, [schedule]);
+
+  // ---- run doc
   const [runRef, setRunRef] = useState(null);
   async function ensureRunDoc() {
     if (runRef) return runRef;
-
-    // make sure target/prime are chosen before run creation
-    if (!target || !primeCond)
-      throw new Error(
-        'logic/order: target and primeCond must be set before creating run'
-      );
-
-    const uidNow = uid || (await requireUid()); // ← guarantee a UID right now
-
-    try {
-      const col = collection(db, C.FIRESTORE_RUNS); // should be 'runs'
-      const docRef = await addDoc(col, {
-        participant_id: uidNow, // REQUIRED by your rules
-        experimentId: C.EXPERIMENT_ID,
-        createdAt: serverTimestamp(),
-        target_side: target,
-        prime_condition: primeCond,
-        tape_meta: tapeMeta || null,
-        minutes_planned: schedule,
-      });
-      setRunRef(docRef);
-      // helpful console line while testing
-      console.log('runs/addDoc OK', docRef.id);
-      return docRef;
-    } catch (e) {
-      console.error('runs/addDoc failed', {
-        code: e.code,
-        message: e.message,
-      });
-      throw e;
-    }
+    if (!target || !primeCond) throw new Error('logic/order: target and primeCond must be set before creating run');
+    const uidNow = uid || (await requireUid());
+    const col = collection(db, C.FIRESTORE_RUNS);
+    const docRef = await addDoc(col, {
+      participant_id: uidNow,
+      experimentId: C.EXPERIMENT_ID,
+      createdAt: serverTimestamp(),
+      target_side: target,
+      prime_condition: primeCond,
+      tape_meta: tapeMeta || null,
+      minutes_planned: schedule,
+    });
+    setRunRef(docRef);
+    return docRef;
   }
 
-  // minute engine
-  const [phase, setPhase] = useState('onboarding');
-  const [preparingNext, setPreparingNext] = useState(false);
-  const [minuteIdx, setMinuteIdx] = useState(-1);
+  // ---- phase & per-minute state
+  const [phase, setPhase] = useState('consent');
+  const [blockIdx, setblockIdx] = useState(-1);
   const [isRunning, setIsRunning] = useState(false);
   const [bitsThisMinute, setBitsThisMinute] = useState([]);
   const [ghostBitsThisMinute, setGhostBitsThisMinute] = useState([]);
   const [alignedSeries, setAlignedSeries] = useState([]);
   const [hits, setHits] = useState(0);
   const [ghostHits, setGhostHits] = useState(0);
-  // Mutable buffers to avoid per-trial state churn
-  const bitsRef = useRef([]);
-  const ghostBitsRef = useRef([]);
-  const alignedRef = useRef([]);
-  const hitsRef = useRef(0);
-  const ghostHitsRef = useRef(0);
+  const [lastBlock, setLastBlock] = useState(null);
+  const [totals, setTotals] = useState({ k: 0, n: 0 });
+  const [blocks, setBlocks] = useState([]);
 
-  const trialsPerMinute = Math.round(60 * C.VISUAL_HZ);
+  const bitsRef = useRef([]); const ghostBitsRef = useRef([]); const alignedRef = useRef([]);
+  const hitsRef = useRef(0); const ghostHitsRef = useRef(0);
+  const trialsPerMinute = trialsPerBlock;
   const targetBit = target === 'RED' ? 1 : 0;
 
+  // Retro pass & redundancy info (audit)
   const retroPassRef = useRef(0);
+  const redundancyRef = useRef(null);
+  const retroOrdinalRef = useRef(0);
 
-  const prefetchLivePairs = useCallback(
-    async function prefetchLivePairs() {
-      const n = trialsPerMinute;
-
-      // Race QRNG vs a 1.5s timeout; on timeout, fall back to local PRNG
-      const qrngPromise = (async () => {
-        const { bytes, source } = await fetchBytes(n * 2);
-        const subj = [],
-          ghost = [];
-        for (let i = 0; i < n; i++) {
-          subj.push(bytes[2 * i] & 1);
-          ghost.push(bytes[2 * i + 1] & 1);
-        }
-        return { subj, ghost, source };
-      })();
-
-      const timeout = new Promise((resolve) =>
-        setTimeout(() => resolve(localPairs(n)), 1500)
-      );
-
-      const pairset = await Promise.race([qrngPromise, timeout]);
-      nextLiveBufRef.current = pairset; // stage for the next live minute
-      return pairset;
-    },
-    [trialsPerMinute]
-  );
-  async function ensureNextBlockReady(nextIdx) {
-    const kindNext = schedule[nextIdx];
-
-    if (kindNext === 'live') {
-      // Make sure we have live pairs staged; if not, prefetch now
-      if (!nextLiveBufRef.current) {
-        await prefetchLivePairs();
-      }
-      // Consume staged pairs into the buffer used by the runner
-      if (nextLiveBufRef.current) {
-        liveBufRef.current = nextLiveBufRef.current;
-        nextLiveBufRef.current = null;
-      } else {
-        // As a final fallback (very unlikely), synthesize locally
-        const pairset = localPairs(Math.round(60 * C.VISUAL_HZ));
-        liveBufRef.current = pairset;
-      }
-      return;
+  // S-Selection mapping & micro-entropy
+  const [mappingType, setMappingType] = useState('low_entropy');
+  const microEntropyRef = useRef({ sum: 0, count: 0 });
+  useEffect(() => {
+    if (phase === 'running') {
+      const pick = (crypto.getRandomValues(new Uint8Array(1))[0] & 1) ? 'low_entropy' : 'high_entropy';
+      setMappingType(pick);
+      microEntropyRef.current = { sum: 0, count: 0 };
     }
+  }, [phase, blockIdx]);
 
-    // Retro: make sure the tape we will use exists and has bits
-    const isLastRetro =
-      C.RETRO_USE_TAPE_B_LAST && nextIdx === lastRetroIdx;
+  // live buffer guardrails
+  const [isBuffering, setIsBuffering] = useState(false);
+  const pauseCountRef = useRef(0);
+  const totalPausedMsRef = useRef(0);
+  const longestPauseMsRef = useRef(0);
+  const pauseStartedAtRef = useRef(0);
+  const redoCurrentMinuteRef = useRef(false);
+  const minuteInvalidRef = useRef(false);
+  const invalidReasonRef = useRef('');
 
-    const srcBits = isLastRetro ? tapeB?.bits : tapeA?.bits;
-    const ghostBits = tapeGhost?.bits;
-
-    if (
-      !srcBits ||
-      !srcBits.length ||
-      !ghostBits ||
-      !ghostBits.length
-    ) {
-      throw new Error('tape-not-ready: missing A/B or GHOST bits');
+  const resetLivePauseCounters = useCallback(() => {
+    pauseCountRef.current = 0;
+    totalPausedMsRef.current = 0;
+    longestPauseMsRef.current = 0;
+    pauseStartedAtRef.current = 0;
+    setIsBuffering(false);
+    minuteInvalidRef.current = false;
+    invalidReasonRef.current = '';
+  }, []);
+  const maybePause = useCallback((now) => {
+    if (!isBuffering && liveBufferedBits() < PAUSE_THRESHOLD_LT) {
+      setIsBuffering(true);
+      pauseCountRef.current += 1;
+      pauseStartedAtRef.current = now;
     }
-  }
+  }, [isBuffering, liveBufferedBits]);
+  const maybeResume = useCallback((now) => {
+    if (isBuffering && liveBufferedBits() >= RESUME_THRESHOLD_GTE) {
+      const dur = now - pauseStartedAtRef.current;
+      totalPausedMsRef.current += dur;
+      if (dur > longestPauseMsRef.current) longestPauseMsRef.current = dur;
+      setIsBuffering(false);
+    }
+  }, [isBuffering, liveBufferedBits]);
+  const shouldInvalidate = useCallback(() => {
+    return (
+      pauseCountRef.current > MAX_PAUSES ||
+      totalPausedMsRef.current > MAX_TOTAL_PAUSE_MS ||
+      longestPauseMsRef.current > MAX_SINGLE_PAUSE_MS
+    );
+  }, []);
 
-  // 7Hz runner
-  const rafRef = useRef(null),
-    t0Ref = useRef(0),
-    idxRef = useRef(0);
-  const minuteWatchdogRef = useRef(null); // <-- add this
-  const endMinuteRef = useRef(() => {}); // holds the latest endMinute
+  // minute runner plumbing
+  const tickTimerRef = useRef(null);
+  const endMinuteRef = useRef(() => { });
 
-  function stopRAF() {
-    if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    rafRef.current = null;
-  }
+  // --- persist & end-minute (persist must be defined BEFORE endMinute) ---
+  const persistMinute = useCallback(async () => {
+    if (!runRef) return;
+
+    const n = alignedSeries.length;
+    const k = hits;
+    const kg = ghostHits;
+
+    const z = zFromBinom(k, n, 0.5);
+    const pTwo = twoSidedP(z);
+    const zg = zFromBinom(kg, n, 0.5);
+    const pg = twoSidedP(zg);
+
+    const cohRange = cumulativeRange(bitsThisMinute);
+    const hurst = hurstApprox(bitsThisMinute);
+    const ac1 = lag1Autocorr(bitsThisMinute);
+
+    const gCohRange = cumulativeRange(ghostBitsThisMinute);
+    const gHurst = hurstApprox(ghostBitsThisMinute);
+    const gAc1 = lag1Autocorr(ghostBitsThisMinute);
+
+    const kind = schedule[blockIdx];
+    const isLastRetro = kind === 'retro' && C.RETRO_USE_TAPE_B_LAST && blockIdx === lastRetroIdx;
+
+    const mdoc = doc(runRef, 'minutes', String(blockIdx));
+
+    const blockSummary = { k, n, z, pTwo, kg: ghostHits, ng: n, zg, pg, kind };
+    setLastBlock(blockSummary);
+    setTotals((t) => ({ k: t.k + k, n: t.n + n }));
+    setBlocks((b) => [...b, blockSummary]);
+
+    await setDoc(mdoc, {
+      idx: blockIdx,
+      kind,
+      ended_by: 'timer',
+      startedAt: serverTimestamp(),
+      n, hits: k, z, pTwo,
+      ghost_hits: kg, ghost_z: zg, ghost_pTwo: pg,
+      target, prime_condition: primeCond,
+      tape_meta: kind === 'retro'
+        ? (isLastRetro
+          ? { H_tape: tapeB?.H_tape, H_commit: tapeB?.H_commit, tapeId: tapeB?.tapeId }
+          : { H_tape: tapeA?.H_tape, H_commit: tapeA?.H_commit, tapeId: tapeA?.tapeId })
+        : null,
+      coherence: { cumRange: cohRange, hurst },
+      resonance: { ac1 },
+      ghost_metrics: { coherence: { cumRange: gCohRange, hurst: gHurst }, resonance: { ac1: gAc1 } },
+      replay: kind === 'retro' ? { passIndex: retroPassRef.current, tape: isLastRetro ? 'B' : 'A' } : null,
+      mapping_type: mappingType,
+      micro_entropy: microEntropyRef.current.count ? (microEntropyRef.current.sum / microEntropyRef.current.count) : null,
+      redundancy: kind === 'retro' ? (redundancyRef.current || null) : null,
+      invalidated: minuteInvalidRef.current || false,
+      invalid_reason: minuteInvalidRef.current ? invalidReasonRef.current : null,
+      live_buffer: kind === 'live' ? {
+        pauseCount: pauseCountRef.current,
+        totalPausedMs: Math.round(totalPausedMsRef.current),
+        longestSinglePauseMs: Math.round(longestPauseMsRef.current),
+      } : null,
+    }, { merge: true });
+  }, [
+    runRef, alignedSeries, hits, ghostHits, bitsThisMinute, ghostBitsThisMinute,
+    schedule, blockIdx, lastRetroIdx, tapeA, tapeB, target, primeCond, mappingType
+  ]);
+
+  const endMinute = useCallback(async () => {
+    if (C.USE_LIVE_STREAM && schedule[blockIdx] === 'live') {
+      liveDisconnect();
+    }
+    setIsRunning(false);
+    await persistMinute();
+    if (minuteInvalidRef.current) { setPhase('rest'); return; }
+    if (blockIdx + 1 >= C.BLOCKS_TOTAL) setPhase('done');
+    else setPhase('rest');
+  }, [blockIdx, liveDisconnect, schedule, persistMinute]);
+  // Idle prefetch during PRIME/REST in non-streaming mode
+  useEffect(() => {
+    // Never prefetch in streaming mode
+    if (C.USE_LIVE_STREAM) return;
+
+    // Only consider prefetching after onboarding has begun (avoid consent/preQ)
+    const allowedPhases = new Set(['prime', 'rest']);
+    if (!allowedPhases.has(phase)) return;
+
+    // When NOT running, if the next minute is 'live' and not already staged, prefetch now
+    if (phase !== 'running') {
+      const next = blockIdx + 1;
+      if (schedule[next] === 'live' && !nextLiveBufRef.current) {
+        prefetchLivePairs().catch(() => { /* ignore */ });
+      }
+    }
+  }, [phase, blockIdx, schedule, prefetchLivePairs]);
+  useEffect(() => {
+    endMinuteRef.current = endMinute;
+  }, [endMinute]);
+
+  // minute tick loop
   useEffect(() => {
     if (!isRunning) return;
+    const TICK = Math.round(1000 / C.VISUAL_HZ);
+    const MAX_TICKS = Math.round(C.BLOCK_MS / TICK);
+    const isRetro = schedule[blockIdx] === 'retro';
+    const isLastRetro = isRetro && C.RETRO_USE_TAPE_B_LAST && blockIdx === lastRetroIdx;
 
-    const TRIAL = 1000 / C.VISUAL_HZ;
-    const DMS = 60_000; // keep 60 s blocks; change only if you use 30s blocks
-
-    const isRetro = schedule[minuteIdx] === 'retro';
-    const isLastRetro =
-      isRetro &&
-      C.RETRO_USE_TAPE_B_LAST &&
-      minuteIdx === lastRetroIdx;
-
-    // Guard: live must have a full buffer before we run
-    if (!isRetro) {
+    if (!isRetro && !C.USE_LIVE_STREAM) {
       const ready =
-        Array.isArray(liveBufRef.current?.subj) &&
-        liveBufRef.current.subj.length >= trialsPerMinute &&
-        Array.isArray(liveBufRef.current?.ghost) &&
-        liveBufRef.current.ghost.length >= trialsPerMinute;
-      if (!ready) {
-        endMinuteRef.current();
-        return;
-      }
+        Array.isArray(liveBufRef.current?.subj) && liveBufRef.current.subj.length >= trialsPerMinute &&
+        Array.isArray(liveBufRef.current?.ghost) && liveBufRef.current.ghost.length >= trialsPerMinute;
+      if (!ready) { endMinuteRef.current?.(); return; }
     }
 
-    // Reset timers & index
-    t0Ref.current = performance.now();
-    idxRef.current = 0;
-
-    // Watchdog: if the block exceeds duration by 1.5s, end it
-    if (minuteWatchdogRef.current) {
-      clearTimeout(minuteWatchdogRef.current);
-      minuteWatchdogRef.current = null;
-    }
-    minuteWatchdogRef.current = setTimeout(() => {
-      try {
-        stopRAF();
-      } catch {}
-      endMinuteRef.current();
-    }, DMS + 1500);
-
-    // Source arrays
-    const retroSrc = isRetro
-      ? (isLastRetro ? tapeB?.bits : tapeA?.bits) || []
-      : [];
+    const retroSrc = isRetro ? (isLastRetro ? tapeB?.bits : tapeA?.bits) || [] : [];
     const ghostRetro = isRetro ? tapeGhost?.bits || [] : [];
 
-    const tick = () => {
-      const t = performance.now() - t0Ref.current;
-      if (t >= DMS) {
-        stopRAF();
-        endMinuteRef.current();
+    let i = 0;
+    const start = Date.now();
+    if (tickTimerRef.current) { clearInterval(tickTimerRef.current); tickTimerRef.current = null; }
 
+    tickTimerRef.current = setInterval(() => {
+      const elapsed = Date.now() - start;
+      const hitCap = elapsed >= (C.BLOCK_MS + 5000);
+      if (i >= MAX_TICKS || hitCap) {
+        clearInterval(tickTimerRef.current);
+        tickTimerRef.current = null;
+        endMinuteRef.current?.();
         return;
       }
 
-      const nextIdx = Math.floor(t / TRIAL);
-      while (idxRef.current <= nextIdx) {
-        const i = idxRef.current++;
-        let bit, ghost;
-        if (isRetro) {
-          bit = retroSrc[i % (retroSrc.length || 1)] || 0;
-          ghost = ghostRetro[i % (ghostRetro.length || 1)] || 0;
-        } else {
-          bit = liveBufRef.current.subj[i] ?? 0;
-          ghost = liveBufRef.current.ghost[i] ?? 0;
+      let bit, ghost;
+      if (isRetro) {
+        bit = retroSrc[i % (retroSrc.length || 1)] || 0;
+        ghost = ghostRetro[i % (ghostRetro.length || 1)] || 0;
+      } else if (C.USE_LIVE_STREAM) {
+        const now = performance.now();
+        if (isBuffering) { maybeResume(now); return; }
+        else { maybePause(now); if (isBuffering) return; }
+        const sBit = livePopBit(); const gBit = livePopBit();
+        if (sBit === null || gBit === null) { maybePause(now); return; }
+        bit = sBit === '1' ? 1 : 0; ghost = gBit === '1' ? 1 : 0;
+        if (shouldInvalidate()) {
+          minuteInvalidRef.current = true; invalidReasonRef.current = 'invalidated-buffer';
+          redoCurrentMinuteRef.current = true;
+          clearInterval(tickTimerRef.current); tickTimerRef.current = null;
+          endMinuteRef.current?.(); return;
         }
-
-        // Push to mutable buffers (no React setState here!)
-        bitsRef.current.push(bit);
-        ghostBitsRef.current.push(ghost);
-
-        const align = bit === targetBit ? 1 : 0;
-        const alignGhost = ghost === targetBit ? 1 : 0;
-        alignedRef.current.push(align);
-        hitsRef.current += align;
-        ghostHitsRef.current += alignGhost;
+      } else {
+        bit = liveBufRef.current.subj[i] ?? 0;
+        ghost = liveBufRef.current.ghost[i] ?? 0;
       }
 
-      // Commit once per frame
+      bitsRef.current.push(bit);
+      ghostBitsRef.current.push(ghost);
+      const align = bit === targetBit ? 1 : 0;
+      const alignGhost = ghost === targetBit ? 1 : 0;
+      alignedRef.current.push(align);
+      hitsRef.current += align;
+      ghostHitsRef.current += alignGhost;
+
       setBitsThisMinute([...bitsRef.current]);
       setGhostBitsThisMinute([...ghostBitsRef.current]);
       setAlignedSeries([...alignedRef.current]);
       setHits(hitsRef.current);
       setGhostHits(ghostHitsRef.current);
 
-      rafRef.current = requestAnimationFrame(tick);
-    };
+      i += 1;
+    }, TICK);
 
-    rafRef.current = requestAnimationFrame(tick);
-
-    // Cleanup
-    return () => {
-      stopRAF();
-      if (minuteWatchdogRef.current) {
-        clearTimeout(minuteWatchdogRef.current);
-        minuteWatchdogRef.current = null;
-      }
-    };
+    return () => { if (tickTimerRef.current) { clearInterval(tickTimerRef.current); tickTimerRef.current = null; } };
   }, [
-    isRunning,
-    minuteIdx,
-    tapeA,
-    tapeB,
-    tapeGhost,
-    schedule,
-    targetBit,
-    lastRetroIdx,
-    trialsPerMinute,
+    isRunning, blockIdx, schedule, trialsPerMinute, targetBit,
+    tapeA, tapeB, tapeGhost, lastRetroIdx,
+    isBuffering, livePopBit, maybePause, maybeResume, shouldInvalidate,
   ]);
 
-  useEffect(() => {
-    const next = minuteIdx + 1;
-    const willBeLive = schedule[next] === 'live';
-    // When NOT running (onboarding/prime/rest), if next is live and not staged, prefetch now
-    if (
-      phase !== 'running' &&
-      willBeLive &&
-      !nextLiveBufRef.current
-    ) {
-      prefetchLivePairs().catch(() => {
-        // ignore; startNextMinute will still fetch (with fallback) if needed
-      });
+
+  // Prepare next block (warmup / load buffers)
+  const ensureNextBlockReady = useCallback(async (nextIdx) => {
+    const kindNext = schedule[nextIdx];
+
+    if (kindNext === 'live') {
+      // STREAMING: warm up buffer, no prefetch
+      if (C.USE_LIVE_STREAM) {
+        if (!liveConnected) { liveConnect(); }
+        const t0 = Date.now();
+        while (Date.now() - t0 < WARMUP_TIMEOUT_MS &&
+          liveBufferedBits() < WARMUP_BITS_START) {
+          await new Promise((r) => setTimeout(r, 50));
+        }
+        resetLivePauseCounters();
+        return;
+      }
+
+      // NON-STREAM (prefetch model)
+      if (!nextLiveBufRef.current) { await prefetchLivePairs(); }
+      if (nextLiveBufRef.current) {
+        liveBufRef.current = nextLiveBufRef.current;
+        nextLiveBufRef.current = null;
+      } else {
+        // last-resort local
+        liveBufRef.current = localPairs(Math.round((C.BLOCK_MS / 1000) * C.VISUAL_HZ));
+      }
+      return;
     }
-  }, [phase, minuteIdx, schedule, prefetchLivePairs]);
+
+    // === RETRO checks === (unchanged; only runs after you click "Create session tapes")
+    const isLastRetro = C.RETRO_USE_TAPE_B_LAST && nextIdx === lastRetroIdx;
+    const srcBits = isLastRetro ? tapeB?.bits : tapeA?.bits;
+    const ghostBits = tapeGhost?.bits;
+
+    if (!srcBits || !srcBits.length || !ghostBits || !ghostBits.length) {
+      throw new Error('tape-not-ready: missing A/B or GHOST bits');
+    }
+    // Auto-create a silent redundancy audit record (no participant UI)
+    if (!redundancyRef.current) {
+      const commitPayload = {
+        H_tape: isLastRetro ? tapeB?.H_tape : tapeA?.H_tape,
+        H_commit: isLastRetro ? tapeB?.H_commit : tapeA?.H_commit,
+        lenBits: C.RETRO_TAPE_BITS,
+        createdISO: isLastRetro ? tapeB?.createdISO : tapeA?.createdISO,
+      };
+      redundancyRef.current = {
+        tier: redundancyPlan[retroOrdinalRef.current] || 'R0',
+        method: 'auto_silent',
+        at: new Date().toISOString(),
+        commitPayload,
+      };
+    }
+
+  }, [
+    schedule,
+    // streaming deps
+    liveConnected, liveConnect, liveBufferedBits, resetLivePauseCounters,
+    // prefetch model deps
+    prefetchLivePairs,
+    // retro deps
+    tapeA, tapeB, tapeGhost, lastRetroIdx,
+    redundancyPlan
+  ]);
 
   async function startNextMinute() {
-    const next = minuteIdx + 1;
+    const redo = redoCurrentMinuteRef.current;
+    const next = redo ? blockIdx : (blockIdx + 1);
+    if (redo) {
+      redoCurrentMinuteRef.current = false;
+      minuteInvalidRef.current = false;
+      invalidReasonRef.current = '';
+      resetLivePauseCounters();
+    }
 
-    // Show "preparing…" and block until ready
-    setPreparingNext(true);
     await ensureNextBlockReady(next);
-    setPreparingNext(false);
 
-    // Now flip to flashing UI and start
     setPhase('running');
-    setMinuteIdx(next);
+    setblockIdx(next);
 
-    if (schedule[next] === 'retro') retroPassRef.current += 1;
+    if (schedule[next] === 'retro') {
+      retroOrdinalRef.current = Math.min(retroOrdinalRef.current + 1, redundancyPlan.length);
+      retroPassRef.current += 1;
+    }
 
-    // Reset per-block accumulators
-    setBitsThisMinute([]);
-    setGhostBitsThisMinute([]);
-    setAlignedSeries([]);
-    setHits(0);
-    setGhostHits(0);
-    // Reset the mutable buffers too
-    bitsRef.current = [];
-    ghostBitsRef.current = [];
-    alignedRef.current = [];
-    hitsRef.current = 0;
-    ghostHitsRef.current = 0;
+    setBitsThisMinute([]); setGhostBitsThisMinute([]);
+    setAlignedSeries([]); setHits(0); setGhostHits(0);
+    bitsRef.current = []; ghostBitsRef.current = []; alignedRef.current = [];
+    hitsRef.current = 0; ghostHitsRef.current = 0;
 
     setIsRunning(true);
   }
 
-  async function endMinute() {
-    setIsRunning(false);
-    await persistMinute();
-    if (minuteIdx + 1 >= C.MINUTES_TOTAL) setPhase('done');
-    else setPhase('rest');
-  }
+  // Exit → persist + mark ended_by
+  const userExitRef = useRef(false);
+  const handleExitNow = useCallback(async () => {
+    userExitRef.current = true;
+    try {
+      if (C.USE_LIVE_STREAM && schedule[blockIdx] === 'live') {
+        liveDisconnect();
+      }
+      if (isRunning) {
+        setIsRunning(false);
+        await persistMinute();
+        if (runRef) {
+          const mdoc = doc(runRef, 'minutes', String(blockIdx));
+          await setDoc(mdoc, { ended_by: 'user_exit' }, { merge: true });
+        }
+      }
+    } finally {
+      setPhase('summary');
+    }
+  }, [blockIdx, isRunning, liveDisconnect, schedule, persistMinute, runRef]);
 
-  async function persistMinute() {
-    if (!runRef) return;
-    const n = alignedSeries.length;
-    const k = hits;
-    const kg = ghostHits;
-    const z = zFromBinom(k, n, 0.5);
-    const pTwo = twoSidedP(z);
-    const zg = zFromBinom(kg, n, 0.5);
-    const pg = twoSidedP(zg);
-    const cohRange = cumulativeRange(bitsThisMinute);
-    const hurst = hurstApprox(bitsThisMinute);
-    const ac1 = lag1Autocorr(bitsThisMinute);
-    const gCohRange = cumulativeRange(ghostBitsThisMinute);
-    const gHurst = hurstApprox(ghostBitsThisMinute);
-    const gAc1 = lag1Autocorr(ghostBitsThisMinute);
-    const kind = schedule[minuteIdx];
-    const isLastRetro =
-      kind === 'retro' &&
-      C.RETRO_USE_TAPE_B_LAST &&
-      minuteIdx === lastRetroIdx;
-    const mdoc = doc(runRef, 'minutes', String(minuteIdx));
-
-    await setDoc(
-      mdoc,
-      {
-        idx: minuteIdx,
-        kind,
-        startedAt: serverTimestamp(),
-        n,
-        hits: k,
-        z,
-        pTwo,
-        ghost_hits: kg,
-        ghost_z: zg,
-        ghost_pTwo: pg,
-        target: target,
-        prime_condition: primeCond,
-
-        // record the tape actually used this minute (A by default; B only on last retro)
-        tape_meta:
-          kind === 'retro'
-            ? isLastRetro
-              ? {
-                  H_tape: tapeB?.H_tape,
-                  H_commit: tapeB?.H_commit,
-                  tapeId: tapeB?.tapeId,
-                }
-              : {
-                  H_tape: tapeA?.H_tape,
-                  H_commit: tapeA?.H_commit,
-                  tapeId: tapeA?.tapeId,
-                }
-            : null,
-
-        coherence: { cumRange: cohRange, hurst },
-        resonance: { ac1 },
-
-        // include ghost coherence/resonance so ESLint doesn't flag ghostBits as unused
-        ghost_metrics: {
-          coherence: { cumRange: gCohRange, hurst: gHurst },
-          resonance: { ac1: gAc1 },
-        },
-
-        // single replay object (no duplicate key)
-        replay:
-          kind === 'retro'
-            ? {
-                passIndex: retroPassRef.current,
-                tape: isLastRetro ? 'B' : 'A',
-              }
-            : null,
-      },
-      { merge: true }
-    );
-  }
-
-  // flow
-  if (!userReady || !target)
-    return <div style={{ padding: 24 }}>Loading…</div>;
-
-  if (phase === 'onboarding') {
+  // ===== flow gates =====
+  if (!userReady || !target || !checkedReturning) {
     return (
-      <div style={{ padding: 24, maxWidth: 760 }}>
-        <h1>PK / Retro-PK — Pilot</h1>
-        <p>
-          <strong>Your target:</strong>{' '}
-          {target === 'RED' ? '🟥 RED' : '🟩 GREEN'}. Keep this target
-          the entire session.
-        </p>
-        <ul>
-          <li>
-            You’ll complete a series of short blocks with brief
-            breathers.
-          </li>
-
-          <li>
-            7 Hz flashes; the small meter shows short-term average;
-            nudge it toward your target.
-          </li>
-        </ul>
-        <div
-          style={{
-            display: 'flex',
-            gap: 8,
-            alignItems: 'center',
-            flexWrap: 'wrap',
-          }}
-        >
-          <button
-            disabled={busyTape}
-            onClick={prepareSessionArtifacts}
-          >
-            {busyTape ? 'Creating tapes…' : 'Create session tapes'}
-          </button>
-          {tapeA && (
-            <div style={{ fontSize: 12, opacity: 0.8 }}>
-              {/* TapeA H_tape={tapeA.H_tape.slice(0, 10)}… H_commit=
-              {tapeA.H_commit.slice(0, 10)}… */}
-              Tapes ready ✓
-            </div>
-          )}
-        </div>
-        <div style={{ marginTop: 12 }}>
-          <button
-            disabled={!tapeA}
-            onClick={async () => {
-              await ensureRunDoc();
-              setPhase('prime');
-            }}
-          >
-            Continue
-          </button>
-        </div>
+      <div style={{ padding: 24 }}>
+        Loading…
+        <ExitDoorButton onClick={handleExitNow} />
       </div>
     );
   }
 
+  // CONSENT
+  if (phase === 'consent') {
+    return (
+      <div style={{ position: 'relative' }}>
+        <ConsentGate
+          title="Consent to Participate"
+          bullets={[
+            'This task involves short visual blocks and brief breaks.',
+            'You may stop at any time without penalty.',
+            'No personally identifying data is required.',
+            'We collect anonymous performance metrics for research.',
+          ]}
+          onAgree={() => setPhase(preDone ? 'onboarding' : 'preQ')}
+        />
+        <ExitDoorButton onClick={handleExitNow} />
+      </div>
+    );
+  }
+
+  // PRE QUESTIONS (required, highlights missing in red via QuestionsForm)
+  if (phase === 'preQ') {
+    return (
+      <div style={{ position: 'relative' }}>
+        <QuestionsForm
+          title="Before you begin"
+          questions={preQuestions}
+          requiredAll
+          onSubmit={async (answers, { valid }) => {
+            if (!valid) return;
+            setPhase('onboarding');
+            try {
+              const ref = await ensureRunDoc();
+              await setDoc(ref, { pre_survey: answers, pre_survey_done: true }, { merge: true });
+              const uidNow = await requireUid();
+              if (typeof localStorage !== 'undefined') {
+                localStorage.setItem(`pre_done:${C.EXPERIMENT_ID}:${uidNow}`, '1');
+                localStorage.setItem(`pre_done_global:${C.EXPERIMENT_ID}`, '1');
+              }
+              setPreDone(true);
+            } catch (e) {
+              console.warn('Pre survey save error (non-blocking):', e);
+            }
+          }}
+        />
+        <ExitDoorButton onClick={handleExitNow} />
+      </div>
+    );
+  }
+
+  // ONBOARDING
+  if (phase === 'onboarding') {
+    const canContinue = !!tapeA && tapesReady && !busyTape;
+    return (
+      <div style={{ padding: 24, maxWidth: 760, position: 'relative' }}>
+        <h1>PK / Retro-PK — Pilot</h1>
+        <p><strong>Your target:</strong> {target === 'RED' ? '🟥 RED' : '🟩 GREEN'}. Keep this target the entire session.</p>
+        <ul>
+          <li>You’ll complete short blocks with breaks. Nudge the color toward your target.</li>
+          <li>{C.VISUAL_HZ} Hz flashes; the small meter shows the short-term average.</li>
+          {debugUI && (
+            <li style={{ opacity: 0.8 }}>{POLICY_TEXT.warmup}; {POLICY_TEXT.pause}; {POLICY_TEXT.resume}</li>
+          )}
+        </ul>
+
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button
+            disabled={busyTape || tapesReady}
+            onClick={prepareSessionArtifacts}
+            style={{
+              opacity: (busyTape || tapesReady) ? 0.6 : 1,
+              cursor: (busyTape || tapesReady) ? 'not-allowed' : 'pointer',
+            }}
+          >
+            {busyTape ? 'Creating tapes…' : (tapesReady ? 'Tapes ready ✓' : 'Create session tapes')}
+          </button>
+        </div>
+
+        <div style={{ marginTop: 12 }}>
+          <button
+            className="primary-btn"
+            disabled={!canContinue}
+            onClick={async () => { await ensureRunDoc(); setPhase('prime'); }}
+            style={{
+              padding: '10px 16px',
+              borderRadius: 8,
+              border: '1px solid #999',
+              background: canContinue ? '#1a8f1a' : '#ccc',
+              color: canContinue ? '#fff' : '#444',
+              cursor: canContinue ? 'pointer' : 'not-allowed',
+              transition: 'background 150ms ease'
+            }}
+          >
+            {canContinue ? 'Continue' : (busyTape ? 'Creating tapes…' : 'Continue (tapes required)')}
+          </button>
+        </div>
+
+        <ExitDoorButton onClick={handleExitNow} />
+      </div>
+    );
+  }
+
+  // PRIME
   if (phase === 'prime') {
     return (
-      <div style={{ padding: 24 }}>
+      <div style={{ padding: 24, position: 'relative' }}>
         <h2>{primeCond === 'prime' ? 'Priming' : 'Neutral'}</h2>
-        <div
-          style={{
-            height: 220,
-            border: '1px solid #ddd',
-            padding: 16,
-            borderRadius: 12,
-          }}
-        >
+        <div style={{ height: 220, border: '1px solid #ddd', padding: 16, borderRadius: 12 }}>
           {primeCond === 'prime' ? (
             <ul>
               <li>“Think like a physicist.” — John A. Wheeler</li>
-              <li>
-                Schmidt/Rhine explored mind–matter effects seriously.
-              </li>
-              <li>
-                Breathe and steer gently; playful nudge, not force.
-              </li>
+              <li>Schmidt/Rhine explored mind–matter effects seriously.</li>
+              <li>Breathe and steer gently; playful nudge, not force.</li>
             </ul>
           ) : (
             <ul>
-              <li>
-                Fun fact: mantis shrimp can see polarized light.
-              </li>
+              <li>Fun fact: mantis shrimp can see polarized light.</li>
               <li>Paper beats rock 54% after a loss (bias study).</li>
               <li>We’ll begin shortly.</li>
             </ul>
           )}
         </div>
-        <AutoAdvance
-          seconds={38}
-          onDone={() => {
-            startNextMinute();
-          }}
-        />
         <div style={{ marginTop: 8 }}>
-          <button
-            onClick={() => {
-              startNextMinute();
-            }}
-          >
-            Start now
-          </button>
+          <button onClick={() => startNextMinute()}>Start now</button>
         </div>
+        <ExitDoorButton onClick={handleExitNow} />
       </div>
     );
   }
 
+  // REST (manual Continue; participant score only; RedundancyGate for retro)
   if (phase === 'rest') {
-    const nextIdx = minuteIdx + 1;
-    const nextKind = schedule[nextIdx];
-    const nextIsLastRetro =
-      nextKind === 'retro' &&
-      C.RETRO_USE_TAPE_B_LAST &&
-      nextIdx === lastRetroIdx;
+    const next = redoCurrentMinuteRef.current ? blockIdx : (blockIdx + 1);
+    const nextKind = schedule[next];
+    const nextIsLastRetro = nextKind === 'retro' && C.RETRO_USE_TAPE_B_LAST && next === lastRetroIdx;
+
+    const pctLast = lastBlock && lastBlock.n ? Math.round((100 * lastBlock.k) / lastBlock.n) : 0;
+    const trialsPlanned = trialsPerBlock;
+
+    // We’re bypassing participant UI, but still auditing silently.
+
+    const redundancyReady = true;
 
     return (
-      <div style={{ padding: 24, textAlign: 'center' }}>
+      <div style={{ padding: 24, textAlign: 'center', position: 'relative' }}>
         <p>Take a short breather…</p>
         <p>
-          Next block starting soon
-          {debugUI && (
-            <>
-              {': '}
-              <strong>
-                {nextKind === 'live'
-                  ? 'Live'
-                  : `Retro (Tape ${nextIsLastRetro ? 'B' : 'A'})`}
-              </strong>
-            </>
+          Next block:{' '}
+          <strong>{nextKind === 'live' ? 'Live' : `Retro (Tape ${nextIsLastRetro ? 'B' : 'A'})`}</strong>
+          {nextKind === 'live' && redoCurrentMinuteRef.current && (
+            <span style={{ marginLeft: 6, color: '#b00' }}>(redo due to buffering)</span>
           )}
         </p>
-        {preparingNext && (
-          <div style={{ marginTop: 8, fontSize: 12, opacity: 0.8 }}>
-            Preparing next block…
+
+        {/* Participant score (no ghost) */}
+        {lastBlock && lastBlock.n > 0 && (
+          <div
+            style={{
+              display: 'inline-block',
+              padding: '8px 12px',
+              borderRadius: 8,
+              border: '1px solid #ddd',
+              background: '#f7f7f7',
+              marginBottom: 8,
+              fontWeight: 600
+            }}
+          >
+            Last block: {pctLast}% ({lastBlock.k}/{lastBlock.n}) · {nextKind === 'live' ? 'Live' : 'Retro'}
           </div>
         )}
 
-        <AutoAdvance
-          seconds={C.REST_MS / 1000}
-          onDone={() => {
-            startNextMinute();
-          }}
+        {/* Optional totals board (ghost hidden if your component supports) */}
+        <BlockScoreboard
+          last={lastBlock || { k: hits, n: alignedSeries.length, z: 0, pTwo: 1, kg: 0, ng: 0, zg: 0, pg: 1, kind: nextKind }}
+          totals={totals}
+          targetSide={target}
         />
+
+        {/* === AUDIT TRAIL: redundancy gate for retro minutes === */}
+        {/* {nextKind === 'retro' && (
+          <div style={{ maxWidth: 760, margin: "12px auto" }}>
+            <RedundancyGate
+              tier={redundancyPlan[retroOrdinalRef.current] || "R0"}
+              commitPayload={{
+                H_tape: nextIsLastRetro ? tapeB?.H_tape : tapeA?.H_tape,
+                H_commit: nextIsLastRetro ? tapeB?.H_commit : tapeA?.H_commit,
+                lenBits: C.RETRO_TAPE_BITS,
+                createdISO: nextIsLastRetro ? tapeB?.createdISO : tapeA?.createdISO
+              }}
+              onDone={(info) => { redundancyRef.current = info; }}
+            />
+          </div>
+        )} */}
+
+        <div style={{ marginTop: 12 }}>
+          <button
+            onClick={() => startNextMinute()}
+            disabled={!redundancyReady}
+            style={{
+              padding: '10px 16px',
+              borderRadius: 8,
+              border: '1px solid #999',
+              background: redundancyReady ? '#1a8f1a' : '#ccc',
+              color: redundancyReady ? '#fff' : '#444',
+              cursor: redundancyReady ? 'pointer' : 'not-allowed',
+              transition: 'background 150ms ease'
+            }}
+          >
+            {redundancyReady ? 'Continue' : 'Complete check above…'}
+          </button>
+          <div style={{ fontSize: 12, opacity: 0.75, marginTop: 8 }}>
+            Planned trials per block: {trialsPlanned} (set via config)
+          </div>
+        </div>
+
+        <ExitDoorButton onClick={handleExitNow} />
       </div>
     );
   }
 
+  // RUNNING
   if (phase === 'running') {
-    const isLive = schedule[minuteIdx] === 'live';
+    const isLive = schedule[blockIdx] === 'live';
+    const trialsPlanned = trialsPerBlock;
+
     return (
       <div
         style={{
@@ -919,37 +985,65 @@ export default function MainApp() {
           display: 'grid',
           placeItems: 'center',
           background: '#000',
+          position: 'relative'
         }}
       >
-        <FlashPanel
+        {isLive && isBuffering && (
+          <div
+            style={{
+              position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)',
+              color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 24, zIndex: 10
+            }}
+            aria-live="polite"
+          >
+            buffering… (keeping timing)
+          </div>
+        )}
+
+        <MappingDisplay
+          key={`block-${blockIdx}`}
+          mapping={mappingType}
           bit={bitsThisMinute[bitsThisMinute.length - 1] ?? 0}
-          lowContrast={lowContrast}
-          patterns={patternsMode}
+          targetBit={targetBit}
+          segments={trialsPlanned}
+          onFrameDelta={(f) => {
+            const m = microEntropyRef.current;
+            m.sum += Math.max(0, Math.min(1, f));
+            m.count += 1;
+          }}
         />
+
         <div
           style={{
             position: 'fixed',
-            left: 16,
-            top: 16,
+            left: 16, top: 16,
             background: '#fff',
             padding: '8px 12px',
             borderRadius: 8,
           }}
         >
           <div>
-            Minute {minuteIdx + 1}/{C.MINUTES_TOTAL}
+            Block {blockIdx + 1}/{C.BLOCKS_TOTAL}
             {debugUI && (
               <>
                 {' — '}
                 <strong>{isLive ? 'Live' : 'Retro'}</strong>
-                {isLive &&
-                  liveBufRef.current?.source &&
-                  liveBufRef.current?.subj && (
-                    <span style={{ marginLeft: 6, opacity: 0.7 }}>
-                      [{liveBufRef.current.source} ·{' '}
-                      {liveBufRef.current.subj.length}]
-                    </span>
-                  )}
+                {!isLive && (
+                  <span style={{ marginLeft: 6, opacity: 0.7 }}>
+                    (tape {C.RETRO_USE_TAPE_B_LAST && blockIdx === lastRetroIdx ? 'B' : 'A'})
+                  </span>
+                )}
+                {isLive && !C.USE_LIVE_STREAM && liveBufRef.current?.source && (
+                  <span style={{ marginLeft: 6, opacity: 0.7 }}>
+                    [{liveBufRef.current.source} · {liveBufRef.current?.subj?.length || 0}]
+                  </span>
+                )}
+                {isLive && C.USE_LIVE_STREAM && (
+                  <span style={{ marginLeft: 6, opacity: 0.7 }}>
+                    [live src: {liveLastSource || '—'} · buf {liveBufferedBits()}]
+                  </span>
+                )}
               </>
             )}
             {' — '}Target: {target === 'RED' ? '🟥' : '🟩'}
@@ -959,9 +1053,7 @@ export default function MainApp() {
             const n = alignedSeries.length;
             const k = hits;
             const minuteVal = n ? k / n : 0.5;
-            const trialsPlanned = Math.round(60 * C.VISUAL_HZ);
             const toward = targetBit === 1 ? 'RED' : 'GREEN';
-
             return (
               <>
                 <CircularGauge
@@ -970,71 +1062,87 @@ export default function MainApp() {
                   label={`Toward ${toward}`}
                   subLabel={`This minute average`}
                 />
-                <div
-                  style={{ fontSize: 12, opacity: 0.8, marginTop: 6 }}
-                >
-                  Trial {n}/{trialsPlanned} · This minute:{' '}
-                  <strong>{Math.round(minuteVal * 100)}%</strong>
+                <div style={{ fontSize: 12, opacity: 0.8, marginTop: 6 }}>
+                  Trial {n}/{trialsPlanned} · This minute: <strong>{Math.round(minuteVal * 100)}%</strong>
                 </div>
-                {!isLive && (
-                  <div
-                    style={{
-                      fontSize: 12,
-                      opacity: 0.7,
-                      marginTop: 4,
-                    }}
-                  >
-                    Tape A pos{' '}
-                    {(alignedSeries.length % C.RETRO_TAPE_BITS) + 1}/
-                    {C.RETRO_TAPE_BITS}
-                  </div>
-                )}
               </>
             );
           })()}
 
-          <div
-            style={{
-              marginTop: 6,
-              display: 'flex',
-              gap: 8,
-              alignItems: 'center',
-            }}
-          >
-            <label>
-              <input
-                type="checkbox"
-                checked={lowContrast}
-                onChange={(e) => setLowContrast(e.target.checked)}
-              />{' '}
-              Low-contrast
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={patternsMode}
-                onChange={(e) => setPatternsMode(e.target.checked)}
-              />{' '}
-              Patterns
-            </label>
-          </div>
+          {debugUI && (
+            <div style={{ marginTop: 6, display: 'flex', gap: 8, alignItems: 'center' }}>
+              <label>
+                <input type="checkbox" checked={lowContrast} onChange={(e) => setLowContrast(e.target.checked)} /> Low-contrast
+              </label>
+              <label>
+                <input type="checkbox" checked={patternsMode} onChange={(e) => setPatternsMode(e.target.checked)} /> Patterns
+              </label>
+            </div>
+          )}
         </div>
+
+        <ExitDoorButton onClick={handleExitNow} />
       </div>
     );
   }
 
+  // POST QUESTIONS
   if (phase === 'done') {
     return (
-      <div style={{ padding: 24 }}>
-        <h2>All done — thank you!</h2>
-        <p>
-          Run ID: <code>{runRef?.id}</code>
-        </p>
-        <p>
-          We recorded Live vs Retro minutes, ghost channel, and the
-          tape commitment.
-        </p>
+      <div style={{ position: 'relative' }}>
+        <QuestionsForm
+          title="Quick wrap-up"
+          questions={postQuestions}
+          requiredAll
+          onSubmit={async (answers, { valid }) => {
+            if (!valid) return;
+            setPhase('summary');
+            try {
+              if (runRef) await setDoc(runRef, { post_survey: answers }, { merge: true });
+            } catch (e) {
+              console.warn('Post survey save error (non-blocking):', e);
+            }
+          }}
+        />
+        <ExitDoorButton onClick={handleExitNow} />
       </div>
+    );
+  }
+
+  // SUMMARY + exp2-style email gate
+  if (phase === 'summary') {
+    const finalPct = totals.n ? Math.round((100 * totals.k) / totals.n) : 0;
+
+    return (
+      <>
+        <HighScoreEmailGate
+          experiment="exp3"
+          step="done"
+          sessionId={runRef?.id}
+          participantId={uid}
+          finalPercent={finalPct}
+          cutoffOverride={C.FINALIST_MIN_PCT /* e.g., 55 */}
+        />
+
+        <div style={{ padding: 24 }}>
+          <div
+            style={{
+              display: 'inline-block',
+              padding: '10px 14px',
+              borderRadius: 10,
+              border: '1px solid #ddd',
+              background: '#eef8ee',
+              marginBottom: 12,
+              fontWeight: 700
+            }}
+          >
+            Total: {finalPct}% ({totals.k}/{totals.n})
+          </div>
+        </div>
+
+        <SessionSummary totals={totals} blocks={blocks} />
+        <ExitDoorButton onClick={handleExitNow} />
+      </>
     );
   }
 

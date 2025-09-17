@@ -1,0 +1,239 @@
+const MainResultsSummary = ({ reportPRNG, reportQRNG, reportCL }) => {
+  if (!reportPRNG || !reportQRNG || !reportCL) return null;
+
+  const getStatus = (report) => {
+    const pValue = report.tests.primaryVsChance.p;
+    const rate = report.totals.pctPrimary;
+    
+    if (pValue < 0.05 && rate > 20) return { icon: '✓', color: '#22c55e', text: 'Significant' };
+    if (pValue < 0.05 && rate < 20) return { icon: '✗', color: '#ef4444', text: 'Significant Below' };
+    return { icon: '⚪', color: '#eab308', text: 'Not significant' };
+  };
+
+  const physicalStatus = getStatus(reportPRNG);
+  const quantumStatus = getStatus(reportQRNG);
+  const localStatus = getStatus(reportCL);
+
+  const bestPerformance = [
+    { name: 'Physical', rate: reportPRNG.totals.pctPrimary, significant: physicalStatus.icon === '✓' },
+    { name: 'Quantum', rate: reportQRNG.totals.pctPrimary, significant: quantumStatus.icon === '✓' },
+    { name: 'Local', rate: reportCL.totals.pctPrimary, significant: localStatus.icon === '✓' }
+  ].reduce((best, current) => current.rate > best.rate ? current : best);
+
+  const totalTrials = reportPRNG.totals.trials + reportQRNG.totals.trials + reportCL.totals.trials;
+
+  return (
+    <div style={{ 
+      marginTop: 16, 
+      padding: '16px 20px', 
+      border: '2px solid #e5e7eb', 
+      borderRadius: 12, 
+      background: '#f9fafb',
+      marginBottom: 24 
+    }}>
+      <h2 style={{ margin: '0 0 16px 0', fontSize: 24, color: '#1f2937' }}>
+        🎯 EXPERIMENT RESULTS SUMMARY
+      </h2>
+      
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16, marginBottom: 16 }}>
+        <div style={{ 
+          padding: 12, 
+          border: '1px solid #d1d5db', 
+          borderRadius: 8, 
+          background: '#fff',
+          textAlign: 'center' 
+        }}>
+          <div style={{ fontSize: 14, color: '#6b7280', marginBottom: 4 }}>Physical RNG</div>
+          <div style={{ fontSize: 20, fontWeight: 'bold', color: physicalStatus.color }}>
+            {physicalStatus.icon} {(reportPRNG.totals.pctPrimary).toFixed(1)}%
+          </div>
+          <div style={{ fontSize: 12, color: '#6b7280' }}>
+            vs 20% chance (p={(reportPRNG.tests.primaryVsChance.p).toFixed(3)})
+          </div>
+        </div>
+
+        <div style={{ 
+          padding: 12, 
+          border: '1px solid #d1d5db', 
+          borderRadius: 8, 
+          background: '#fff',
+          textAlign: 'center' 
+        }}>
+          <div style={{ fontSize: 14, color: '#6b7280', marginBottom: 4 }}>Quantum RNG</div>
+          <div style={{ fontSize: 20, fontWeight: 'bold', color: quantumStatus.color }}>
+            {quantumStatus.icon} {(reportQRNG.totals.pctPrimary).toFixed(1)}%
+          </div>
+          <div style={{ fontSize: 12, color: '#6b7280' }}>
+            vs 20% chance (p={(reportQRNG.tests.primaryVsChance.p).toFixed(3)})
+          </div>
+        </div>
+
+        <div style={{ 
+          padding: 12, 
+          border: '1px solid #d1d5db', 
+          borderRadius: 8, 
+          background: '#fff',
+          textAlign: 'center' 
+        }}>
+          <div style={{ fontSize: 14, color: '#6b7280', marginBottom: 4 }}>Local RNG</div>
+          <div style={{ fontSize: 20, fontWeight: 'bold', color: localStatus.color }}>
+            {localStatus.icon} {(reportCL.totals.pctPrimary).toFixed(1)}%
+          </div>
+          <div style={{ fontSize: 12, color: '#6b7280' }}>
+            vs 20% chance (p={(reportCL.tests.primaryVsChance.p).toFixed(3)})
+          </div>
+        </div>
+      </div>
+
+      <div style={{ 
+        display: 'flex', 
+        justifyContent: 'space-between', 
+        alignItems: 'center',
+        padding: '12px 16px',
+        background: '#e0f2fe',
+        borderRadius: 8,
+        border: '1px solid #0891b2'
+      }}>
+        <div>
+          <strong>📊 BEST PERFORMANCE:</strong> {bestPerformance.name} RNG 
+          (+{(bestPerformance.rate - 20).toFixed(1)}% above chance)
+        </div>
+        <div>
+          <strong>🔬 TOTAL TRIALS:</strong> {totalTrials.toLocaleString()}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// RNG Validation Summary Component
+const RNGValidationSummary = ({ reportPRNG, reportQRNG, reportCL }) => {
+  const getValidationStatus = (report) => {
+    if (!report || !report.totals || !report.tests) {
+      return { icon: '⏳', status: 'No data available', color: '#6b7280' };
+    }
+
+    const demonRate = report.totals.pctGhost;
+    const demonP = report.tests.rngBiasGhost.p;
+
+    if (demonP < 0.05 && demonRate > 25) return { icon: '⚠️', status: 'WARNING: Demon unusually high', color: '#f59e0b' };
+    if (demonP < 0.05 && demonRate < 15) return { icon: '⚠️', status: 'WARNING: Demon unusually low', color: '#f59e0b' };
+    return { icon: '✓', status: 'RNG functioning normally', color: '#22c55e' };
+  };
+
+  const physicalStatus = getValidationStatus(reportPRNG);
+  const quantumStatus = getValidationStatus(reportQRNG);
+  const localStatus = getValidationStatus(reportCL);
+
+  const redFlags = [];
+  if (physicalStatus.icon === '⚠️') redFlags.push(`Physical: ${physicalStatus.status}`);
+  if (quantumStatus.icon === '⚠️') redFlags.push(`Quantum: ${quantumStatus.status}`);
+  if (localStatus.icon === '⚠️') redFlags.push(`Local: ${localStatus.status}`);
+
+  return (
+    <div style={{ marginTop: 16, marginBottom: 16 }}>
+      <h3 style={{ margin: '0 0 12px 0', fontSize: 18 }}>🔧 RNG SOURCE VALIDATION</h3>
+      
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 12 }}>
+        <div style={{ 
+          padding: 10, 
+          border: `1px solid ${physicalStatus.color}`, 
+          borderRadius: 6, 
+          background: '#fff' 
+        }}>
+          <div style={{ fontSize: 12, color: '#6b7280' }}>Physical RNG</div>
+          <div style={{ fontSize: 14, color: physicalStatus.color }}>
+            {physicalStatus.icon} Control: {reportPRNG?.totals?.pctGhost?.toFixed(1) ?? 'N/A'}%
+          </div>
+        </div>
+
+        <div style={{ 
+          padding: 10, 
+          border: `1px solid ${quantumStatus.color}`, 
+          borderRadius: 6, 
+          background: '#fff' 
+        }}>
+          <div style={{ fontSize: 12, color: '#6b7280' }}>Quantum RNG</div>
+          <div style={{ fontSize: 14, color: quantumStatus.color }}>
+            {quantumStatus.icon} Control: {reportQRNG?.totals?.pctGhost?.toFixed(1) ?? 'N/A'}%
+          </div>
+        </div>
+
+        <div style={{ 
+          padding: 10, 
+          border: `1px solid ${localStatus.color}`, 
+          borderRadius: 6, 
+          background: '#fff' 
+        }}>
+          <div style={{ fontSize: 12, color: '#6b7280' }}>Local RNG</div>
+          <div style={{ fontSize: 14, color: localStatus.color }}>
+            {localStatus.icon} Control: {reportCL?.totals?.pctGhost?.toFixed(1) ?? 'N/A'}%
+          </div>
+        </div>
+      </div>
+
+      {redFlags.length > 0 && (
+        <div style={{ 
+          padding: '8px 12px', 
+          background: '#fef3c7', 
+          border: '1px solid #f59e0b',
+          borderRadius: 6,
+          marginBottom: 8
+        }}>
+          <strong>⚠️ RED FLAGS DETECTED:</strong>
+          <ul style={{ margin: '4px 0 0 16px', padding: 0 }}>
+            {redFlags.map((flag, i) => <li key={i}>{flag}</li>)}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Metric Explanations Component
+const MetricExplanations = () => (
+  <details style={{ marginTop: 8, marginBottom: 16 }}>
+    <summary style={{ cursor: 'pointer', fontWeight: 'bold' }}>
+      📖 What Each Metric Means
+    </summary>
+    <div style={{ marginTop: 8, padding: 12, background: '#f9fafb', borderRadius: 6 }}>
+      <div style={{ display: 'grid', gap: 8 }}>
+        <div>
+          <strong>Hit Rate:</strong> % of correct guesses (expecting 20% by chance in 5-choice task)
+        </div>
+        <div>
+          <strong>P-value vs chance:</strong> Probability this result happened by luck (want &lt;0.05 for significance)
+        </div>
+        <div>
+          <strong>P-value vs control:</strong> Whether subject beat the control condition significantly
+        </div>
+        <div>
+          <strong>Control performance:</strong> How the "demon" (random baseline) performed - should be ~20%
+        </div>
+        <div>
+          <strong>Position bias:</strong> Whether certain card positions are picked more often than others
+        </div>
+        <div>
+          <strong>Streakiness:</strong> Whether hits/misses cluster together unnaturally
+        </div>
+      </div>
+      
+      <div style={{ marginTop: 12, padding: 8, background: '#fee2e2', borderRadius: 4 }}>
+        <strong>🚨 Red Flags to Watch For:</strong>
+        <ul style={{ margin: '4px 0 0 16px', fontSize: 14 }}>
+          <li>Control performing much better or worse than 20%</li>
+          <li>Extreme position bias (&gt;40% in any position)</li>
+          <li>Very long streaks of hits/misses</li>
+          <li>P-values that flip dramatically with small data changes</li>
+        </ul>
+      </div>
+    </div>
+  </details>
+);
+
+/* ---------------------- COMPONENT ---------------------- */
+export default function QAExport() {
+  const [rows, setRows] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [reportPRNG, setReportPRNG] = useState(null); // full_stack (Physical)
+  const [reportQRNG, setReportQRNG] = useState(null); // spoon_love (Quantum)

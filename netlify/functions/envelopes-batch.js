@@ -153,37 +153,21 @@ const LFDR_TIMEOUT_MS = 1200;
 
 async function qrngRace(n) {
   const canOutshift = !!process.env.QRNG_OUTSHIFT_API_KEY;
-  const racers = [];
 
+  // Use sequential fallback to avoid racing-induced correlations
+  // Try Outshift first (usually faster), then LFDR
   if (canOutshift) {
-    racers.push(
-      (async () => {
-        const r = await fromOutshift(n, OUTSHIFT_TIMEOUT_MS);
-        return { source: 'outshift', bytes: r.bytes };
-      })()
-    );
-  }
-  racers.push(
-    (async () => {
-      const r = await fromLFDR(n, LFDR_TIMEOUT_MS);
-      return { source: 'lfdr', bytes: r.bytes };
-    })()
-  );
-
-  try {
-    // first successful provider wins
-    return await Promise.any(racers);
-  } catch {
-    // if all failed, try sequentially once more to get a better error
-    if (canOutshift) {
-      try {
-        const r = await fromOutshift(n, OUTSHIFT_TIMEOUT_MS);
-        return { source: 'outshift', bytes: r.bytes };
-      } catch {}
+    try {
+      const r = await fromOutshift(n, OUTSHIFT_TIMEOUT_MS);
+      return { source: 'outshift', bytes: r.bytes };
+    } catch (e) {
+      console.warn('Outshift failed, falling back to LFDR:', e.message);
     }
-    const r2 = await fromLFDR(n, LFDR_TIMEOUT_MS);
-    return { source: 'lfdr', bytes: r2.bytes };
   }
+
+  // Fallback to LFDR
+  const r = await fromLFDR(n, LFDR_TIMEOUT_MS);
+  return { source: 'lfdr', bytes: r.bytes };
 }
 
 function fetchWithTimeout(url, opts = {}, ms = 1200) {

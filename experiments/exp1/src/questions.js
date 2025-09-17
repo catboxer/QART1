@@ -99,54 +99,59 @@ export const cueBlocks = [
     id: 'full_stack',
     label: 'Physical RNG - Match One',
     preInstructions: `
-      <h1>Focus & Breathe</h1>
-      
-      <h3>Your Task:</h3>
+   <h1>Focus & Breathe</h1>
+<h3>Optional Enhancement: Binaural Beats</h3>
 <ul>
-   <li><strong>Draw your envelopes.</strong> Click the <em>Draw Your Sealed Envelopes</em> button.</li>
+  <li><strong>Try with and without.</strong> Some subjects showed a 2–3% increase in PSI ability while listening to binaural beats. You can experiment by trying once with and once without them.</li>
+  <li><strong>What you need:</strong> A pair of headphones.</li>
+  <li><strong>How:</strong> Visit <a href="https://mynoise.net/NoiseMachines/binauralBrainwaveGenerator.php" target="_blank">this binaural beat generator</a> and select a frequency between <strong>4–8 Hz</strong> (choose the one that feels best for you).</li>
+  <li><strong>Prepare:</strong> Listen for at least 1–2 minutes before starting. Breathe deeply and try to empty your mind.</li>
+</ul>
+
+<h3>Your Task:</h3>
+<ul>
+  <li><strong>Draw your envelopes.</strong> Click the <em>Draw Your Sealed Envelopes</em> button. </li>
   <li><strong>Start the trials.</strong> Click the <em>Start Match One Trials</em> button when it turns green.</li>
   <li><strong>How many:</strong> ${
-    config.trialsPerBlock.full_stack
-  } trials (~${Math.ceil(
-      Number(config.trialsPerBlock.full_stack) / 5
-    )} rounds of 5).</li>
-  <li><strong>Play in rounds.</strong> Each round has 5 trials. After each round you’ll see your result.</li>
+      config.trialsPerBlock.full_stack
+      } trials (~${Math.ceil(
+        Number(config.trialsPerBlock.full_stack) / 5
+      )} rounds of 5).</li>
+  <li><strong>Play in rounds.</strong> Each round has 5 trials. After each trial you will see brief feedback on whether you matched or not. After each round you’ll see your result.</li>
   <li><strong>Round win.</strong> Getting 3 or more correct out of 5 wins the round.</li>
-  <li><strong>Progress.</strong> You’ll complete several rounds; your total round & trial wins are shown on screen at the end.</li>
   <li><strong>Goal.</strong> Choose the hidden symbol more often than chance (~20% per trial).</li>
   <li><strong>Need to stop early?</strong> Click <em>Exit Study</em> (bottom-right) to send your completed results.</li>
-</ul>
- `,
-    trialInstructions: `
-      <h2>Physical RNG (Match One)</h2>
-        <ul>
-        <li>You’ll see five symbols. On each trial, one is the target.</li>
-        <li>Pick the one you feel is right.</li>
-        <li>Encountering issues? <a href="{{ISSUE_MAILTO}}">Email us at h@whatthequark.com</a> about the problem.</li>
-      </ul>
-      `,
+</ul>`,
     showFeedback: true,
   },
   {
     id: 'spoon_love',
     label: 'Quantum RNG - Match Two',
     preInstructions: `
-           <h1>Focus & Breathe</h1>
+ <h1>Focus & Breathe</h1>
+<h3>Optional Enhancement: Binaural Beats</h3>
+<ul>
+  <li><strong>Try with and without.</strong> Some subjects showed a 2–3% increase in PSI ability while listening to binaural beats. You can experiment by trying once with and once without them.</li>
+  <li><strong>What you need:</strong> A pair of headphones.</li>
+  <li><strong>How:</strong> Visit <a href="https://mynoise.net/NoiseMachines/binauralBrainwaveGenerator.php" target="_blank">this binaural beat generator</a> and select a frequency between <strong>4–8 Hz</strong> (choose the one that feels best for you).</li>
+  <li><strong>Prepare:</strong> Listen for at least 1–2 minutes before starting. Breathe deeply and try to empty your mind.</li>
+</ul>
+
 <h3>Your Task:</h3>
 <ul>
-   <li><strong>Draw your envelopes.</strong> Click the <em>Draw Your Sealed Envelopes</em> button. </li>
+  <li><strong>Draw your envelopes.</strong> Click the <em>Draw Your Sealed Envelopes</em> button. </li>
   <li><strong>Start the trials.</strong> Click the <em>Start Match Two Trials</em> button when it turns green.</li>
   <li><strong>How many:</strong> ${
-    config.trialsPerBlock.spoon_love
-  } trials (~${Math.ceil(
-      Number(config.trialsPerBlock.spoon_love) / 5
-    )} rounds of 5).</li>
-  <li><strong>Play in rounds.</strong> Each round has 5 trials. After each round you’ll see your result.</li>
+      config.trialsPerBlock.spoon_love
+      } trials (~${Math.ceil(
+        Number(config.trialsPerBlock.spoon_love) / 5
+      )} rounds of 5).</li>
+ <li><strong>Play in rounds.</strong> Each round has 5 trials. After each trial you will see brief feedback on whether you matched or not. After each round you’ll see your result.</li>
   <li><strong>Round win.</strong> Getting 3 or more correct out of 5 wins the round.</li>
-  <li><strong>Progress.</strong> You’ll complete several rounds; your total round wins & trial wins are shown on screen at the end.</li>
   <li><strong>Goal.</strong> Choose the hidden symbol more often than chance (~20% per trial).</li>
   <li><strong>Need to stop early?</strong> Click <em>Exit Study</em> (bottom-right) to send your completed results.</li>
-</ul>`,
+</ul>
+`,
     trialInstructions: `
       <h2>Quantum RNG (Match Two)</h2>
         <ul>
@@ -160,22 +165,30 @@ export const cueBlocks = [
     id: 'client_local',
     label: 'Local - Match Three',
     preInstructions: `
-           <h1>Focus & Breathe</h1>
-      <h3>Your Task:</h3>
+    <h1>Focus & Breathe</h1>
+<h3>Optional Enhancement: Binaural Beats</h3>
 <ul>
-  <li><strong>Start the trials.</strong> Click the <em>Start Match Three Trials</em> button.</li>
-     <li>The app generates a choice <strong>after </strong>you select yours.</li>
-     <li><strong>How many:</strong> ${
-       config.trialsPerBlock.client_local
-     } trials (~${Math.ceil(
-      Number(config.trialsPerBlock.client_local) / 5
-    )} rounds of 5).</li>
-  <li><strong>Play in rounds.</strong> Each round has 5 trials. After each round you’ll see your result.</li>
+  <li><strong>Try with and without.</strong> Some subjects showed a 2–3% increase in PSI ability while listening to binaural beats. You can experiment by trying once with and once without them.</li>
+  <li><strong>What you need:</strong> A pair of headphones.</li>
+  <li><strong>How:</strong> Visit <a href="https://mynoise.net/NoiseMachines/binauralBrainwaveGenerator.php" target="_blank">this binaural beat generator</a> and select a frequency between <strong>4–8 Hz</strong> (choose the one that feels best for you).</li>
+  <li><strong>Prepare:</strong> Listen for at least 1–2 minutes before starting. Breathe deeply and try to empty your mind.</li>
+</ul>
+
+<h3>Your Task:</h3>
+<ul>
+  <li><strong>Draw your envelopes.</strong> Click the <em>Draw Your Sealed Envelopes</em> button. </li>
+  <li><strong>Start the trials.</strong> Click the <em>Start Match Three Trials</em> button when it turns green.</li>
+  <li><strong>How many:</strong> ${
+      config.trialsPerBlock.client_local
+      } trials (~${Math.ceil(
+        Number(config.trialsPerBlock.client_local) / 5
+      )} rounds of 5).</li>
+<li><strong>Play in rounds.</strong> Each round has 5 trials. After each trial you will see brief feedback on whether you matched or not. After each round you’ll see your result.</li>
   <li><strong>Round win.</strong> Getting 3 or more correct out of 5 wins the round.</li>
-  <li><strong>Progress.</strong> You’ll complete several rounds; your round wins and total trial wins are shown on screen.</li>
   <li><strong>Goal.</strong> Choose the hidden symbol more often than chance (~20% per trial).</li>
   <li><strong>Need to stop early?</strong> Click <em>Exit Study</em> (bottom-right) to send your completed results.</li>
-</ul>`,
+</ul>
+`,
     trialInstructions: `
       <h2>Local (Match Three)</h2>
         <ul>
@@ -252,6 +265,28 @@ export const midQuestions = [
 // ——— POST ———
 
 export const postQuestions = [
+  {
+    id: 'binaural_beats',
+    type: 'select',
+    question: 'Did you listen to binaural beats during any part of this experiment?',
+    options: ['No', 'Yes - during all blocks', 'Yes - during Block 1 (Physical)', 'Yes - during Block 2 (Quantum)', 'Yes - during Block 3 (Local)', 'What are binaural beats?'],
+  },
+  {
+    id: 'binaural_level',
+    question: 'What hertz did you listen to?',
+    type: 'number',
+    min: 1,
+    max: 32,
+    showIf: {
+      id: 'binaural_beats',
+      values: [
+        'Yes - during all blocks',
+        'Yes - during Block 1 (Physical)',
+        'Yes - during Block 2 (Quantum)',
+        'Yes - during Block 3 (Local)'
+      ]
+    }
+  },
   {
     id: 'focusLevel',
     question:

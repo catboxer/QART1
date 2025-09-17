@@ -24,21 +24,17 @@ import {
 
 import confetti from 'canvas-confetti';
 import { config } from './config.js';
-
+import HighScoreEmailGate from "./HighScoreEmailGate";
 /* =========================
    Helpers / UI
    ========================= */
-// Chance model for 5 options
-const K_OPTIONS = 5;
-const P0 = 1 / K_OPTIONS;
-function isAboveChanceMatch5(hitsInMatch) {
-  return hitsInMatch >= 3;
-}
+
 
 // Mini-match settings
 const MATCH_SIZE = 5; // 5 trials per match
 const calcTotalMatches = (trialsCount) =>
   Math.ceil(trialsCount / MATCH_SIZE);
+const toSymIdx = (b) => ((b >>> 0) & 0xff) % 5; // 0..4
 
 /* =========================
    Zener Icons (5 symbols)
@@ -170,18 +166,16 @@ const ZENER = [
   { id: 'square', element: <SolidSquare /> },
   { id: 'star', element: <SolidStar /> },
 ];
+// Chance model for 5 options
+const K_OPTIONS = ZENER.length;
+const P0 = 1 / K_OPTIONS;
+// Punctuation timings (ms)
+const FLASH_MS = 85; // how long the layout is visible per flash
+const ISI_MS = 20;  // blank interval between flashes
 
-// Optional tiny PRNG for reproducible shuffles when you pass a seed
-function mulberry32(seed) {
-  let t = seed >>> 0;
-  return () => {
-    t += 0x6d2b79f5;
-    let r = Math.imul(t ^ (t >>> 15), 1 | t);
-    r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
-    return ((r ^ (r >>> 14)) >>> 0) / 4294967296; // [0,1)
-  };
+function isAboveChanceMatch5(hitsInMatch) {
+  return hitsInMatch >= 3;
 }
-
 // Unbiased int in [0, n) from a RNG that returns [0,1)
 function randInt(n, rand01) {
   // rejection sampling to avoid modulo bias
@@ -208,14 +202,12 @@ function crypto01() {
  */
 function shuffledFive(seed /* number? */) {
   const arr = [...ZENER]; // don't mutate original
-  const rand01 =
-    typeof seed === 'number' ? mulberry32(seed) : crypto01;
-
   // Fisher–Yates
   for (let i = arr.length - 1; i > 0; i--) {
-    const j = randInt(i + 1, rand01);
+    const j = randInt(i + 1, crypto01);
     [arr[i], arr[j]] = [arr[j], arr[i]];
   }
+
   return arr;
 }
 
@@ -280,8 +272,8 @@ function countAboveChanceRoundWins(rows, matchSize = 5) {
         (Number(r.subject_hit) === 1
           ? 1
           : Number(r.matched) === 1
-          ? 1
-          : 0),
+            ? 1
+            : 0),
       0
     );
     if (pts >= 3) wins++; // "round win" = 3+ hits in 5 trials
@@ -556,9 +548,8 @@ function MainApp() {
         }
       }
     })();
-    return () => {
-      cancelled = true;
-    };
+
+    return () => { cancelled = true; };
   }, []);
   const hasDemographics = !!(profile && profile.demographics);
 
@@ -584,7 +575,7 @@ function MainApp() {
     try {
       if (typeof window !== 'undefined' && window.crypto?.randomUUID)
         return window.crypto.randomUUID();
-    } catch {}
+    } catch { }
     const t = Date.now().toString(36);
     const p =
       typeof performance !== 'undefined' && performance.now
@@ -594,7 +585,6 @@ function MainApp() {
     return `${t}-${p}-${r}`;
   });
   const appVersion = process.env.REACT_APP_COMMIT ?? 'dev';
-  const [sessionShuffleMode, setSessionShuffleMode] = useState(null); // 'leaky' | 'strict' | null
 
   // URL flags
   const parseParams = () => {
@@ -626,6 +616,25 @@ function MainApp() {
   const [postResponses, setPostResponses] = useState({});
   const [trialResults, setTrialResults] = useState([]);
   // Gamification: per-block match tallies + between-match banner
+  // Redundancy manipulation
+  const [redundancyMode, setRedundancyMode] = useState('single'); // 'single' | 'redundant'
+  // Motion-safe mode: no flashing (R=1, no ISI). Defaults to OS 'prefers-reduced-motion'.
+  const [motionSafe, setMotionSafe] = useState(() =>
+    window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ?? false
+  );
+
+  // (Optional) react to OS setting changes live
+  useEffect(() => {
+    const mq = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+    if (!mq?.addEventListener) return;
+    const onChange = () => setMotionSafe(mq.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+
+  const [redundancyCount, setRedundancyCount] = useState(1);      // 1 for Single, R (e.g., 2) for Redundant
+  const [redundancyOrders, setRedundancyOrders] = useState([]);   // array of option-id arrays (for logging)
+  const [redundancyTimestamps, setRedundancyTimestamps] = useState([]); // ms since trial start per flash
 
   const [matchSummary, setMatchSummary] = useState(null); // {blockId, matchNumber, subjectPts, demonPts, winner}
   const [currentBlockId, setCurrentBlockId] = useState('full_stack'); // explicit id to avoid races
@@ -636,7 +645,10 @@ function MainApp() {
 
   const roundsTally = useMemo(() => {
     const rows = trialResults.filter(
-      (t) => t.block_type === currentBlockId
+      (t) => t.block_type === currentBlockId &&
+        t.target_index_0based !== null && t.target_index_0based !== undefined &&
+        t.selected_index !== null && t.selected_index !== undefined &&
+        t.ghost_index_0based !== null && t.ghost_index_0based !== undefined
     );
     return countAboveChanceRoundWins(rows, MATCH_SIZE);
   }, [trialResults, currentBlockId]);
@@ -654,6 +666,9 @@ function MainApp() {
   const hasGuessedRef = useRef(false);
   const starTimerRef = useRef(null);
   const isSavingRef = useRef(false);
+  const layoutRef = useRef(null);   // the 5 icons, fixed for the current trial
+  const prepRunIdRef = useRef(0);   // cancels overlapping prepareTrial calls
+
   const [trialBlockingError, setTrialBlockingError] = useState(null);
 
   // Prefetch/caching for sealed envelopes
@@ -713,9 +728,9 @@ function MainApp() {
 
   // Feedback switches
   const FB = {
-    full_stack: { STAR: false, ALIGNED_TEXT: false, SCORE: false },
-    spoon_love: { STAR: false, ALIGNED_TEXT: false, SCORE: false },
-    client_local: { STAR: false, ALIGNED_TEXT: false, SCORE: false },
+    full_stack: { STAR: true, ALIGNED_TEXT: true, SCORE: true },
+    spoon_love: { STAR: true, ALIGNED_TEXT: true, SCORE: true },
+    client_local: { STAR: true, ALIGNED_TEXT: true, SCORE: true },
   };
   // Show/Hide "ghost" from participant UI (still logged under the hood)
 
@@ -871,7 +886,10 @@ function MainApp() {
   async function completeBlockAfterLastRound(blockId) {
     // Recompute block totals from the log you already have
     const trialsThisBlock = trialResults.filter(
-      (t) => t.block_type === blockId
+      (t) => t.block_type === blockId &&
+        t.target_index_0based !== null && t.target_index_0based !== undefined &&
+        t.selected_index !== null && t.selected_index !== undefined &&
+        t.ghost_index_0based !== null && t.ghost_index_0based !== undefined
     );
     const N = trialsThisBlock.length;
     const hits = trialsThisBlock.reduce((a, t) => {
@@ -880,8 +898,8 @@ function MainApp() {
         typeof t.subject_hit === 'number'
           ? t.subject_hit
           : typeof t.matched === 'number'
-          ? t.matched
-          : 0;
+            ? t.matched
+            : 0;
       return a + (v || 0);
     }, 0);
     const pct = N > 0 ? (hits / N) * 100 : 0;
@@ -986,92 +1004,69 @@ function MainApp() {
 
   // Ensure we have ONE parent run document for all blocks
   const [exp1DocId, setExp1DocId] = useState(null);
+  const ensureDocPromiseRef = useRef(null);
+  const cachedDocIdRef = useRef(null); // Session-level cache that doesn't rely on React state
 
   async function ensureRunDoc() {
-    // If we already have a run id, make sure sessionShuffleMode is loaded too.
-    if (exp1DocId) {
-      if (!sessionShuffleMode) {
-        try {
-          const ref = doc(db, 'experiment1_responses', exp1DocId);
-          const snap = await getDoc(ref);
-          const existing = snap.exists()
-            ? String(snap.data()?.shuffle_mode || '')
-                .trim()
-                .toLowerCase()
-            : '';
-          if (existing === 'leaky' || existing === 'strict') {
-            setSessionShuffleMode(existing);
-          }
-        } catch (_) {
-          /* non-fatal */
-        }
-      }
-      return exp1DocId;
+    console.log('🔥 ensureRunDoc called, exp1DocId:', exp1DocId, 'cachedDocId:', cachedDocIdRef.current, 'hasPromise:', !!ensureDocPromiseRef.current);
+
+    // Check both React state and ref cache
+    const existingId = exp1DocId || cachedDocIdRef.current;
+    if (existingId) {
+      console.log('✅ Returning existing docId:', existingId);
+      return existingId;
     }
 
-    await ensureSignedIn();
-    const participant_id = auth.currentUser?.uid ?? null;
+    // If we already have a promise in flight, await it
+    if (ensureDocPromiseRef.current) {
+      console.log('⏳ Already creating doc, waiting for existing promise...');
+      return await ensureDocPromiseRef.current;
+    }
 
-    // Create the parent run doc
-    const mainRef = await addDoc(
-      collection(db, 'experiment1_responses'),
-      {
+    console.log('🏗️ Starting doc creation - creating new promise');
+
+    // Create and store the promise immediately (synchronously)
+    ensureDocPromiseRef.current = (async () => {
+      await ensureSignedIn();
+      const participant_id = auth.currentUser?.uid ?? null;
+
+      // Create parent doc
+      console.log('📝 Creating Firebase doc with session_id:', sessionId);
+      const mainRef = await addDoc(collection(db, 'experiment1_responses'), {
         participant_id,
         session_id: sessionId,
         app_version: appVersion,
         created_at: serverTimestamp(),
         timestamp: serverTimestamp(),
-      }
-    );
+      });
+      const parentId = mainRef.id;
+      console.log('✨ Created Firebase doc with ID:', parentId);
 
-    const parentId = mainRef.id;
+      // Decide once per session: which half first?
+      const redundancy_order = Math.random() < 0.5 ? 'single_then_redundant' : 'redundant_then_single';
+      await setDoc(doc(db, 'experiment1_responses', parentId), {
+        participant_id,
+        redundancy_order,
+      }, { merge: true });
 
-    // Minimal merge to ensure participant_id is present
-    await setDoc(
-      doc(db, 'experiment1_responses', parentId),
-      { participant_id },
-      { merge: true }
-    );
+      console.log('🎯 Setting exp1DocId to:', parentId);
+      setExp1DocId(parentId);
+      cachedDocIdRef.current = parentId; // Cache in ref immediately
+      console.log('✅ ensureRunDoc complete, returning:', parentId);
+      return parentId;
+    })();
 
-    // === NEW: ensure session-level shuffle_mode is set/read (one time per session) ===
+    // Await the promise and clean up
     try {
-      const ref = doc(db, 'experiment1_responses', parentId);
-      const snap = await getDoc(ref);
-      const existing = snap.exists()
-        ? String(snap.data()?.shuffle_mode || '')
-            .trim()
-            .toLowerCase()
-        : '';
-
-      // If already set, use it; otherwise assign 50/50 and persist.
-      const assigned =
-        existing === 'leaky' || existing === 'strict'
-          ? existing
-          : Math.random() < 0.5
-          ? 'leaky'
-          : 'strict';
-
-      if (assigned !== existing) {
-        await setDoc(
-          ref,
-          { shuffle_mode: assigned },
-          { merge: true }
-        );
-      }
-      setSessionShuffleMode(assigned);
-    } catch (e) {
-      console.warn('shuffle_mode set/read failed (non-fatal):', e);
+      const result = await ensureDocPromiseRef.current;
+      ensureDocPromiseRef.current = null;
+      return result;
+    } catch (error) {
+      ensureDocPromiseRef.current = null;
+      throw error;
     }
-    // === END NEW ===
-
-    // Warm read (keeps your old behavior)
-    try {
-      await getDoc(doc(db, 'experiment1_responses', parentId));
-    } catch (_) {}
-
-    setExp1DocId(parentId);
-    return parentId;
   }
+
 
   // Pre-generate & store sealed envelopes for a whole block, plus local cache
   const prefetchBlock = async (blockId) => {
@@ -1285,7 +1280,7 @@ function MainApp() {
       console.error(err);
       window.alert(
         'Failed to draw sealed envelopes. Please try again.\n' +
-          (err?.message || err)
+        (err?.message || err)
       );
       setPrefetchStatus((s) => ({
         ...s,
@@ -1317,262 +1312,22 @@ function MainApp() {
     setStep('trials');
     await prepareTrial(0, parentId, blockId);
   };
+  // Decide Single vs Redundant for this trial, by block, with a 50/50 split of trials in the block.
+  // We also keep the split on round boundaries (multiples of MATCH_SIZE).
+  function redundancyConditionFor(blockId, trialIndex0, totalTrialsThisBlock, redundancy_order) {
+    const trialsPerHalf = Math.floor(totalTrialsThisBlock / 2);
+    // align halves to round boundaries:
+    const halfAligned = Math.floor(trialsPerHalf / MATCH_SIZE) * MATCH_SIZE || trialsPerHalf;
 
-  async function prepareTrial(
-    nextTrialIndex = 0,
-    parentId = exp1DocId,
-    activeBlockId = currentBlockId
-  ) {
-    setTrialReady(false);
-    setSealedEnvelopeId(null);
-    hasGuessedRef.current = false;
-    setTrialBlockingError(null);
-    setHasGuessedThisTrial(false); // NEW
-    setLastResult(null); // keep feedback hidden until guess
+    const inFirstHalf = trialIndex0 < halfAligned;
+    const first = redundancy_order === 'single_then_redundant' ? 'single' : 'redundant';
+    const second = first === 'single' ? 'redundant' : 'single';
+    const condition = inFirstHalf ? first : second;
 
-    const trialNum = nextTrialIndex + 1;
-
-    // Show icons in random order
-    const five = shuffledFive();
-    setChoiceOptions(five);
-    // ===== Block 3: client_local — PRE-DRAWN/SEALED ON CLIENT =====
-    if (activeBlockId === 'client_local') {
-      const cached = assignmentCache?.client_local?.[trialNum];
-      if (!cached) {
-        setTrialBlockingError(
-          'Client-local envelopes not ready. Please click “Draw Your Sealed Envelopes” on the previous screen.'
-        );
-        return;
-      }
-      // Map cached raw bytes to THIS trial’s shuffled display order
-      const assigned = assignZenerFromBytes(
-        cached.raw_byte,
-        cached.ghost_raw_byte,
-        five
-      );
-      // Save assigned indices + provenance
-      setCorrectIndex(assigned.primaryIndex);
-      setGhostIndex(assigned.ghostIndex);
-      setRngMeta({
-        source: 'client_local_predraw',
-        k_options: 5,
-        primary_symbol_id: assigned.primary_symbol_id,
-        ghost_symbol_id: assigned.ghost_symbol_id,
-        raw_byte: assigned.primary_raw,
-        ghost_raw_byte: assigned.ghost_raw,
-      });
-      if (parentId) {
-        const sealedId = `${sessionId}-${activeBlockId}-${trialNum}`;
-        try {
-          await setDoc(
-            doc(
-              db,
-              `experiment1_responses/${parentId}/sealed_envelope/${sealedId}`
-            ),
-            {
-              session_id: sessionId,
-              app_version: appVersion,
-              block_type: activeBlockId,
-              trial_index: trialNum,
-              rng_source: 'client_local_predraw',
-              server_time: Date.now(),
-              k_options: 5,
-              raw_byte: assigned.primary_raw,
-              ghost_raw_byte: assigned.ghost_raw,
-              primary_symbol_id: assigned.primary_symbol_id,
-              ghost_symbol_id: assigned.ghost_symbol_id,
-              primary_index_0based: assigned.primaryIndex,
-              ghost_index_0based: assigned.ghostIndex,
-              created_at: serverTimestamp(),
-            },
-            { merge: false }
-          );
-          setSealedEnvelopeId(sealedId);
-        } catch (e) {
-          console.warn(
-            '[sealed_envelope] client_local write failed:',
-            e
-          );
-        }
-      }
-      setTrialReady(true);
-      return;
-    }
-
-    // ===== Blocks 1 & 2 use sealed envelopes =====
-    let assigned, source, server_time;
-    const cached = assignmentCache[activeBlockId]?.[trialNum];
-
-    if (cached) {
-      const assignedNow = assignZenerFromBytes(
-        cached.raw_byte,
-        cached.ghost_raw_byte,
-        five
-      );
-      setAssignmentCache((prev) => {
-        const next = { ...prev };
-        next[activeBlockId] = { ...(next[activeBlockId] || {}) };
-        next[activeBlockId][trialNum] = {
-          ...(next[activeBlockId][trialNum] || {}),
-          assigned: assignedNow,
-        };
-        return next;
-      });
-
-      assigned = assignedNow;
-      source = cached.rngMeta.source;
-      server_time = cached.rngMeta.server_time;
-
-      const sealedId = `${sessionId}-${activeBlockId}-${trialNum}`;
-      if (parentId) {
-        try {
-          const isRemapBlock =
-            activeBlockId === 'spoon_love' &&
-            config.ENABLE_QUANTUM_REMAP;
-
-          const sealedRef = doc(
-            db,
-            `experiment1_responses/${parentId}/sealed_envelope/${sealedId}`
-          );
-          await setDoc(
-            sealedRef,
-            {
-              session_id: sessionId,
-              app_version: appVersion,
-              block_type: activeBlockId,
-              trial_index: trialNum,
-              rng_source: source,
-              server_time,
-
-              // 5-option sealed data
-              k_options: 5,
-              raw_byte: assignedNow.primary_raw,
-              ghost_raw_byte: assignedNow.ghost_raw,
-              primary_symbol_id: assignedNow.primary_symbol_id,
-              ghost_symbol_id: assignedNow.ghost_symbol_id,
-              primary_index_0based: isRemapBlock
-                ? null // defer index until post-press remap
-                : assignedNow.primaryIndex,
-              ghost_index_0based: isRemapBlock
-                ? null // defer index until post-press remap
-                : assignedNow.ghostIndex,
-              created_at: serverTimestamp(),
-            },
-            { merge: false }
-          );
-        } catch (e) {
-          console.warn('[sealed_envelope] cached-write failed:', e);
-        }
-      }
-      setSealedEnvelopeId(sealedId);
-    } else {
-      // No cache → fetch now (PRNG for full_stack, QRNG for spoon_love)
-      if (activeBlockId === 'full_stack') {
-        const res = await getPrngPairOrThrow();
-        source = res.source || 'random_org';
-        server_time = res.server_time ?? null;
-        assigned = assignZenerFromBytes(
-          res.bytes[0],
-          res.bytes[1],
-          five
-        );
-      } else {
-        const res = await getQuantumPairOrThrow();
-        source = res.source || 'qrng';
-        server_time = res.server_time ?? null;
-        assigned = assignZenerFromBytes(
-          res.bytes[0],
-          res.bytes[1],
-          five
-        );
-      }
-
-      if (!parentId) {
-        console.warn(
-          'exp1DocId not ready; skipping sealed_envelope for this trial'
-        );
-        return;
-      }
-      const sealedId = `${sessionId}-${activeBlockId}-${trialNum}`;
-      const sealedRef = doc(
-        db,
-        `experiment1_responses/${parentId}/sealed_envelope/${sealedId}`
-      );
-
-      const isRemapBlock =
-        activeBlockId === 'spoon_love' && config.ENABLE_QUANTUM_REMAP;
-
-      const payload = {
-        session_id: sessionId,
-        app_version: appVersion,
-        block_type: activeBlockId,
-        trial_index: trialNum,
-        rng_source: source,
-        server_time,
-
-        // 5-option sealed data
-        k_options: 5,
-        raw_byte: assigned.primary_raw,
-        ghost_raw_byte: assigned.ghost_raw,
-        primary_symbol_id: assigned.primary_symbol_id,
-        ghost_symbol_id: assigned.ghost_symbol_id,
-        primary_index_0based: isRemapBlock
-          ? null // defer index until post-press remap
-          : assigned.primaryIndex,
-        ghost_index_0based: isRemapBlock
-          ? null // defer index until post-press remap
-          : assigned.ghostIndex,
-        created_at: serverTimestamp(),
-      };
-
-      try {
-        await setDoc(sealedRef, payload, { merge: false });
-      } catch (e) {
-        console.error(
-          '[sealed_envelope] write failed',
-          sealedRef.path,
-          e
-        );
-        return;
-      }
-      setSealedEnvelopeId(sealedId);
-    }
-
-    // === Finalize: indices vs defer for spoon_love (based on feature flag)
-    const isRemapBlockActive =
-      activeBlockId === 'spoon_love' && config.ENABLE_QUANTUM_REMAP;
-
-    if (isRemapBlockActive) {
-      // Defer indices; only store bytes + meta now (remap happens after press)
-      setCorrectIndex(null);
-      setGhostIndex(null);
-      setRngMeta({
-        source,
-        server_time,
-        k_options: 5,
-        primary_symbol_id: assigned.primary_symbol_id,
-        ghost_symbol_id: assigned.ghost_symbol_id,
-        raw_byte: assigned.primary_raw,
-        ghost_raw_byte: assigned.ghost_raw,
-        remap_mode: 'qrng_postchoice_remap',
-      });
-    } else {
-      // full_stack behavior (and spoon_love with remap OFF)
-      setCorrectIndex(assigned.primaryIndex);
-      setGhostIndex(assigned.ghostIndex);
-      setRngMeta({
-        source,
-        server_time,
-        k_options: 5,
-        primary_symbol_id: assigned.primary_symbol_id,
-        ghost_symbol_id: assigned.ghost_symbol_id,
-        raw_byte: assigned.primary_raw,
-        ghost_raw_byte: assigned.ghost_raw,
-      });
-    }
-
-    setTrialReady(true);
+    // If total trials isn't an even multiple of MATCH_SIZE, the remainder goes into the second half.
+    return { condition, halfAligned };
   }
+
   async function handleGuess(selectedIndex) {
     // allow client_local without a sealed envelope; others must have one
 
@@ -1717,6 +1472,15 @@ function MainApp() {
     // Score this press
     const matched = selectedIndex === resolvedCorrectIndex ? 1 : 0;
     const subject_hit = matched;
+
+    // Set result for feedback display
+    setLastResult({
+      matched: matched === 1,
+      selectedIndex,
+      correctIndex: resolvedCorrectIndex,
+      pre_label: typeof retro_pre_label !== 'undefined' ? retro_pre_label : choiceOptions[resolvedCorrectIndex]?.id ?? String(resolvedCorrectIndex),
+      post_label: typeof retro_post_label !== 'undefined' ? retro_post_label : choiceOptions[resolvedCorrectIndex]?.id ?? String(resolvedCorrectIndex)
+    });
     // correct: did the ghost pick the actual target?
     const demon_hit =
       resolvedGhostIndex === resolvedCorrectIndex ? 1 : 0;
@@ -1783,7 +1547,12 @@ function MainApp() {
       options: optionsIds,
       selected_index: selectedIndex,
       selected_id: selectedLabel,
-
+      // --- redundancy manipulation (new) ---
+      redundancy_mode: redundancyMode,                  // "single" | "redundant"
+      redundancy_count: redundancyCount,                // 1 for Single, R for Redundant
+      redundancy_orders: redundancyOrders,              // array of option-id arrays (each flash)
+      redundancy_timestamps_ms: redundancyTimestamps,   // ms since trial start for each flash
+      punctuation: { flash_ms: FLASH_MS, isi_ms: ISI_MS },
       // RNG provenance
       rng_source:
         resolvedMeta?.source ||
@@ -1812,19 +1581,14 @@ function MainApp() {
       // audit marker for your proof context shape
       proof_ctx_version: 1,
     };
-    // console.log('[LOGROW READY]', {
-    //   block: logRow.block_type,
-    //   trial_index: logRow.trial_index,
-    //   selected_index: logRow.selected_index,
-    //   target_index_0based: logRow.target_index_0based,
-    //   options_len: Array.isArray(logRow.options)
-    //     ? logRow.options.length
-    //     : null,
-    // });
+    // Debug logging removed to prevent data leaks during experiments
 
     // Tag this row with match metadata before saving
     const countThisBlockSoFar =
-      trialResults.filter((t) => t.block_type === blockId).length + 1; // including this one
+      trialResults.filter((t) => t.block_type === blockId &&
+        t.target_index_0based !== null && t.target_index_0based !== undefined &&
+        t.selected_index !== null && t.selected_index !== undefined &&
+        t.ghost_index_0based !== null && t.ghost_index_0based !== undefined).length + 1; // including this one
     const matchIndex0 = Math.floor(
       (countThisBlockSoFar - 1) / MATCH_SIZE
     ); // 0-based
@@ -1848,14 +1612,14 @@ function MainApp() {
         )
           ? logRow.target_index_0based
           : Number.isFinite(currentTrial?.targetIndex) // <-- your local correct index
-          ? currentTrial.targetIndex
-          : null;
+            ? currentTrial.targetIndex
+            : null;
 
         const optionsArr = Array.isArray(logRow?.options)
           ? logRow.options
           : Array.isArray(currentTrial?.options)
-          ? currentTrial.options
-          : null;
+            ? currentTrial.options
+            : null;
 
         const selectedId =
           optionsArr && Number.isFinite(selectedIndex)
@@ -1869,20 +1633,12 @@ function MainApp() {
 
         const matchedFlag =
           Number.isFinite(selectedIndex) &&
-          Number.isFinite(targetIndex)
+            Number.isFinite(targetIndex)
             ? selectedIndex === targetIndex
               ? 1
               : 0
             : 0;
-        // console.log('[WILL WRITE LOG]', {
-        //   block: logRow.block_type,
-        //   trial_index: logRow.trial_index,
-        //   selected_index: logRow.selected_index,
-        //   target_index_0based: logRow.target_index_0based,
-        //   options_len: Array.isArray(logRow.options)
-        //     ? logRow.options.length
-        //     : null,
-        // });
+
 
         // 🔧 Ensure client_local writes the enriched fields used by the dashboard
         if (logRow?.block_type === 'client_local') {
@@ -1915,10 +1671,10 @@ function MainApp() {
             const tIdx = Number.isFinite(resolvedCorrectIndex)
               ? resolvedCorrectIndex
               : Number.isFinite(targetIndex)
-              ? targetIndex
-              : Number.isFinite(currentTrial?.targetIndex)
-              ? currentTrial.targetIndex
-              : null;
+                ? targetIndex
+                : Number.isFinite(currentTrial?.targetIndex)
+                  ? currentTrial.targetIndex
+                  : null;
             logRow.target_index_0based = tIdx;
           }
 
@@ -1944,8 +1700,8 @@ function MainApp() {
           if (!Number.isFinite(logRow.matched)) {
             logRow.matched =
               Number.isFinite(logRow.selected_index) &&
-              Number.isFinite(logRow.target_index_0based) &&
-              logRow.selected_index === logRow.target_index_0based
+                Number.isFinite(logRow.target_index_0based) &&
+                logRow.selected_index === logRow.target_index_0based
                 ? 1
                 : 0;
           }
@@ -1956,18 +1712,18 @@ function MainApp() {
           }
 
           // quick sanity print
-          // console.log('[CLIENT_LOCAL READY]', {
-          //   trial_index: logRow.trial_index,
-          //   selected_index: logRow.selected_index,
-          //   target_index_0based: logRow.target_index_0based,
-          //   options_len: Array.isArray(logRow.options)
-          //     ? logRow.options.length
-          //     : null,
-          // });
+          // Debug logging removed to prevent data leaks during experiments
         }
 
+        const docId = exp1DocId || cachedDocIdRef.current;
+        console.log('📊 About to write log with docId:', docId, 'exp1DocId:', exp1DocId, 'cached:', cachedDocIdRef.current);
+        if (!docId) {
+          console.error('❌ No document ID available for logs write!');
+          return;
+        }
+        console.log('📝 Writing log to:', `experiment1_responses/${docId}/logs`);
         await addDoc(
-          collection(db, `experiment1_responses/${exp1DocId}/logs`),
+          collection(db, `experiment1_responses/${docId}/logs`),
           {
             // meta
             session_id: logRow.session_id,
@@ -1975,7 +1731,6 @@ function MainApp() {
             condition: logRow.condition,
             k_options: logRow.k_options,
             block_type: logRow.block_type,
-            shuffle_mode: sessionShuffleMode ?? null,
             // trial identity & timing
             trial_index: logRow.trial_index,
             press_time: logRow.press_time,
@@ -2009,7 +1764,12 @@ function MainApp() {
             // retrocausal labels (only set in spoon_love; null elsewhere)
             pre_symbol_id: logRow.pre_symbol_id ?? null,
             post_symbol_id: logRow.post_symbol_id ?? null,
-
+            // --- redundancy manipulation (new) ---
+            redundancy_mode: redundancyMode,                  // "single" | "redundant"
+            redundancy_count: redundancyCount,                // 1 for Single, R for Redundant
+            redundancy_orders: JSON.stringify(redundancyOrders), // array of option-id arrays (each flash) - JSON string to avoid nested arrays
+            redundancy_timestamps_ms: redundancyTimestamps,   // ms since trial start for each flash
+            punctuation: { flash_ms: FLASH_MS, isi_ms: ISI_MS },
             // RNG provenance
             rng_source: logRow.rng_source || null,
             raw_byte: logRow.raw_byte ?? null,
@@ -2036,7 +1796,10 @@ function MainApp() {
     }
     // ===== End-of-match detection (show ONLY after each full 5-trial match) =====
     const trialsThisBlock = updatedTrials.filter(
-      (t) => t.block_type === blockId
+      (t) => t.block_type === blockId &&
+        t.target_index_0based !== null && t.target_index_0based !== undefined &&
+        t.selected_index !== null && t.selected_index !== undefined &&
+        t.ghost_index_0based !== null && t.ghost_index_0based !== undefined
     );
     const gamesPlayedInBlock = trialsThisBlock.length;
 
@@ -2083,7 +1846,10 @@ function MainApp() {
 
     // ==== End-of-block fallback (not on a round boundary) ====
     const trialsThisBlockNow = updatedTrials.filter(
-      (t) => t.block_type === blockId
+      (t) => t.block_type === blockId &&
+        t.target_index_0based !== null && t.target_index_0based !== undefined &&
+        t.selected_index !== null && t.selected_index !== undefined &&
+        t.ghost_index_0based !== null && t.ghost_index_0based !== undefined
     );
     if (trialsThisBlockNow.length === totalThisBlock) {
       await completeBlockAfterLastRound(blockId);
@@ -2097,6 +1863,213 @@ function MainApp() {
       return next;
     });
   }
+
+  async function prepareTrial(
+    nextTrialIndex = 0,
+    parentId = exp1DocId,
+    activeBlockId = currentBlockId
+  ) {
+    const myRunId = ++prepRunIdRef.current; // mark this invocation; newer runs cancel older ones
+
+    setTrialReady(false);
+    setSealedEnvelopeId(null);
+    hasGuessedRef.current = false;
+    setTrialBlockingError(null);
+
+    // Reset feedback immediately for new trial
+    setHasGuessedThisTrial(false);
+    setLastResult(null);
+
+    const useMotionSafe = Boolean(motionSafe); // 👈 now defined
+    const totalThisBlock = totalTrialsFor(activeBlockId);
+    const runId = await ensureRunDoc();
+
+    // read the redundancy_order we just stored (best-effort; safe to default)
+    let redundancy_order = 'single_then_redundant';
+    try {
+      const snap = await getDoc(doc(db, 'experiment1_responses', runId));
+      const ro = snap.exists() ? String(snap.data()?.redundancy_order || '') : '';
+      if (ro === 'single_then_redundant' || ro === 'redundant_then_single') redundancy_order = ro;
+    } catch (_) { }
+
+    const trialNum = nextTrialIndex + 1;
+    const { condition } = redundancyConditionFor(
+      activeBlockId,
+      nextTrialIndex,
+      totalThisBlock,
+      redundancy_order
+    );
+
+    const isRedundant = condition === 'redundant';
+    const R = useMotionSafe
+      ? 1
+      : (isRedundant ? Math.max(2, Number(config.REDUNDANT_R) || 2) : 1);
+
+    setRedundancyMode(useMotionSafe ? 'single' : (isRedundant ? 'redundant' : 'single'));
+    setRedundancyCount(R);
+    setRedundancyOrders([]);
+    setRedundancyTimestamps([]);
+
+    // We will fetch/resolve RNG BYTES once, then map against final layout after R flashes.
+    let rng_source = null;
+    let server_time = null;
+    let primary_raw = null;
+    let ghost_raw = null;
+    let primary_symbol_id = null;
+    let ghost_symbol_id = null;
+
+    // ===== Block 3: client_local (predrawn on client) =====
+    if (activeBlockId === 'client_local') {
+      const cached = assignmentCache?.client_local?.[trialNum];
+      if (!cached) {
+        setTrialBlockingError(
+          'Client-local envelopes not ready. Please click “Draw Your Sealed Envelopes” on the previous screen.'
+        );
+        return;
+      }
+      primary_raw = cached.raw_byte >>> 0;
+      ghost_raw = cached.ghost_raw_byte >>> 0;
+      primary_symbol_id = ZENER[toSymIdx(primary_raw)].id;
+      ghost_symbol_id = ZENER[toSymIdx(ghost_raw)].id;
+      rng_source = 'client_local_predraw';
+      server_time = Date.now();
+
+      if (runId) {
+        const sealedId = `${sessionId}-${activeBlockId}-${trialNum}`;
+        try {
+          await setDoc(
+            doc(db, `experiment1_responses/${runId}/sealed_envelope/${sealedId}`),
+            {
+              session_id: sessionId,
+              app_version: appVersion,
+              block_type: activeBlockId,
+              trial_index: trialNum,
+              rng_source,
+              server_time,
+              k_options: K_OPTIONS,
+              raw_byte: primary_raw,
+              ghost_raw_byte: ghost_raw,
+              primary_symbol_id,
+              ghost_symbol_id,
+              primary_index_0based: null,
+              ghost_index_0based: null,
+              created_at: serverTimestamp(),
+            },
+            { merge: false }
+          );
+          setSealedEnvelopeId(sealedId);
+        } catch (e) {
+          console.warn('[sealed_envelope] client_local write failed:', e);
+        }
+      }
+    }
+    // ===== Server-backed blocks =====
+    else {
+      const cached = assignmentCache[activeBlockId]?.[trialNum];
+
+      const pullBytesNow = async () => {
+        if (activeBlockId === 'full_stack') {
+          const res = await getPrngPairOrThrow();
+          return { bytes: res.bytes, source: res.source || 'random_org', server_time: res.server_time ?? null };
+        } else {
+          const res = await getQuantumPairOrThrow();
+          return { bytes: res.bytes, source: res.source || 'qrng', server_time: res.server_time ?? null };
+        }
+      };
+
+      let bytes, source;
+      if (cached) {
+        bytes = [cached.raw_byte >>> 0, cached.ghost_raw_byte >>> 0];
+        source = cached.rngMeta?.source || (activeBlockId === 'full_stack' ? 'random_org' : 'qrng');
+        server_time = cached.rngMeta?.server_time ?? null;
+      } else {
+        const r = await pullBytesNow();
+        bytes = r.bytes;
+        source = r.source;
+        server_time = r.server_time;
+      }
+
+      primary_raw = bytes[0] >>> 0;
+      ghost_raw = bytes[1] >>> 0;
+      primary_symbol_id = ZENER[toSymIdx(primary_raw)].id;
+      ghost_symbol_id = ZENER[toSymIdx(ghost_raw)].id;
+      rng_source = source;
+
+      const sealedId = `${sessionId}-${activeBlockId}-${trialNum}`;
+      try {
+        await setDoc(
+          doc(db, `experiment1_responses/${runId}/sealed_envelope/${sealedId}`),
+          {
+            session_id: sessionId,
+            app_version: appVersion,
+            block_type: activeBlockId,
+            trial_index: trialNum,
+            rng_source,
+            server_time,
+            k_options: K_OPTIONS,
+            raw_byte: primary_raw,
+            ghost_raw_byte: ghost_raw,
+            primary_symbol_id,
+            ghost_symbol_id,
+            primary_index_0based: null,
+            ghost_index_0based: null,
+            created_at: serverTimestamp(),
+          },
+          { merge: false }
+        );
+        setSealedEnvelopeId(sealedId);
+      } catch (e) {
+        console.warn('[sealed_envelope] write failed', e);
+      }
+    }
+
+    // === Shuffle ONCE per trial, reuse for all flashes ===
+    layoutRef.current = shuffledFive();               // one Fisher–Yates per trial
+    const baseLayout = layoutRef.current;             // frozen order for this trial
+
+    const baseOrder = baseLayout.map(o => o.id);
+    const orders = Array.from({ length: R }, () => [...baseOrder]);
+    setRedundancyOrders(orders);
+    // If motionSafe, record a single order; otherwise record R identical flashes
+    setRedundancyOrders(useMotionSafe ? [baseOrder] : Array.from({ length: R }, () => [...baseOrder]));
+
+    const t0 = performance.now();
+    const ts = []; // onset time for each flash (ms since trial start)
+    // --- Punctuation path: R flashes with blanks ---
+    for (let i = 0; i < R; i++) {
+      setChoiceOptions(baseLayout);                  // flash on
+      ts.push(Math.round(performance.now() - t0));   // onset timestamp
+      await new Promise(r => setTimeout(r, FLASH_MS));  // on-duration
+      if (myRunId !== prepRunIdRef.current) return;
+      if (i < R - 1 && !useMotionSafe) {
+        setChoiceOptions([]);                   // blank/mask
+        await new Promise(r => setTimeout(r, ISI_MS));
+        if (myRunId !== prepRunIdRef.current) return;
+      }
+    }
+
+    // After the final flash, compute indices against this SAME layout:
+    const assigned = assignZenerFromBytes(primary_raw, ghost_raw, baseLayout);
+    setCorrectIndex(assigned.primaryIndex);
+    setGhostIndex(assigned.ghostIndex);
+    setRngMeta({
+      source: rng_source,
+      server_time,
+      k_options: K_OPTIONS,
+      primary_symbol_id,
+      ghost_symbol_id,
+      raw_byte: primary_raw,
+      ghost_raw_byte: ghost_raw,
+      redundancy_mode: useMotionSafe ? 'single' : (isRedundant ? 'redundant' : 'single'),
+      redundancy_count: R,
+      punctuation: { flash_ms: FLASH_MS, isi_ms: ISI_MS },
+    });
+
+    setRedundancyTimestamps(ts);
+    setChoiceOptions(baseLayout); // ensure final layout is on-screen
+    setTrialReady(true);
+  }
+
 
   // Robot/autopilot mode: random guesses
   useEffect(() => {
@@ -2137,21 +2110,30 @@ function MainApp() {
       if (process.env.NODE_ENV !== 'production') {
         try {
           alert(msg);
-        } catch (_) {}
+        } catch (_) { }
       } else {
         console.warn(msg);
       }
     };
 
     const fsTrials = trialResults.filter(
-      (t) => t.block_type === 'full_stack'
+      (t) => t.block_type === 'full_stack' &&
+        t.target_index_0based !== null && t.target_index_0based !== undefined &&
+        t.selected_index !== null && t.selected_index !== undefined &&
+        t.ghost_index_0based !== null && t.ghost_index_0based !== undefined
     );
     const slTrials = trialResults.filter(
-      (t) => t.block_type === 'spoon_love'
+      (t) => t.block_type === 'spoon_love' &&
+        t.target_index_0based !== null && t.target_index_0based !== undefined &&
+        t.selected_index !== null && t.selected_index !== undefined &&
+        t.ghost_index_0based !== null && t.ghost_index_0based !== undefined
     );
     // NEW: client-local (third block)
     const clTrials = trialResults.filter(
-      (t) => t.block_type === 'client_local'
+      (t) => t.block_type === 'client_local' &&
+        t.target_index_0based !== null && t.target_index_0based !== undefined &&
+        t.selected_index !== null && t.selected_index !== undefined &&
+        t.ghost_index_0based !== null && t.ghost_index_0based !== undefined
     );
 
     const getSubjectHit = (r) => {
@@ -2187,10 +2169,10 @@ function MainApp() {
     const fsN = Math.min(fsSub.length, fsDem.length) || 0;
     const fsHits = sum(fsSub);
     const fsDemonHits = sum(fsDem);
-    const fsRealPct = fsN
+    const fsRealPct = fsN > 0 && Number.isFinite(fsHits)
       ? Number(((fsHits / fsN) * 100).toFixed(1))
       : null;
-    const fsGhostPct = fsN
+    const fsGhostPct = fsN > 0 && Number.isFinite(fsDemonHits)
       ? Number(((fsDemonHits / fsN) * 100).toFixed(1))
       : null;
     const fsDeltaPct =
@@ -2220,10 +2202,10 @@ function MainApp() {
     const slN = Math.min(slSub.length, slDem.length) || 0;
     const slHits = sum(slSub);
     const slDemonHits = sum(slDem);
-    const slRealPct = slN
+    const slRealPct = slN > 0 && Number.isFinite(slHits)
       ? Number(((slHits / slN) * 100).toFixed(1))
       : null;
-    const ghostPct = slN
+    const ghostPct = slN > 0 && Number.isFinite(slDemonHits)
       ? Number(((slDemonHits / slN) * 100).toFixed(1))
       : null;
     const deltaPct =
@@ -2247,10 +2229,10 @@ function MainApp() {
     const clN = Math.min(clSub.length, clDem.length) || 0;
     const clHits = clSub.reduce((a, b) => a + b, 0);
     const clDemonHits = clDem.reduce((a, b) => a + b, 0);
-    const clRealPct = clN
+    const clRealPct = clN > 0 && Number.isFinite(clHits)
       ? Number(((clHits / clN) * 100).toFixed(1))
       : null;
-    const clGhostPct = clN
+    const clGhostPct = clN > 0 && Number.isFinite(clDemonHits)
       ? Number(((clDemonHits / clN) * 100).toFixed(1))
       : null;
     const clDeltaPct =
@@ -2442,8 +2424,9 @@ function MainApp() {
     const clTrialsMin = clTrials.map(toMinimalTrial);
 
     try {
+      const existingDocId = exp1DocId || cachedDocIdRef.current;
       const mainDocId =
-        exp1DocId ||
+        existingDocId ||
         (
           await addDoc(collection(db, 'experiment1_responses'), {
             participant_id: uid,
@@ -2452,7 +2435,10 @@ function MainApp() {
             created_at: serverTimestamp(),
           })
         ).id;
-      if (!exp1DocId) setExp1DocId(mainDocId);
+      if (!existingDocId) {
+        setExp1DocId(mainDocId);
+        cachedDocIdRef.current = mainDocId;
+      }
 
       await setDoc(
         doc(db, 'experiment1_responses', mainDocId),
@@ -2554,8 +2540,8 @@ function MainApp() {
             This study evaluates whether selection accuracy for a
             preselected symbol exceeds chance levels. You will
             complete multiple short trials and brief questionnaires at
-            the beginning, midpoint, and end (approximately 15–20
-            minutes).
+            the beginning and end (approximately 10–20
+            minutes). You have the option of listening to Binaural Beats throughout the trials. You will need a pair of headphones.
           </p>
           <p>
             <strong>Important:</strong> To preserve the scientific
@@ -2622,34 +2608,15 @@ function MainApp() {
                   </p>
                 ) : null}
                 <button
-                  className={`primary-btn ${
-                    !canContinue || isBusy ? 'is-disabled' : ''
-                  }`}
+                  className={`primary-btn ${!canContinue || isBusy ? 'is-disabled' : ''
+                    }`}
                   disabled={!canContinue || isBusy}
                   aria-disabled={!canContinue || isBusy}
                   onClick={async () => {
                     setIsBusy(true);
                     try {
-                      let p = profile;
-                      if (p === undefined) {
-                        const user = await ensureSignedIn();
-                        const ref = doc(db, 'participants', user.uid);
-                        const snap = await getDoc(ref);
-                        p = snap.exists()
-                          ? { id: snap.id, ...snap.data() }
-                          : null;
-                      }
-                      if (
-                        p?.demographics &&
-                        p?.demographics_version === 'v1'
-                      ) {
-                        setStep('breathe-fullstack'); // returning participant
-                      } else {
-                        setStep('pre'); // first-time
-                      }
-                    } catch (e) {
-                      console.error('Consent continue failed', e);
-                      setStep('pre'); // allow participation anyway
+                      const canSkipPre = !!(profile?.demographics && profile?.demographics_version === 'v1');
+                      setStep(canSkipPre ? 'breathe-fullstack' : 'pre');
                     } finally {
                       setIsBusy(false);
                     }
@@ -2811,9 +2778,8 @@ function MainApp() {
             return (
               <div
                 key={q.id}
-                className={`question-block ${
-                  invalid ? 'missing' : ''
-                }`}
+                className={`question-block ${invalid ? 'missing' : ''
+                  }`}
               >
                 <label htmlFor={q.id} className="question-label">
                   <strong>Q{i + 1}.</strong> {q.question}
@@ -2865,9 +2831,8 @@ function MainApp() {
                   </p>
                 ) : null}
                 <button
-                  className={`primary-btn ${
-                    isBlocked ? 'looks-disabled' : ''
-                  }`}
+                  className={`primary-btn ${isBlocked ? 'looks-disabled' : ''
+                    }`}
                   aria-disabled={isBlocked}
                   onClick={onStartBaseline}
                 >
@@ -2897,8 +2862,8 @@ function MainApp() {
                   (Number(r.subject_hit) === 1
                     ? 1
                     : Number(r.matched) === 1
-                    ? 1
-                    : 0),
+                      ? 1
+                      : 0),
                 0
               );
               const total =
@@ -2985,9 +2950,8 @@ function MainApp() {
                   </p>
                 ) : null}
                 <button
-                  className={`primary-btn ${
-                    !midComplete ? 'looks-disabled' : ''
-                  }`}
+                  className={`primary-btn ${!midComplete ? 'looks-disabled' : ''
+                    }`}
                   aria-disabled={!midComplete}
                   onClick={() => {
                     if (midComplete) setStep('breathe-spoon');
@@ -3004,6 +2968,17 @@ function MainApp() {
       {step === 'breathe-fullstack' && (
         <div className="breathe-step">
           <div className="breathing-circle" aria-hidden="true" />
+          <div style={{ margin: '8px 0', fontSize: 13, opacity: 0.85 }}>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+              <input
+                type="checkbox"
+                checked={motionSafe}
+                onChange={(e) => setMotionSafe(e.target.checked)}
+              />
+              Reduce motion (no flashing)
+            </label>
+          </div>
+
           <hr style={{ margin: '1.5rem 0' }} />
           <div
             className="instructions"
@@ -3065,7 +3040,7 @@ function MainApp() {
               Envelopes ready: {prefetchStatus.full_stack.count}/
               {prefetchStatus.full_stack.total}
               {prefetchStatus.full_stack.count <
-              prefetchStatus.full_stack.total ? (
+                prefetchStatus.full_stack.total ? (
                 <span>
                   {' '}
                   — please click “Draw Your Sealed Envelopes” again.
@@ -3073,13 +3048,12 @@ function MainApp() {
               ) : null}
             </div>
             <button
-              className={`primary-btn ${
-                !prefetchStatus.full_stack?.done ||
+              className={`primary-btn ${!prefetchStatus.full_stack?.done ||
                 prefetchStatus.full_stack.count <
-                  prefetchStatus.full_stack.total
-                  ? 'looks-disabled'
-                  : ''
-              }`}
+                prefetchStatus.full_stack.total
+                ? 'looks-disabled'
+                : ''
+                }`}
               onClick={async () => {
                 // Double-guard in onClick too (cheap and safe)
                 const ps = prefetchStatus.full_stack;
@@ -3096,17 +3070,17 @@ function MainApp() {
                 isPrefetching.full_stack ||
                 !prefetchStatus.full_stack?.done ||
                 prefetchStatus.full_stack.count <
-                  prefetchStatus.full_stack.total
+                prefetchStatus.full_stack.total
               }
               aria-disabled={
                 isPrefetching.full_stack ||
                 !prefetchStatus.full_stack?.done ||
                 prefetchStatus.full_stack.count <
-                  prefetchStatus.full_stack.total
+                prefetchStatus.full_stack.total
               }
               title={
                 !prefetchStatus.full_stack?.done ||
-                prefetchStatus.full_stack.count <
+                  prefetchStatus.full_stack.count <
                   prefetchStatus.full_stack.total
                   ? 'Please prepare sealed envelopes first…'
                   : undefined
@@ -3171,7 +3145,7 @@ function MainApp() {
                     if (!res.ok || !j?.success || !j.commit_token) {
                       alert(
                         'Failed to create quantum commit: ' +
-                          (j?.error || `HTTP ${res.status}`)
+                        (j?.error || `HTTP ${res.status}`)
                       );
                       return;
                     }
@@ -3180,7 +3154,7 @@ function MainApp() {
                   } catch (e) {
                     alert(
                       'Network error creating quantum commit: ' +
-                        String(e)
+                      String(e)
                     );
                     return;
                   }
@@ -3247,7 +3221,7 @@ function MainApp() {
               Envelopes ready: {prefetchStatus.spoon_love.count}/
               {prefetchStatus.spoon_love.total}
               {prefetchStatus.spoon_love.count <
-              prefetchStatus.spoon_love.total ? (
+                prefetchStatus.spoon_love.total ? (
                 <span>
                   {' '}
                   — please click “Draw Your Sealed Envelopes” again.
@@ -3282,17 +3256,17 @@ function MainApp() {
                 isPrefetching.spoon_love ||
                 !prefetchStatus.spoon_love?.done ||
                 prefetchStatus.spoon_love.count <
-                  prefetchStatus.spoon_love.total
+                prefetchStatus.spoon_love.total
               }
               aria-disabled={
                 isPrefetching.spoon_love ||
                 !prefetchStatus.spoon_love?.done ||
                 prefetchStatus.spoon_love.count <
-                  prefetchStatus.spoon_love.total
+                prefetchStatus.spoon_love.total
               }
               title={
                 !prefetchStatus.spoon_love?.done ||
-                prefetchStatus.spoon_love.count <
+                  prefetchStatus.spoon_love.count <
                   prefetchStatus.spoon_love.total
                   ? 'Please prepare sealed envelopes first…'
                   : undefined
@@ -3370,7 +3344,7 @@ function MainApp() {
               Envelopes ready: {prefetchStatus.client_local.count}/
               {prefetchStatus.client_local.total}
               {prefetchStatus.client_local.count <
-              prefetchStatus.client_local.total ? (
+                prefetchStatus.client_local.total ? (
                 <span>
                   {' '}
                   — please click “Draw Your Sealed Envelopes” again.
@@ -3380,13 +3354,12 @@ function MainApp() {
 
             {/* Start */}
             <button
-              className={`primary-btn ${
-                !prefetchStatus.client_local?.done ||
+              className={`primary-btn ${!prefetchStatus.client_local?.done ||
                 prefetchStatus.client_local.count <
-                  prefetchStatus.client_local.total
-                  ? 'looks-disabled'
-                  : ''
-              }`}
+                prefetchStatus.client_local.total
+                ? 'looks-disabled'
+                : ''
+                }`}
               onClick={async () => {
                 const ps = prefetchStatus.client_local;
                 if (
@@ -3402,17 +3375,17 @@ function MainApp() {
                 isPrefetching.client_local ||
                 !prefetchStatus.client_local?.done ||
                 prefetchStatus.client_local.count <
-                  prefetchStatus.client_local.total
+                prefetchStatus.client_local.total
               }
               aria-disabled={
                 isPrefetching.client_local ||
                 !prefetchStatus.client_local?.done ||
                 prefetchStatus.client_local.count <
-                  prefetchStatus.client_local.total
+                prefetchStatus.client_local.total
               }
               title={
                 !prefetchStatus.client_local?.done ||
-                prefetchStatus.client_local.count <
+                  prefetchStatus.client_local.count <
                   prefetchStatus.client_local.total
                   ? 'Please prepare sealed envelopes first…'
                   : undefined
@@ -3438,6 +3411,7 @@ function MainApp() {
             const currentRound =
               Math.floor(currentTrial / MATCH_SIZE) + 1;
             return (
+
               <div
                 style={{
                   fontSize: '0.9em',
@@ -3528,8 +3502,8 @@ function MainApp() {
                     (Number(r.subject_hit) === 1
                       ? 1
                       : Number(r.matched) === 1
-                      ? 1
-                      : 0),
+                        ? 1
+                        : 0),
                   0
                 );
 
@@ -3538,9 +3512,9 @@ function MainApp() {
                 const pct =
                   totalTrialsPlanned > 0
                     ? (
-                        (hitsSoFar / totalTrialsPlanned) *
-                        100
-                      ).toFixed(1)
+                      (hitsSoFar / totalTrialsPlanned) *
+                      100
+                    ).toFixed(1)
                     : '0.0';
 
                 // Round wins so far (completed rounds only)
@@ -3660,23 +3634,43 @@ function MainApp() {
           </div>
 
           <div className="bottom-feedback-slot" aria-live="polite">
-            {currentBlockId !== 'spoon_love' ||
-            !config.ENABLE_QUANTUM_REMAP ||
-            !hasGuessedThisTrial ||
-            !lastResult ? (
-              // Hide on non-quantum blocks and before any guess
+            {!hasGuessedThisTrial || !lastResult ? (
+              // Hide before any guess
               <div className="status-placeholder" aria-hidden="true">
                 &nbsp;
               </div>
             ) : (
               <>
-                <p className="aligned-line">
-                  {lastResult.matched ? 'Correct ✅' : 'Incorrect ❌'}{' '}
-                  <span style={{ opacity: 0.75, marginLeft: 8 }}>
-                    (pre: <b>{lastResult.pre_label}</b> → post:{' '}
-                    <b>{lastResult.post_label}</b>)
-                  </span>
-                </p>
+                {currentBlockId === 'spoon_love' && config.ENABLE_QUANTUM_REMAP ? (
+                  <p className="aligned-line">
+                    {lastResult.matched ? 'Correct ✅' : 'Incorrect ❌'}{' '}
+                    <span style={{ opacity: 0.75, marginLeft: 8 }}>
+                      (pre: <b>{lastResult.pre_label}</b> → post:{' '}
+                      <b>{lastResult.post_label}</b>)
+                    </span>
+                  </p>
+                ) : (
+                  <p className="aligned-line">
+                    {lastResult.matched ? 'Correct ✅' : 'Incorrect ❌'}
+                  </p>
+                )}
+                {FB[currentBlockId].STAR && lastResult.matched ? (
+                  <div className="star-burst">⭐</div>
+                ) : null}
+                {FB[currentBlockId].ALIGNED_TEXT ? (
+                  <p className="alignment-feedback">
+                    {(() => {
+                      const blockResults = trialResults.filter(t => t.block_type === currentBlockId &&
+                        t.target_index_0based !== null && t.target_index_0based !== undefined &&
+                        t.selected_index !== null && t.selected_index !== undefined &&
+                        t.ghost_index_0based !== null && t.ghost_index_0based !== undefined);
+                      const hits = blockResults.filter(t => t.matched === 1).length;
+                      const total = blockResults.length;
+                      const pct = total > 0 ? (hits / total) * 100 : 0;
+                      return ratingMessage(null, pct);
+                    })()}
+                  </p>
+                ) : null}
                 {FB[currentBlockId].SCORE ? (
                   <h3 className="score-line">
                     Score so far:{' '}
@@ -3835,8 +3829,8 @@ function MainApp() {
                   (Number(r.subject_hit) === 1
                     ? 1
                     : Number(r.matched) === 1
-                    ? 1
-                    : 0),
+                      ? 1
+                      : 0),
                 0
               );
 
@@ -3871,7 +3865,10 @@ function MainApp() {
               let totalPlannedRounds = 0;
 
               for (const b of blocks) {
-                const rs = rows.filter((t) => t.block_type === b);
+                const rs = rows.filter((t) => t.block_type === b &&
+                  t.target_index_0based !== null && t.target_index_0based !== undefined &&
+                  t.selected_index !== null && t.selected_index !== undefined &&
+                  t.ghost_index_0based !== null && t.ghost_index_0based !== undefined);
                 totalRoundWins += countAboveChanceRoundWins(
                   rs,
                   MATCH_SIZE
@@ -3898,8 +3895,8 @@ function MainApp() {
                   (Number(r.subject_hit) === 1
                     ? 1
                     : Number(r.matched) === 1
-                    ? 1
-                    : 0),
+                      ? 1
+                      : 0),
                 0
               );
               const total = rows.length;
@@ -3929,14 +3926,23 @@ function MainApp() {
                 (Number(r.subject_hit) === 1
                   ? 1
                   : Number(r.matched) === 1
-                  ? 1
-                  : 0),
+                    ? 1
+                    : 0),
               0
             );
             const total = rows.length || 1;
             const pct = ((hits / total) * 100).toFixed(1);
             return <p>{ratingMessage(NaN, pct)}</p>;
           })()}
+
+          <HighScoreEmailGate
+            experiment="exp1"
+            step="final-results"
+            sessionId={sessionId}
+            participantId={auth.currentUser?.uid ?? null}
+            spoonLoveStats={spoonLoveStats}
+            fullStackStats={fullStackStats}
+          />
 
           <hr style={{ margin: '1.5rem 0' }} />
 
@@ -3958,16 +3964,24 @@ function MainApp() {
       {step === 'post' && (
         <>
           <h2>Post-Experiment Questions</h2>
-          {filteredPostQuestions.map((q, i) => (
-            <div key={q.id} className="question-block">
-              <label htmlFor={q.id} className="question-label">
-                <strong>Q{i + 1}.</strong> {q.question}
-              </label>
-              <div className="answer-wrapper">
-                {renderInput(q, 'post')}
+          {filteredPostQuestions
+            .filter((q) => {
+              if (!q.showIf) return true; // always show if no condition
+
+              const parentAnswer = postResponses[q.showIf.id]; // user's answer to the parent question
+              return q.showIf.values.includes(parentAnswer);
+            })
+            .map((q, i) => (
+              <div key={q.id} className="question-block">
+                <label htmlFor={q.id} className="question-label">
+                  <strong>Q{i + 1}.</strong> {q.question}
+                </label>
+                <div className="answer-wrapper">
+                  {renderInput(q, 'post')}
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+
 
           {(() => {
             const OPTIONAL_POST_IDS = new Set(['finalThoughts']);
@@ -3976,10 +3990,22 @@ function MainApp() {
               .every((q) => isAnswered(q, postResponses));
             const onSubmit = async () => {
               if (!postComplete) return;
-              await saveResults();
+
+              // Ensure all postQuestions exist in final data
+              const finalResponses = {};
+              postQuestions.forEach((q) => {
+                if (postResponses[q.id] !== undefined) {
+                  finalResponses[q.id] = postResponses[q.id];
+                } else {
+                  finalResponses[q.id] = null; // store null for hidden/unanswered
+                }
+              });
+
+              await saveResults(finalResponses); // pass structured data
               alert('Responses saved!');
               setStep('done');
             };
+
             return (
               <>
                 {!postComplete ? (
@@ -3995,9 +4021,8 @@ function MainApp() {
                   </p>
                 ) : null}
                 <button
-                  className={`primary-btn ${
-                    !postComplete ? 'looks-disabled' : ''
-                  }`}
+                  className={`primary-btn ${!postComplete ? 'looks-disabled' : ''
+                    }`}
                   aria-disabled={!postComplete}
                   onClick={onSubmit}
                 >

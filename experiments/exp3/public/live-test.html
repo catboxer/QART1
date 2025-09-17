@@ -1,0 +1,57 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Live Stream Test (90s)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      body { font-family: system-ui, Arial, sans-serif; margin: 2rem; }
+      code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .dot { display:inline-block; width:10px; height:10px; border-radius:50%; background:#ccc; margin-left:.5rem; vertical-align:middle; }
+      .dot.on { background:#4caf50; }
+    </style>
+  </head>
+  <body>
+    <h1>Live Stream Test</h1>
+    <p>
+      Endpoint: <code>/live?dur=90000</code>
+      <span id="statusDot" class="dot"></span>
+    </p>
+    <p>Received bits: <span id="count">0</span></p>
+    <p>Last source: <code id="src">—</code></p>
+    <button id="start">Start ~90s Stream</button>
+    <script>
+      const startBtn = document.getElementById('start');
+      const countEl = document.getElementById('count');
+      const srcEl = document.getElementById('src');
+      const dot = document.getElementById('statusDot');
+
+      startBtn.onclick = () => {
+        let count = 0;
+        dot.classList.add('on');
+
+        const es = new EventSource('/live?dur=90000');
+
+        es.addEventListener('bits', (evt) => {
+          const data = JSON.parse(evt.data); // { ts, source, bits }
+          count += data.bits.length;
+          countEl.textContent = String(count);
+          srcEl.textContent = data.source;
+        });
+
+        es.addEventListener('heartbeat', () => { /* keeps connection healthy */ });
+
+        es.addEventListener('done', () => {
+          es.close();
+          dot.classList.remove('on');
+        });
+
+        es.onerror = () => {
+          es.close();
+          dot.classList.remove('on');
+          alert('Stream error — check /live and netlify.toml are in place.');
+        };
+      };
+    </script>
+  </body>
+</html>
