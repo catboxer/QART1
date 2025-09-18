@@ -1729,9 +1729,7 @@ export default function QAExport() {
   const [qaDebug, setQaDebug] = useState(null);
 
   /* ==== NEW: mode/summary state ==== */
-  /* ==== NEW: mode/summary state ==== */
   const [mode, setMode] = useState('pooled'); // 'pooled' | 'completers' | 'sessionWeighted'
-  const [shuffleFilter, setShuffleFilter] = useState('all'); // 'all' | 'leaky' | 'strict'
   const [summary, setSummary] = useState({
     total: 0,
     completers: 0,
@@ -1941,7 +1939,7 @@ export default function QAExport() {
   useEffect(() => {
     if (rows.length) buildReports(rows);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, shuffleFilter]);
+  }, [mode]);
   // If trial arrays are not in the main doc, fetch them from the subcollection
   const hydrateTrialDetails = async (rows) => {
     const jobs = rows.map(async (d) => {
@@ -2011,13 +2009,6 @@ export default function QAExport() {
             collection(db, 'experiment1_responses', d.id, 'logs')
           );
           const logs = logSnap.docs.map((x) => x.data() || {});
-          // Infer shuffle_mode at the session level from logs (fallback-safe)
-          if (!d.shuffle_mode) {
-            const sm = logs.find(
-              (r) => typeof r.shuffle_mode === 'string'
-            )?.shuffle_mode;
-            if (sm) d.shuffle_mode = sm; // 'leaky' or 'strict'
-          }
 
           // normalize block names:
           // - accept suffixed names like "full_stack-Physical"
@@ -2257,25 +2248,10 @@ export default function QAExport() {
           : 0,
       }));
     setSummary({ total, completers, nonCompleters, exitBreakdown });
-    // NEW: trial-level shuffle predicate
 
-    const sampleTrials = (all[0]?.full_stack?.trialResults || [])
-      .slice(0, 5)
-      .map((t) => ({ mode: t.shuffle_mode }));
-    console.log('sample trial modes:', sampleTrials);
-    // Read the session's shuffle once (doc field, then any trial as fallback)
-    const sessionShuffle = (d) =>
-      +(d?.shuffle_mode || '').toString().trim().toLowerCase();
-
-    // session filter per mode + shuffle
-    const baseSessionFilter =
+    // session filter per mode
+    const combinedFilter =
       mode === 'completers' ? (d) => isCompleter(d) : () => true;
-    const passesShuffleSession =
-      shuffleFilter === 'all'
-        ? () => true
-        : (d) => sessionShuffle(d) === shuffleFilter;
-    const combinedFilter = (d) =>
-      baseSessionFilter(d) && passesShuffleSession(d);
 
     // trial extractors for each block
     const getPRNG = (doc) => {
@@ -3407,46 +3383,6 @@ export default function QAExport() {
         ))}
       </div>
 
-      {/* Row 2: Shuffle filter */}
-      <div
-        style={{
-          display: 'flex',
-          gap: 8,
-          alignItems: 'center',
-          flexWrap: 'wrap',
-        }}
-      >
-        <span style={{ fontSize: 12, color: '#555' }}>Shuffle:</span>
-        {[
-          { id: 'all', label: 'All' },
-          { id: 'leaky', label: 'Leaky only' },
-          { id: 'strict', label: 'Strict only' },
-        ].map((opt) => (
-          <label
-            key={opt.id}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
-              padding: '4px 8px',
-              border: '1px solid #ddd',
-              borderRadius: 16,
-              background:
-                shuffleFilter === opt.id ? '#eef6ff' : '#fff',
-              cursor: 'pointer',
-            }}
-          >
-            <input
-              type="radio"
-              name="shuffle"
-              value={opt.id}
-              checked={shuffleFilter === opt.id}
-              onChange={(e) => setShuffleFilter(e.target.value)}
-            />
-            <span style={{ fontSize: 12 }}>{opt.label}</span>
-          </label>
-        ))}
-      </div>
     </div>
   );
 
