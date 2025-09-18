@@ -20,5 +20,9 @@ export const config = {
     baseline: 56,
     quantum: 56,
   },
+
+  // High score email threshold (p-value for statistical significance)
+  // Set to 0.05 for production, 0.5 for testing
+  emailSignificanceThreshold: 0.05,
 };
 // Alter whether feedback is displayed.

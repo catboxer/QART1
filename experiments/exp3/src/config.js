@@ -27,6 +27,10 @@ config.experiments = {
     BLOCK_HIGHLIGHT_PCT: 52, //what score gets a congrats
     FINALIST_MIN_PCT: 55, // email capture high score gate opens at or above this percent
 
+    // High score email threshold (p-value for statistical significance)
+    // Set to 0.05 for production, 0.5 for testing
+    emailSignificanceThreshold: 0.05,
+
     // storage
     FIRESTORE_RUNS: 'runs',
     FIRESTORE_TAPES: 'tapes',

@@ -1,17 +1,19 @@
 // HighScoreEmailGate.jsx
 import React, { useMemo, useEffect, useState } from "react";
 import HighScoreEmailPrompt from "./HighScoreEmailPrompt";
+import { config } from './config.js';
 
 /**
  * Drop-in gate that shows HighScoreEmailPrompt when the final % >= cutoff.
  *
  * Props:
- * - experiment: "exp0" | "exp1" | "exp2" | "exp3" (affects default cutoff)
- * - step: parent UI step; prompt opens only when step === "done"
+ * - experiment: "exp0" | "exp1" | "exp2" | "exp3" (affects triggering logic)
+ * - step: parent UI step; prompt opens only when step === "done" or "final-results"
  * - sessionId, participantId: optional, passed to the prompt
  * - finalPercent: optional number — if you already have a final % var
  * - spoonLoveStats, fullStackStats: optional objects with { userPercent } (strings or numbers)
  * - cutoffOverride: optional number to override per-experiment cutoff (in percent)
+ * - pValue: optional number — for exp1/exp2/exp3, triggers on statistical significance (p ≤ 0.05)
  */
 export default function HighScoreEmailGate({
   experiment = "exp2",
@@ -22,6 +24,7 @@ export default function HighScoreEmailGate({
   spoonLoveStats,
   fullStackStats,
   cutoffOverride,
+  pValue,
 }) {
   // Default percent cutoffs per experiment; tweak once here for all apps
   const CUTOFFS = {

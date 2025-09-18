@@ -1730,6 +1730,7 @@ export default function QAExport() {
 
   /* ==== NEW: mode/summary state ==== */
   const [mode, setMode] = useState('pooled'); // 'pooled' | 'completers' | 'sessionWeighted'
+  const [binauralFilter, setBinauralFilter] = useState('all'); // 'all' | 'yes' | 'no'
   const [summary, setSummary] = useState({
     total: 0,
     completers: 0,
@@ -1939,7 +1940,7 @@ export default function QAExport() {
   useEffect(() => {
     if (rows.length) buildReports(rows);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode]);
+  }, [mode, binauralFilter]);
   // If trial arrays are not in the main doc, fetch them from the subcollection
   const hydrateTrialDetails = async (rows) => {
     const jobs = rows.map(async (d) => {
@@ -2249,9 +2250,23 @@ export default function QAExport() {
       }));
     setSummary({ total, completers, nonCompleters, exitBreakdown });
 
-    // session filter per mode
-    const combinedFilter =
+    // Helper to check binaural usage
+    const sessionBinaural = (d) => {
+      const response = d?.binaural_beats || '';
+      if (response === 'No' || response === 'What are binaural beats?') return 'no';
+      if (response.includes('Yes')) return 'yes';
+      return 'unknown';
+    };
+
+    // session filter per mode + binaural
+    const baseSessionFilter =
       mode === 'completers' ? (d) => isCompleter(d) : () => true;
+    const passesBinauralFilter =
+      binauralFilter === 'all'
+        ? () => true
+        : (d) => sessionBinaural(d) === binauralFilter;
+    const combinedFilter = (d) =>
+      baseSessionFilter(d) && passesBinauralFilter(d);
 
     // trial extractors for each block
     const getPRNG = (doc) => {
@@ -3377,6 +3392,48 @@ export default function QAExport() {
               value={opt.id}
               checked={mode === opt.id}
               onChange={(e) => setMode(e.target.value)}
+            />
+            <span style={{ fontSize: 12 }}>{opt.label}</span>
+          </label>
+        ))}
+      </div>
+
+      {/* Row 2: Binaural filter */}
+      <div
+        style={{
+          display: 'flex',
+          gap: 8,
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          marginTop: 8,
+        }}
+      >
+        <span style={{ fontSize: 12, color: '#555' }}>Binaural beats:</span>
+        {[
+          { id: 'all', label: 'All sessions' },
+          { id: 'yes', label: 'Used binaural beats' },
+          { id: 'no', label: 'No binaural beats' },
+        ].map((opt) => (
+          <label
+            key={opt.id}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '4px 8px',
+              border: '1px solid #ddd',
+              borderRadius: 16,
+              background:
+                binauralFilter === opt.id ? '#eef6ff' : '#fff',
+              cursor: 'pointer',
+            }}
+          >
+            <input
+              type="radio"
+              name="binaural"
+              value={opt.id}
+              checked={binauralFilter === opt.id}
+              onChange={(e) => setBinauralFilter(e.target.value)}
             />
             <span style={{ fontSize: 12 }}>{opt.label}</span>
           </label>
