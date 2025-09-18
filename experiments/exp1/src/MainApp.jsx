@@ -961,33 +961,6 @@ function MainApp() {
       });
       if (significant) fireConfettiFinale(); // BIG confetti only here
 
-      // === Reveal K for auditors (stateless commit) ===
-      if (config.ENABLE_QUANTUM_REMAP) {
-        try {
-          if (spoonCommitTokenRef.current) {
-            const resp = await fetch(
-              '/.netlify/functions/reveal-block-key',
-              {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  session_id: sessionId,
-                  block: 'spoon_love',
-                  commit_token: spoonCommitTokenRef.current, // stateless reveal
-                }),
-              }
-            );
-            // Optional: read/inspect the body; we don't need to store it client-side
-            await resp.json().catch(() => ({}));
-          } else {
-            console.warn(
-              '[reveal] no commit_token present; skipping reveal'
-            );
-          }
-        } catch (e) {
-          console.warn('reveal-block-key failed (continuing):', e);
-        }
-      }
 
       setStep('breathe-client');
     } else {
@@ -1260,6 +1233,34 @@ function MainApp() {
             payload.rng_source ||
             (blockId === 'full_stack' ? 'random_org' : 'qrng_api'),
         };
+
+        // Save commit hash to database for auditing
+        try {
+          const runId = await ensureRunDoc();
+          await setDoc(
+            doc(
+              db,
+              'experiment1_responses',
+              runId,
+              'commits',
+              blockId // 'full_stack' or 'spoon_love'
+            ),
+            {
+              session_id: sessionId,
+              block: blockId,
+              commit_hash: hashHex, // hash only (no salt/pairs yet)
+              rng_source: payload.rng_source ||
+                (blockId === 'full_stack' ? 'random_org' : 'qrng_api'),
+              created_at: serverTimestamp(),
+            },
+            { merge: true }
+          );
+        } catch (e) {
+          console.warn(
+            `${blockId} commit save failed (continuing):`,
+            e
+          );
+        }
       } catch (e) {
         console.warn(
           'Failed to build commit-reveal tape (continuing):',
@@ -1347,10 +1348,6 @@ function MainApp() {
     let resolvedGhostIndex = null;
     let resolvedMeta = null; // carries rng info (bytes/symbols), plus remap data if any
 
-    // Flag to check if we should perform the remap logic
-    const isRemapBlockActive =
-      blockId === 'spoon_love' && config.ENABLE_QUANTUM_REMAP;
-
     // ===== Block 3: client_local — score pre-drawn assignment (no new randomness) =====
     if (blockId === 'client_local') {
       resolvedCorrectIndex = rngMeta?.calculated_primary_index ?? correctIndex;
@@ -1360,102 +1357,7 @@ function MainApp() {
         k_options: 5,
       };
     }
-    // ===== Block 2: spoon_love (WITH REMAP ENABLED) — POST-PRESS REMAP using server key r =====
-    else if (isRemapBlockActive) {
-      const press_bucket_ms = Math.floor(Date.now() / 10) * 10; // 10ms bucket
-      let remapR = null,
-        proof_hmac = null,
-        server_time = null; // start as null so we can detect failures
-
-      try {
-        const payload = {
-          session_id: sessionId,
-          block: 'spoon_love',
-          trial_index: currentTrial + 1,
-          commit_token: spoonCommitTokenRef.current, // <-- NEW (must be set when you clicked “Draw…”)
-          press_start_ts,
-          press_bucket_ms,
-          selected_index: selectedIndex,
-          options: choiceOptions.map((o) => o.id), // exactly 5 ids in display order
-          raw_byte: rngMeta?.raw_byte >>> 0, // <-- NEW (must be a number)
-        };
-
-        const res = await fetch(
-          '/.netlify/functions/qrng-remap-key',
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-          }
-        );
-
-        const j = await res.json().catch(() => ({}));
-        if (res.ok && j?.success && typeof j.r === 'number') {
-          remapR = j.r % 5;
-          proof_hmac = j.proof_hmac ?? null;
-          server_time = j.server_time ?? null;
-        } else {
-          const msg = j?.error || `HTTP ${res.status}`;
-          console.warn('remap-key error:', msg, j);
-          setTrialBlockingError(`Remap error: ${msg}`);
-          remapR = null;
-        }
-      } catch (e) {
-        console.warn('qrng-remap-key failed', e);
-        setTrialBlockingError(`Network error: ${String(e)}`);
-        remapR = null;
-      }
-
-      // If we couldn't get a valid remap, reset and let the user try again
-      if (remapR === null) {
-        hasGuessedRef.current = false;
-        setHasGuessedThisTrial(false);
-        setTrialBlockingError(
-          'Network hiccup preparing your remap. Please try again.'
-        );
-        return;
-      }
-      setTrialBlockingError(null);
-      const idxOf = (id) =>
-        choiceOptions.findIndex((o) => o.id === id);
-      const subjectSym = ZENER[(rngMeta.raw_byte >>> 0) % 5].id; // pre-drawn (retrocausal source)
-      const ghostSym = ZENER[(rngMeta.ghost_raw_byte >>> 0) % 5].id;
-
-      const baseIdx = idxOf(subjectSym);
-      const ghostBase = idxOf(ghostSym);
-
-      const remappedIdx = (((baseIdx + remapR) % 5) + 5) % 5;
-      const ghostIdx = (((ghostBase + remapR) % 5) + 5) % 5;
-
-      // Update UI state
-      setCorrectIndex(remappedIdx);
-      setGhostIndex(ghostIdx);
-      setRngMeta((prev) => ({
-        ...(prev || {}),
-        remap_r: remapR,
-        remap_proof: proof_hmac,
-        server_time: server_time || prev?.server_time || null,
-        press_bucket_ms,
-      }));
-
-      // Local resolved values
-      resolvedCorrectIndex = remappedIdx;
-      resolvedGhostIndex = ghostIdx;
-      resolvedMeta = {
-        ...(rngMeta || {}),
-        remap_r: remapR,
-        remap_proof: proof_hmac,
-        server_time: server_time || rngMeta?.server_time || null,
-        press_bucket_ms,
-      };
-
-      // Retrocausal labels for logging/UI
-      var retro_pre_label = subjectSym;
-      var retro_post_label =
-        choiceOptions[remappedIdx]?.id ?? String(remappedIdx);
-    }
-
-    // ===== Block 1 (full_stack) OR Block 2 (spoon_love with REMAP DISABLED) =====
+    // ===== Block 1 (full_stack) OR Block 2 (spoon_love) — use server-backed RNG =====
     else {
       resolvedCorrectIndex = rngMeta?.calculated_primary_index ?? correctIndex;
       resolvedGhostIndex = rngMeta?.calculated_ghost_index ?? ghostIndex;
@@ -1478,8 +1380,6 @@ function MainApp() {
       matched: matched === 1,
       selectedIndex,
       correctIndex: resolvedCorrectIndex,
-      pre_label: typeof retro_pre_label !== 'undefined' ? retro_pre_label : choiceOptions[resolvedCorrectIndex]?.id ?? String(resolvedCorrectIndex),
-      post_label: typeof retro_post_label !== 'undefined' ? retro_post_label : choiceOptions[resolvedCorrectIndex]?.id ?? String(resolvedCorrectIndex)
     });
     // correct: did the ghost pick the actual target?
     const demon_hit =
@@ -1496,17 +1396,7 @@ function MainApp() {
       String(resolvedCorrectIndex);
     const selectedLabel =
       choiceOptions[selectedIndex]?.id ?? String(selectedIndex);
-    const pre_label =
-      typeof retro_pre_label !== 'undefined'
-        ? retro_pre_label
-        : correctLabel;
-    const post_label =
-      typeof retro_post_label !== 'undefined'
-        ? retro_post_label
-        : correctLabel;
 
-    const isQuantum =
-      blockId === 'spoon_love' && config.ENABLE_QUANTUM_REMAP;
     const optionsIds = choiceOptions.map((o) => o.id);
     const commitHash = tapesRef.current[blockId]?.hashHex ?? null;
     const logRow = {
@@ -1528,9 +1418,7 @@ function MainApp() {
       press_start_ts,
       press_release_ts: new Date().toISOString(),
       hold_duration_ms: null,
-      press_bucket_ms: isQuantum
-        ? resolvedMeta?.press_bucket_ms ?? null
-        : null,
+      press_bucket_ms: null,
 
       // scoring
       subject_hit,
@@ -1570,19 +1458,6 @@ function MainApp() {
         rngMeta?.ghost_raw_byte ??
         null,
 
-      // retrocausal labels — only for quantum block
-      pre_symbol_id: isQuantum ? pre_label : null,
-      post_symbol_id: isQuantum ? post_label : null,
-
-      // remap metadata — only for quantum block
-      remap_mode: isQuantum ? 'qrng_postchoice_remap' : null,
-      remap_r: isQuantum ? resolvedMeta?.remap_r ?? null : null,
-      remap_r_ghost: isQuantum
-        ? resolvedMeta?.remap_r_ghost ?? null
-        : null,
-      remap_proof: isQuantum
-        ? resolvedMeta?.remap_proof ?? null
-        : null,
 
       // audit marker for your proof context shape
       proof_ctx_version: 1,
@@ -1809,11 +1684,6 @@ function MainApp() {
             // sealed envelope id (baseline/quantum have it; client_local null)
             sealed_envelope_id: logRow.sealed_envelope_id,
 
-            // remap audit fields (null outside spoon_love)
-            remap_mode: logRow.remap_mode ?? null,
-            remap_r: logRow.remap_r ?? null,
-            remap_r_ghost: logRow.remap_r_ghost ?? null,
-            remap_proof: logRow.remap_proof ?? null,
 
             // audit marker for context shape
             proof_ctx_version: logRow.proof_ctx_version ?? 1,
@@ -2433,11 +2303,6 @@ function MainApp() {
         demon_hit: dh,
         matched: typeof r.matched === 'number' ? r.matched : null,
 
-        // quantum-only extras (harmless elsewhere)
-        remap_mode: r.remap_mode ?? null,
-        remap_r: typeof r.remap_r === 'number' ? r.remap_r : null,
-        pre_symbol_id: r.pre_symbol_id ?? null,
-        post_symbol_id: r.post_symbol_id ?? null,
       };
     };
 
@@ -2771,16 +2636,6 @@ function MainApp() {
             <div>
               Some participants prefer to go quickly. Others prefer to
               pause and focus. Use the pace that feels natural to you.
-              {config.ENABLE_QUANTUM_REMAP && (
-                <>
-                  {' '}
-                  In the Quantum RNG match, your click timing is
-                  included in a small remap of the sealed target.
-                  There is no known “best” timing and no guarantee
-                  that a particular pace will help, but you are
-                  welcome to experiment with what feels right.
-                </>
-              )}
             </div>
             <ol>
               <li>
@@ -2797,11 +2652,7 @@ function MainApp() {
                 <strong>Quantum RNG Match</strong> (
                 {trialsPerBlock.spoon_love} trials): Click{' '}
                 <em>Draw Your Sealed Envelopes</em> to fetch a sealed
-                quantum sequence. On each trial, pick a symbol
-                {config.ENABLE_QUANTUM_REMAP
-                  ? '; your click timing applies a small remap to the sealed base symbol before scoring'
-                  : ''}
-                . After the match, the server reveals the bytes and
+                quantum sequence. On each trial, pick a symbol. After the match, the server reveals the bytes and
                 salt for verification.
               </li>
               <li>
@@ -3168,14 +3019,7 @@ function MainApp() {
                 }
                 onClick={async () => {
                   if (prefetchStatus.spoon_love.done) return;
-
-                  // If remapping is disabled, just prefetch envelopes and skip commit logic
-                  if (!config.ENABLE_QUANTUM_REMAP) {
-                    await prefetchBlock('spoon_love');
-                    return;
-                  }
-
-                  // --- Remapping is ON: Original logic with commit token ---
+                  await prefetchBlock('spoon_love');
                   const runId = await ensureRunDoc();
                   let tokenResp = null;
                   try {
@@ -3289,16 +3133,6 @@ function MainApp() {
                   !ps?.done ||
                   ps.count < ps.total
                 ) {
-                  return;
-                }
-                // If remap is enabled, we MUST have a commit token.
-                if (
-                  config.ENABLE_QUANTUM_REMAP &&
-                  !spoonCommitTokenRef.current
-                ) {
-                  alert(
-                    'Please click “Draw Your Sealed Envelopes” first to get a quantum commit token.'
-                  );
                   return;
                 }
                 await startTrials(1);
@@ -3692,19 +3526,9 @@ function MainApp() {
               </div>
             ) : (
               <>
-                {currentBlockId === 'spoon_love' && config.ENABLE_QUANTUM_REMAP ? (
-                  <p className="aligned-line">
-                    {lastResult.matched ? 'Correct ✅' : 'Incorrect ❌'}{' '}
-                    <span style={{ opacity: 0.75, marginLeft: 8 }}>
-                      (pre: <b>{lastResult.pre_label}</b> → post:{' '}
-                      <b>{lastResult.post_label}</b>)
-                    </span>
-                  </p>
-                ) : (
-                  <p className="aligned-line">
-                    {lastResult.matched ? 'Correct ✅' : 'Incorrect ❌'}
-                  </p>
-                )}
+                <p className="aligned-line">
+                  {lastResult.matched ? 'Correct ✅' : 'Incorrect ❌'}
+                </p>
                 {FB[currentBlockId].STAR && lastResult.matched ? (
                   <div className="star-burst">⭐</div>
                 ) : null}
