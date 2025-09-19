@@ -25,6 +25,7 @@ import {
 import confetti from 'canvas-confetti';
 import { config } from './config.js';
 import HighScoreEmailGate from "./HighScoreEmailGate";
+import { binomPValueOneSidedAtOrAbove, formatP } from './stats/';
 /* =========================
    Helpers / UI
    ========================= */
@@ -279,38 +280,6 @@ function countAboveChanceRoundWins(rows, matchSize = 5) {
     if (pts >= 3) wins++; // "round win" = 3+ hits in 5 trials
   }
   return { wins, totalRounds: completed };
-}
-
-// log-factorial (small n exact, fine for your n)
-function logFactorial(n) {
-  let s = 0;
-  for (let i = 2; i <= n; i++) s += Math.log(i);
-  return s;
-}
-function logChoose(n, k) {
-  if (k < 0 || k > n) return -Infinity;
-  return logFactorial(n) - logFactorial(k) - logFactorial(n - k);
-}
-function binomPMF(n, k, p) {
-  const logp =
-    logChoose(n, k) + k * Math.log(p) + (n - k) * Math.log(1 - p);
-  return Math.exp(logp);
-}
-function binomPValueOneSidedAtOrAbove(hits, n, p0) {
-  // P(X >= hits | Binomial(n, p0))
-  let tail = 0;
-  for (let k = hits; k <= n; k++) tail += binomPMF(n, k, p0);
-  // numeric safety
-  if (!Number.isFinite(tail)) return 0;
-  return Math.min(1, Math.max(0, tail));
-}
-// Count per-round wins (≥3 hits in a 5-trial round by default)
-
-// Nicer p-value formatting
-function formatP(p) {
-  if (p < 1e-4) return '<0.0001';
-  if (p > 0.9999) return '≈1.0000';
-  return Number.isFinite(p) ? p.toFixed(4) : '—';
 }
 
 /* ===== Commit–reveal helpers ===== */
@@ -728,9 +697,9 @@ function MainApp() {
 
   // Feedback switches
   const FB = {
-    full_stack: { STAR: true, ALIGNED_TEXT: true, SCORE: true },
-    spoon_love: { STAR: true, ALIGNED_TEXT: true, SCORE: true },
-    client_local: { STAR: true, ALIGNED_TEXT: true, SCORE: true },
+    full_stack: { STAR: true, ALIGNED_TEXT: false, SCORE: false },
+    spoon_love: { STAR: true, ALIGNED_TEXT: false, SCORE: false },
+    client_local: { STAR: true, ALIGNED_TEXT: false, SCORE: false },
   };
   // Show/Hide "ghost" from participant UI (still logged under the hood)
 
@@ -1384,16 +1353,15 @@ function MainApp() {
     // correct: did the ghost pick the actual target?
     const demon_hit =
       resolvedGhostIndex === resolvedCorrectIndex ? 1 : 0;
-    console.log('DEMON HIT CALC:', {
+    console.log('HIT CALCULATION:', {
+      selectedIndex,
       resolvedGhostIndex,
       resolvedCorrectIndex,
+      subject_hit,
       demon_hit,
-      equal: resolvedGhostIndex === resolvedCorrectIndex
-    });
-
-    const correctLabel =
-      choiceOptions[resolvedCorrectIndex]?.id ??
-      String(resolvedCorrectIndex);
+      subjectMatch: selectedIndex === resolvedCorrectIndex,
+      ghostMatch: resolvedGhostIndex === resolvedCorrectIndex
+  });
     const selectedLabel =
       choiceOptions[selectedIndex]?.id ?? String(selectedIndex);
 
@@ -1442,10 +1410,10 @@ function MainApp() {
       selected_index: selectedIndex,
       selected_id: selectedLabel,
       // --- redundancy manipulation (new) ---
-      redundancy_mode: redundancyMode,                  // "single" | "redundant"
-      redundancy_count: redundancyCount,                // 1 for Single, R for Redundant
-      redundancy_orders: redundancyOrders,              // array of option-id arrays (each flash)
-      redundancy_timestamps_ms: redundancyTimestamps,   // ms since trial start for each flash
+      redundancy_mode: redundancyMode,
+      redundancy_count: redundancyCount,
+      redundancy_orders: JSON.stringify(redundancyOrders),
+      redundancy_timestamps_ms: redundancyTimestamps,
       punctuation: { flash_ms: FLASH_MS, isi_ms: ISI_MS },
       // RNG provenance
       rng_source:
@@ -1658,29 +1626,24 @@ function MainApp() {
             subject_hit: Number.isFinite(logRow.subject_hit)
               ? logRow.subject_hit
               : matchedFlag,
-            ghost_hit: logRow.demon_hit ?? 0,
-            matched: matchedFlag,
+            ghost_hit: logRow.ghost_hit ?? 0,
+            matched: logRow.matched,
 
             // resolved target/ghost for this press
-            target_index_0based: targetIndex,
+            target_symbol_id: logRow.target_symbol_id,
             ghost_index_0based: logRow.ghost_index_0based ?? null,
-            target_symbol_id: targetId,
             ghost_symbol_id: logRow.ghost_symbol_id ?? null,
-
-            // retrocausal labels (only set in spoon_love; null elsewhere)
-            pre_symbol_id: logRow.pre_symbol_id ?? null,
-            post_symbol_id: logRow.post_symbol_id ?? null,
             // --- redundancy manipulation (new) ---
-            redundancy_mode: redundancyMode,                  // "single" | "redundant"
-            redundancy_count: redundancyCount,                // 1 for Single, R for Redundant
-            redundancy_orders: JSON.stringify(redundancyOrders), // array of option-id arrays (each flash) - JSON string to avoid nested arrays
-            redundancy_timestamps_ms: redundancyTimestamps,   // ms since trial start for each flash
+            redundancy_mode: logRow.redundancy_mode,
+            redundancy_count: logRow.redundancy_count,
+            redundancy_orders: logRow.redundancy_orders,
+            redundancy_timestamps_ms: logRow.redundancy_timestamps_ms,
             punctuation: { flash_ms: FLASH_MS, isi_ms: ISI_MS },
             // RNG provenance
             rng_source: logRow.rng_source || null,
             raw_byte: logRow.raw_byte ?? null,
             ghost_raw_byte: logRow.ghost_raw_byte ?? null,
-
+            target_index_0based: logRow.target_index_0based,
             // sealed envelope id (baseline/quantum have it; client_local null)
             sealed_envelope_id: logRow.sealed_envelope_id,
 
@@ -2070,7 +2033,7 @@ function MainApp() {
       return null;
     };
     const getDemonHit = (r) => {
-      if (typeof r.demon_hit === 'number') return r.demon_hit;
+      if (typeof r.ghost_hit === 'number') return r.ghost_hit;
       if (
         typeof r.selected_index === 'number' &&
         typeof r.ghost_is_right === 'number'
@@ -2182,7 +2145,6 @@ function MainApp() {
         timestamp: new Date().toISOString(),
       },
       preResponses,
-      mid_survey: midResponses,
       postResponses,
       full_stack: {
         primed: isHighPrime,
@@ -2237,7 +2199,7 @@ function MainApp() {
           n01: clN01,
         },
       },
-      exitedEarly,
+      exitedEarly: exitedEarly,
       exit_reason: exitedEarly
         ? earlyExitInfo?.reason || 'unspecified'
         : 'complete',
@@ -2276,7 +2238,7 @@ function MainApp() {
         rng_source: r.rng_source || null,
         raw_byte: r.raw_byte ?? null,
         ghost_raw_byte: r.ghost_raw_byte ?? null,
-        ghost_qrng_code: r.ghost_qrng_code ?? null,
+
 
         // selection + options (needed for Patterns)
         options: Array.isArray(r.options) ? r.options : null,
@@ -2300,7 +2262,7 @@ function MainApp() {
 
         // results
         subject_hit: sh,
-        demon_hit: dh,
+        ghost_hit: dh,
         matched: typeof r.matched === 'number' ? r.matched : null,
 
       };
@@ -2341,20 +2303,13 @@ function MainApp() {
 
     try {
       const existingDocId = exp1DocId || cachedDocIdRef.current;
-      const mainDocId =
-        existingDocId ||
-        (
-          await addDoc(collection(db, 'experiment1_responses'), {
-            participant_id: uid,
-            session_id: sessionId,
-            app_version: appVersion,
-            created_at: serverTimestamp(),
-          })
-        ).id;
+      console.log('🐛 Complete experiment - existingDocId:', existingDocId, 'exp1DocId:', exp1DocId, 'cached:', cachedDocIdRef.current);
       if (!existingDocId) {
-        setExp1DocId(mainDocId);
-        cachedDocIdRef.current = mainDocId;
+        console.error('❌ No existing document ID found! This will create a duplicate document.');
+        throw new Error('No document ID available - cannot complete experiment');
       }
+      const mainDocId = existingDocId;
+      console.log('✅ Using existing document ID:', mainDocId);
 
       await setDoc(
         doc(db, 'experiment1_responses', mainDocId),
@@ -2457,7 +2412,7 @@ function MainApp() {
             preselected symbol exceeds chance levels. You will
             complete multiple short trials and brief questionnaires at
             the beginning and end (approximately 10–20
-            minutes). You have the option of listening to Binaural Beats throughout the trials. You will need a pair of headphones.
+            minutes). You have the option of listening to Binaural Beats throughout the trials.
           </p>
           <p>
             <strong>Important:</strong> To preserve the scientific
@@ -3815,6 +3770,38 @@ function MainApp() {
             step="final-results"
             sessionId={sessionId}
             participantId={auth.currentUser?.uid ?? null}
+            pValue={(() => {
+              const rows = trialResults;
+              const hits = rows.reduce(
+                (a, r) =>
+                  a +
+                  (typeof r.matched === 'number'
+                    ? r.matched
+                    : Number(r.matched) === 1
+                      ? 1
+                      : 0),
+                0
+              );
+              const total = rows.length;
+              // exp1: 5 options = 20% chance, exp2/exp3: 2 options = 50% chance
+              const chanceProb = 0.2; // This is for exp1
+              return total > 0 ? binomPValueOneSidedAtOrAbove(hits, total, chanceProb) : 1;
+            })()}
+            finalPercent={(() => {
+              const rows = trialResults;
+              const hits = rows.reduce(
+                (a, r) =>
+                  a +
+                  (typeof r.matched === 'number'
+                    ? r.matched
+                    : Number(r.matched) === 1
+                      ? 1
+                      : 0),
+                0
+              );
+              const total = rows.length || 1;
+              return ((hits / total) * 100);
+            })()}
             spoonLoveStats={spoonLoveStats}
             fullStackStats={fullStackStats}
           />
@@ -3861,7 +3848,13 @@ function MainApp() {
           {(() => {
             const OPTIONAL_POST_IDS = new Set(['finalThoughts']);
             const postComplete = filteredPostQuestions
-              .filter((q) => !OPTIONAL_POST_IDS.has(q.id))
+              .filter((q) => {
+                // Only check required questions that are currently visible
+                if (OPTIONAL_POST_IDS.has(q.id)) return false; // skip optional
+                if (!q.showIf) return true; // always required if no condition
+                const parentAnswer = postResponses[q.showIf.id];
+                return q.showIf.values.includes(parentAnswer); // only if visible
+              })
               .every((q) => isAnswered(q, postResponses));
             const onSubmit = async () => {
               if (!postComplete) return;
@@ -3876,7 +3869,7 @@ function MainApp() {
                 }
               });
 
-              await saveResults(finalResponses); // pass structured data
+              await saveResults(false); // completed successfully, not exited early
               alert('Responses saved!');
               setStep('done');
             };

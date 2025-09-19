@@ -102,9 +102,9 @@ export const cueBlocks = [
    <h1>Focus & Breathe</h1>
 <h3>Optional Enhancement: Binaural Beats</h3>
 <ul>
-  <li><strong>Try with and without.</strong> Some subjects showed a 2–3% increase in PSI ability while listening to binaural beats. You can experiment by trying once with and once without them.</li>
+  <li><strong>Try with and without.</strong> Some subjects showed a 1–3% increase in PSI ability while listening to binaural beats.Experiment by trying once with and once without them.</li>
   <li><strong>What you need:</strong> A pair of headphones.</li>
-  <li><strong>How:</strong> Visit <a href="https://mynoise.net/NoiseMachines/binauralBrainwaveGenerator.php" target="_blank">this binaural beat generator</a> and select a frequency between <strong>4–8 Hz</strong> (choose the one that feels best for you).</li>
+  <li><strong>How:</strong> Use <a href="https://mynoise.net/NoiseMachines/binauralBrainwaveGenerator.php" target="_blank" rel="noopener noreferrer">this binaural beat generator</a> and set the frequency between <strong>4–8&nbsp;Hz</strong>, choosing the level that feels most comfortable. If you already have a preferred app, you can use that instead—just be sure the frequency is within the <strong>4–8&nbsp;Hz</strong> range.</li>
   <li><strong>Prepare:</strong> Listen for at least 1–2 minutes before starting. Breathe deeply and try to empty your mind.</li>
 </ul>
 
@@ -112,8 +112,7 @@ export const cueBlocks = [
 <ul>
   <li><strong>Draw your envelopes.</strong> Click the <em>Draw Your Sealed Envelopes</em> button. </li>
   <li><strong>Start the trials.</strong> Click the <em>Start Match One Trials</em> button when it turns green.</li>
-  <li><strong>How many:</strong> ${
-      config.trialsPerBlock.full_stack
+  <li><strong>How many:</strong> ${config.trialsPerBlock.full_stack
       } trials (~${Math.ceil(
         Number(config.trialsPerBlock.full_stack) / 5
       )} rounds of 5).</li>
@@ -122,6 +121,13 @@ export const cueBlocks = [
   <li><strong>Goal.</strong> Choose the hidden symbol more often than chance (~20% per trial).</li>
   <li><strong>Need to stop early?</strong> Click <em>Exit Study</em> (bottom-right) to send your completed results.</li>
 </ul>`,
+    trialInstructions: `
+      <h2>Physical RNG (Match One)</h2>
+        <ul>
+        <li>You'll see five symbols. On each trial, one is the target.</li>
+        <li>Pick the one you feel is right.</li>
+        <li>Encountering issues? <a href="{{ISSUE_MAILTO}}">Email us at h@whatthequark.com</a> about the problem.</li>
+      </ul>`,
     showFeedback: true,
   },
   {
@@ -131,9 +137,10 @@ export const cueBlocks = [
  <h1>Focus & Breathe</h1>
 <h3>Optional Enhancement: Binaural Beats</h3>
 <ul>
-  <li><strong>Try with and without.</strong> Some subjects showed a 2–3% increase in PSI ability while listening to binaural beats. You can experiment by trying once with and once without them.</li>
+  <li><strong>Try with and without.</strong> Some subjects showed a 1–3% increase in PSI ability while listening to binaural beats.Experiment by trying once with and once without them.</li>
   <li><strong>What you need:</strong> A pair of headphones.</li>
-  <li><strong>How:</strong> Visit <a href="https://mynoise.net/NoiseMachines/binauralBrainwaveGenerator.php" target="_blank">this binaural beat generator</a> and select a frequency between <strong>4–8 Hz</strong> (choose the one that feels best for you).</li>
+  <li><strong>How:</strong> Use <a href="https://mynoise.net/NoiseMachines/binauralBrainwaveGenerator.php" target="_blank" rel="noopener noreferrer">this binaural beat generator</a> and set the frequency between <strong>4–8&nbsp;Hz</strong>, choosing the level that feels most comfortable. If you already have a preferred app, you can use that instead—just be sure the frequency is within the <strong>4–8&nbsp;Hz</strong> range.</li>
+
   <li><strong>Prepare:</strong> Listen for at least 1–2 minutes before starting. Breathe deeply and try to empty your mind.</li>
 </ul>
 
@@ -141,8 +148,7 @@ export const cueBlocks = [
 <ul>
   <li><strong>Draw your envelopes.</strong> Click the <em>Draw Your Sealed Envelopes</em> button. </li>
   <li><strong>Start the trials.</strong> Click the <em>Start Match Two Trials</em> button when it turns green.</li>
-  <li><strong>How many:</strong> ${
-      config.trialsPerBlock.spoon_love
+  <li><strong>How many:</strong> ${config.trialsPerBlock.spoon_love
       } trials (~${Math.ceil(
         Number(config.trialsPerBlock.spoon_love) / 5
       )} rounds of 5).</li>
@@ -168,9 +174,9 @@ export const cueBlocks = [
     <h1>Focus & Breathe</h1>
 <h3>Optional Enhancement: Binaural Beats</h3>
 <ul>
-  <li><strong>Try with and without.</strong> Some subjects showed a 2–3% increase in PSI ability while listening to binaural beats. You can experiment by trying once with and once without them.</li>
+  <li><strong>Try with and without.</strong> Some subjects showed a 1–3% increase in PSI ability while listening to binaural beats.Experiment by trying once with and once without them.</li>
   <li><strong>What you need:</strong> A pair of headphones.</li>
-  <li><strong>How:</strong> Visit <a href="https://mynoise.net/NoiseMachines/binauralBrainwaveGenerator.php" target="_blank">this binaural beat generator</a> and select a frequency between <strong>4–8 Hz</strong> (choose the one that feels best for you).</li>
+  <li><strong>How:</strong> Use <a href="https://mynoise.net/NoiseMachines/binauralBrainwaveGenerator.php" target="_blank" rel="noopener noreferrer">this binaural beat generator</a> and set the frequency between <strong>4–8&nbsp;Hz</strong>, choosing the level that feels most comfortable. If you already have a preferred app, you can use that instead—just be sure the frequency is within the <strong>4–8&nbsp;Hz</strong> range.</li>
   <li><strong>Prepare:</strong> Listen for at least 1–2 minutes before starting. Breathe deeply and try to empty your mind.</li>
 </ul>
 
@@ -178,8 +184,7 @@ export const cueBlocks = [
 <ul>
   <li><strong>Draw your envelopes.</strong> Click the <em>Draw Your Sealed Envelopes</em> button. </li>
   <li><strong>Start the trials.</strong> Click the <em>Start Match Three Trials</em> button when it turns green.</li>
-  <li><strong>How many:</strong> ${
-      config.trialsPerBlock.client_local
+  <li><strong>How many:</strong> ${config.trialsPerBlock.client_local
       } trials (~${Math.ceil(
         Number(config.trialsPerBlock.client_local) / 5
       )} rounds of 5).</li>

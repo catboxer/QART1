@@ -210,6 +210,140 @@ function analyzeHitClustering(trials) {
   };
 }
 
+// Binaural Beats Effect Analysis
+function analyzeBinauralBeatsEffect(rows) {
+  // Group sessions by binaural beats usage
+  const sessions = rows.reduce((acc, row) => {
+    if (!row.session_id) return acc;
+    if (!acc[row.session_id]) {
+      acc[row.session_id] = {
+        trials: [],
+        binaural_beats: row.binaural_beats || 'No'
+      };
+    }
+    acc[row.session_id].trials.push(row);
+    return acc;
+  }, {});
+
+  // Categorize sessions
+  const withBeats = [];
+  const withoutBeats = [];
+
+  Object.values(sessions).forEach(session => {
+    const trials = session.trials.filter(t => t.subject_hit !== null);
+    if (trials.length === 0) return;
+
+    const hits = trials.reduce((sum, t) => sum + (t.subject_hit || 0), 0);
+    const hitRate = hits / trials.length;
+
+    const sessionData = {
+      trials: trials.length,
+      hits,
+      hitRate,
+      binaural: session.binaural_beats
+    };
+
+    if (session.binaural_beats === 'No' || session.binaural_beats === 'What are binaural beats?') {
+      withoutBeats.push(sessionData);
+    } else {
+      withBeats.push(sessionData);
+    }
+  });
+
+  // Calculate statistics
+  const calcStats = (group) => {
+    if (group.length === 0) return { count: 0, avgHitRate: 0, totalTrials: 0, totalHits: 0 };
+    const totalTrials = group.reduce((sum, s) => sum + s.trials, 0);
+    const totalHits = group.reduce((sum, s) => sum + s.hits, 0);
+    return {
+      count: group.length,
+      avgHitRate: totalHits / totalTrials,
+      totalTrials,
+      totalHits
+    };
+  };
+
+  const beatsStats = calcStats(withBeats);
+  const noBeatsStats = calcStats(withoutBeats);
+
+  // Calculate significance if both groups have data
+  let zScore = null;
+  let pValue = null;
+  if (beatsStats.count > 0 && noBeatsStats.count > 0) {
+    if (beatsStats.totalTrials > 0 && noBeatsStats.totalTrials > 0) {
+      zScore = twoPropZ(beatsStats.totalHits, beatsStats.totalTrials, noBeatsStats.totalHits, noBeatsStats.totalTrials);
+      pValue = twoSidedP(zScore);
+    }
+  }
+
+  return {
+    withBeats: beatsStats,
+    withoutBeats: noBeatsStats,
+    difference: beatsStats.avgHitRate - noBeatsStats.avgHitRate,
+    zScore,
+    pValue
+  };
+}
+
+// Enhanced Response Time vs Accuracy Analysis
+function analyzeResponseTimeAccuracy(trials) {
+  const timingData = trials
+    .filter(t => Number.isFinite(t.press_bucket_ms) && t.subject_hit !== null)
+    .map(t => ({
+      responseTime: t.press_bucket_ms,
+      hit: t.subject_hit === 1 ? 1 : 0
+    }));
+
+  if (timingData.length === 0) {
+    return { error: 'No timing data available' };
+  }
+
+  // Split into fast/medium/slow terciles
+  const sorted = [...timingData].sort((a, b) => a.responseTime - b.responseTime);
+  const tercileSize = Math.floor(sorted.length / 3);
+
+  const fast = sorted.slice(0, tercileSize);
+  const medium = sorted.slice(tercileSize, tercileSize * 2);
+  const slow = sorted.slice(tercileSize * 2);
+
+  const calcTercileStats = (group, label) => {
+    const hits = group.reduce((sum, t) => sum + t.hit, 0);
+    const hitRate = hits / group.length;
+    const avgTime = group.reduce((sum, t) => sum + t.responseTime, 0) / group.length;
+    return {
+      label,
+      count: group.length,
+      hits,
+      hitRate: hitRate,
+      hitRatePct: (hitRate * 100).toFixed(1),
+      avgTime: Math.round(avgTime)
+    };
+  };
+
+  const results = {
+    fast: calcTercileStats(fast, 'Fast'),
+    medium: calcTercileStats(medium, 'Medium'),
+    slow: calcTercileStats(slow, 'Slow'),
+    totalTrials: timingData.length
+  };
+
+  // Calculate correlation coefficient
+  const n = timingData.length;
+  const sumTime = timingData.reduce((sum, t) => sum + t.responseTime, 0);
+  const sumHit = timingData.reduce((sum, t) => sum + t.hit, 0);
+  const sumTimeHit = timingData.reduce((sum, t) => sum + (t.responseTime * t.hit), 0);
+  const sumTimeSq = timingData.reduce((sum, t) => sum + (t.responseTime * t.responseTime), 0);
+  const sumHitSq = timingData.reduce((sum, t) => sum + (t.hit * t.hit), 0);
+
+  const numerator = n * sumTimeHit - sumTime * sumHit;
+  const denominator = Math.sqrt((n * sumTimeSq - sumTime * sumTime) * (n * sumHitSq - sumHit * sumHit));
+
+  results.correlation = denominator !== 0 ? numerator / denominator : 0;
+  results.correlationDirection = results.correlation > 0 ? 'positive' : results.correlation < 0 ? 'negative' : 'none';
+
+  return results;
+}
+
 // 9. Response Timing vs Outcome Analysis
 function analyzeTimingOutcome(trials) {
   const timingData = trials
@@ -274,6 +408,8 @@ function CompletePSIAnalysisPanel({ trials, title = 'Complete PSI Signatures' })
   const clusteringAnalysis = analyzeHitClustering(trials);
   const timingAnalysis = analyzeTimingOutcome(trials);
   const positionAnalysis = analyzeTrialPositionEffects(trials);
+  const binauralAnalysis = analyzeBinauralBeatsEffect(trials);
+  const responseTimeAnalysis = analyzeResponseTimeAccuracy(trials);
 
   return (
     <details style={{ marginTop: 12 }}>
@@ -445,6 +581,72 @@ function CompletePSIAnalysisPanel({ trials, title = 'Complete PSI Signatures' })
               ))}
             </tbody>
           </table>
+        </div>
+
+        {/* Binaural Beats Effect Analysis */}
+        <div>
+          <h4>Binaural Beats Effect Analysis</h4>
+          {binauralAnalysis.withBeats.count > 0 || binauralAnalysis.withoutBeats.count > 0 ? (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 8 }}>
+              <div>
+                <strong>With Binaural Beats:</strong>
+                <div>Sessions: {binauralAnalysis.withBeats.count}</div>
+                <div>Trials: {binauralAnalysis.withBeats.totalTrials}</div>
+                <div>Hit Rate: {(binauralAnalysis.withBeats.avgHitRate * 100).toFixed(1)}%</div>
+              </div>
+              <div>
+                <strong>Without Binaural Beats:</strong>
+                <div>Sessions: {binauralAnalysis.withoutBeats.count}</div>
+                <div>Trials: {binauralAnalysis.withoutBeats.totalTrials}</div>
+                <div>Hit Rate: {(binauralAnalysis.withoutBeats.avgHitRate * 100).toFixed(1)}%</div>
+              </div>
+            </div>
+          ) : (
+            <div style={{ color: '#666' }}>No binaural beats data available</div>
+          )}
+          {binauralAnalysis.pValue !== null && (
+            <div style={{ marginTop: 8, fontSize: 13 }}>
+              <strong>Difference:</strong> {(binauralAnalysis.difference * 100).toFixed(1)}%
+              {binauralAnalysis.pValue !== null && (
+                <span> (p = {binauralAnalysis.pValue.toFixed(4)})</span>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Response Time vs Accuracy Analysis */}
+        <div>
+          <h4>Response Time vs Accuracy</h4>
+          {!responseTimeAnalysis.error ? (
+            <div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginTop: 8 }}>
+                <div>
+                  <strong>{responseTimeAnalysis.fast.label} Responders:</strong>
+                  <div>Count: {responseTimeAnalysis.fast.count}</div>
+                  <div>Avg Time: {responseTimeAnalysis.fast.avgTime}ms</div>
+                  <div>Hit Rate: {responseTimeAnalysis.fast.hitRatePct}%</div>
+                </div>
+                <div>
+                  <strong>{responseTimeAnalysis.medium.label} Responders:</strong>
+                  <div>Count: {responseTimeAnalysis.medium.count}</div>
+                  <div>Avg Time: {responseTimeAnalysis.medium.avgTime}ms</div>
+                  <div>Hit Rate: {responseTimeAnalysis.medium.hitRatePct}%</div>
+                </div>
+                <div>
+                  <strong>{responseTimeAnalysis.slow.label} Responders:</strong>
+                  <div>Count: {responseTimeAnalysis.slow.count}</div>
+                  <div>Avg Time: {responseTimeAnalysis.slow.avgTime}ms</div>
+                  <div>Hit Rate: {responseTimeAnalysis.slow.hitRatePct}%</div>
+                </div>
+              </div>
+              <div style={{ marginTop: 8, fontSize: 13 }}>
+                <strong>Correlation:</strong> {responseTimeAnalysis.correlation.toFixed(3)}
+                ({responseTimeAnalysis.correlationDirection} correlation between response time and accuracy)
+              </div>
+            </div>
+          ) : (
+            <div style={{ color: '#666' }}>{responseTimeAnalysis.error}</div>
+          )}
         </div>
 
       </div>
@@ -781,14 +983,39 @@ function computeStats(sessions, getTrials, sessionFilter) {
     let n10 = 0,
       n01 = 0;
 
+    // Helper function to get demon hit value (same logic as MainApp getDemonHit)
+    const getDemonHit = (r) => {
+      // Check for ghost_hit field first
+      if (typeof r.ghost_hit === 'number') return r.ghost_hit;
+
+      // Use ghost_index_0based and selected_index to calculate ghost hit
+      if (
+        typeof r.selected_index === 'number' &&
+        typeof r.ghost_index_0based === 'number'
+      ) {
+        return r.selected_index === r.ghost_index_0based ? 1 : 0;
+      }
+
+      // Fallback to old logic
+      if (
+        typeof r.selected_index === 'number' &&
+        typeof r.ghost_is_right === 'number'
+      ) {
+        const ghostIndex = r.ghost_is_right ? 1 : 0;
+        return r.selected_index === ghostIndex ? 1 : 0;
+      }
+      return null;
+    };
+
     for (let i = 0; i < N; i++) {
       const t = trials[i] || {};
       const p = Number(t.subject_hit) === 1 ? 1 : 0;
-      const g = Number(t.ghost_hit) === 1 ? 1 : 0;
+      const ghostHitValue = getDemonHit(t);
+      const g = Number(ghostHitValue) === 1 ? 1 : 0;
 
-      // Debug: log first few trials to see actual values
+      // Debug: log first few trials to see actual values (remove when debugging complete)
       if (i < 3) {
-        console.log(`Trial ${i}: subject_hit=${t.subject_hit}, ghost_hit=${t.ghost_hit}, p=${p}, g=${g}`);
+        console.log(`Trial ${i}: subject_hit=${t.subject_hit}, ghost_hit=${t.ghost_hit}, ghostHitValue=${ghostHitValue}, p=${p}, g=${g}`);
       }
 
       hp += p;
@@ -2252,7 +2479,7 @@ export default function QAExport() {
 
     // Helper to check binaural usage
     const sessionBinaural = (d) => {
-      const response = d?.binaural_beats || '';
+      const response = d?.postResponses?.binaural_beats || '';
       if (response === 'No' || response === 'What are binaural beats?') return 'no';
       if (response.includes('Yes')) return 'yes';
       return 'unknown';

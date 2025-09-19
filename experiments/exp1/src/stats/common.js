@@ -1,4 +1,3 @@
-// src/stats.js
 export function twoPropZ(k1, n1, k2, n2) {
   if (!n1 || !n2) return 0;
   const p1 = k1 / n1;
@@ -22,8 +21,8 @@ export function erfApprox(z) {
   const y =
     1 -
     ((((a5 * t + a4) * t + a3) * t + a2) * t + a1) *
-      t *
-      Math.exp(-z * z);
+    t *
+    Math.exp(-z * z);
   return sign * y;
 }
 export const normalCdf = (z) => 0.5 * (1 + erfApprox(z / Math.SQRT2));

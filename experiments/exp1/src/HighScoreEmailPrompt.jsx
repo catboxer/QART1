@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 
 export default function HighScoreEmailPrompt({
   emailTo = "h@whatthequark.com",
@@ -8,6 +8,7 @@ export default function HighScoreEmailPrompt({
   participantId,
   onClose = () => { },
 }) {
+  const [hasConsented, setHasConsented] = useState(false);
   // Esc-to-close (must be before any early return so hooks run every render)
   useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape") onClose(); };
@@ -71,16 +72,34 @@ Session ID: ${sessionId || "(not provided)"}
       >
         <button style={styles.close} onClick={onClose} aria-label="Close">×</button>
 
-        <h2 style={{ marginTop: 0 }}>🎉 You’re a high scorer!</h2>
+        <h2 style={{ marginTop: 0 }}>🎉 You're a high scorer!</h2>
         <p>
-          You’ve clearly got the touch. Join our shortlist for future studies and
-          we’ll thank you with an organic PSI “Founding Ψ Cohort” hoodie.
+          You've clearly got the touch. Join our shortlist for future studies and
+          we'll thank you with an organic PSI "Founding Ψ Cohort" hoodie.
         </p>
+
+        <div style={styles.consentSection}>
+          <label style={styles.consentLabel}>
+            <input
+              type="checkbox"
+              checked={hasConsented}
+              onChange={(e) => setHasConsented(e.target.checked)}
+              style={styles.consentCheckbox}
+            />
+            <span>
+              I consent to providing my email to be contacted for future studies only.
+              This will not be used for marketing, will not be shared with third parties,
+              and I can request deletion at any time by contacting {emailTo}.
+            </span>
+          </label>
+        </div>
 
        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", justifyContent: "center" }}>
           <button
             type="button"
+            disabled={!hasConsented}
             onClick={() => {
+              if (!hasConsented) return;
               const win = window.open(mailto, "_blank", "noopener,noreferrer");
               if (!win) {
                 const a = document.createElement("a");
@@ -90,11 +109,18 @@ Session ID: ${sessionId || "(not provided)"}
                 a.click();
               }
             }}
+            style={hasConsented ? {} : styles.disabledButton}
           >
             Email us (prefilled)
           </button>
 
-          <button onClick={copyDetails}>Copy details</button>
+          <button
+            disabled={!hasConsented}
+            onClick={() => hasConsented && copyDetails()}
+            style={hasConsented ? {} : styles.disabledButton}
+          >
+            Copy details
+          </button>
 
           <button className="secondary-btn" type="button" onClick={onClose}>
             Not now
@@ -133,11 +159,37 @@ const styles = {
   close: {
     position: "absolute",
     right: 12,
-    top: 8,
+    top: -4,
     border: "none",
     background: "transparent",
-    fontSize: 22,
+    fontSize: 28,
     cursor: "pointer",
     lineHeight: 1,
+    color: "#666",
+    zIndex: 10,
+    padding: "4px 8px",
+  },
+  consentSection: {
+    marginBottom: 20,
+    padding: 16,
+    backgroundColor: "#f8f9fa",
+    borderRadius: 8,
+    textAlign: "left",
+  },
+  consentLabel: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 8,
+    fontSize: 14,
+    lineHeight: 1.4,
+    cursor: "pointer",
+  },
+  consentCheckbox: {
+    marginTop: 2,
+    flexShrink: 0,
+  },
+  disabledButton: {
+    opacity: 0.5,
+    cursor: "not-allowed",
   },
 };
