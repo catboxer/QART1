@@ -635,6 +635,7 @@ function MainApp() {
   const hasGuessedRef = useRef(false);
   const starTimerRef = useRef(null);
   const isSavingRef = useRef(false);
+  const [trialStartTime, setTrialStartTime] = useState(null);
   const layoutRef = useRef(null);   // the 5 icons, fixed for the current trial
   const prepRunIdRef = useRef(0);   // cancels overlapping prepareTrial calls
 
@@ -1312,6 +1313,9 @@ function MainApp() {
     const totalThisBlock = totalTrialsFor(blockId);
     const press_start_ts = new Date().toISOString();
 
+    // Calculate response time from trial start to button press
+    const responseTimeMs = trialStartTime ? Math.round(performance.now() - trialStartTime) : null;
+
     // We'll compute everything into these local vars for immediate scoring/logging
     let resolvedCorrectIndex = null;
     let resolvedGhostIndex = null;
@@ -1386,7 +1390,7 @@ function MainApp() {
       press_start_ts,
       press_release_ts: new Date().toISOString(),
       hold_duration_ms: null,
-      press_bucket_ms: null,
+      response_time_ms: responseTimeMs,
 
       // scoring
       subject_hit,
@@ -1611,10 +1615,7 @@ function MainApp() {
             press_start_ts: logRow.press_start_ts,
             press_release_ts: logRow.press_release_ts,
             hold_duration_ms: logRow.hold_duration_ms,
-            press_bucket_ms:
-              typeof logRow.press_bucket_ms === 'number'
-                ? logRow.press_bucket_ms
-                : null,
+            response_time_ms: logRow.response_time_ms,
             timing_arm: logRow.timing_arm,
 
             // selection + options (display order)  🔴 REQUIRED for Patterns
@@ -1770,7 +1771,16 @@ function MainApp() {
       ? 1
       : (isRedundant ? Math.max(2, Number(config.REDUNDANT_R) || 2) : 1);
 
-    setRedundancyMode(useMotionSafe ? 'single' : (isRedundant ? 'redundant' : 'single'));
+    const finalRedundancyMode = useMotionSafe ? 'single' : (isRedundant ? 'redundant' : 'single');
+    console.log('🔄 REDUNDANCY DEBUG:', {
+      trial: nextTrialIndex + 1,
+      condition,
+      isRedundant,
+      useMotionSafe,
+      finalMode: finalRedundancyMode,
+      redundancyCount: R
+    });
+    setRedundancyMode(finalRedundancyMode);
     setRedundancyCount(R);
     setRedundancyOrders([]);
     setRedundancyTimestamps([]);
@@ -1951,6 +1961,7 @@ function MainApp() {
 
     setRedundancyTimestamps(ts);
     setChoiceOptions(baseLayout); // ensure final layout is on-screen
+    setTrialStartTime(performance.now()); // Capture trial start time
     setTrialReady(true);
   }
 
@@ -2227,10 +2238,7 @@ function MainApp() {
         press_start_ts: r.press_start_ts ?? r.press_time ?? null,
         press_release_ts: r.press_release_ts ?? null,
         hold_duration_ms: r.hold_duration_ms ?? null,
-        press_bucket_ms:
-          typeof r.press_bucket_ms === 'number'
-            ? r.press_bucket_ms
-            : null,
+        response_time_ms: r.response_time_ms ?? null,
         timing_arm: r.timing_arm ?? null,
         agent: r.agent ?? null,
 

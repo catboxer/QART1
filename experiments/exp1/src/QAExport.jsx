@@ -288,9 +288,9 @@ function analyzeBinauralBeatsEffect(rows) {
 // Enhanced Response Time vs Accuracy Analysis
 function analyzeResponseTimeAccuracy(trials) {
   const timingData = trials
-    .filter(t => Number.isFinite(t.press_bucket_ms) && t.subject_hit !== null)
+    .filter(t => Number.isFinite(t.response_time_ms) && t.subject_hit !== null)
     .map(t => ({
-      responseTime: t.press_bucket_ms,
+      responseTime: t.response_time_ms,
       hit: t.subject_hit === 1 ? 1 : 0
     }));
 
@@ -347,9 +347,9 @@ function analyzeResponseTimeAccuracy(trials) {
 // 9. Response Timing vs Outcome Analysis
 function analyzeTimingOutcome(trials) {
   const timingData = trials
-    .filter(t => Number.isFinite(t.press_bucket_ms))
+    .filter(t => Number.isFinite(t.response_time_ms))
     .map(t => ({
-      bucket: Math.floor(t.press_bucket_ms / 100) * 100, // 100ms buckets
+      bucket: Math.floor(t.response_time_ms / 100) * 100, // 100ms buckets
       hit: t.subject_hit === 1 ? 1 : 0
     }));
 
@@ -402,6 +402,21 @@ function CompletePSIAnalysisPanel({ trials, title = 'Complete PSI Signatures' })
   if (!Array.isArray(trials) || trials.length === 0) return null;
 
   const coherenceAnalysis = analyzeCoherenceByRedundancy(trials);
+  console.log('🔍 COHERENCE ANALYSIS DEBUG:', {
+    coherenceAnalysis,
+    trialsCount: trials.length,
+    redundantCount: trials.filter(t => t.redundancy_mode === 'redundant').length,
+    singleCount: trials.filter(t => t.redundancy_mode === 'single').length,
+    sampleTrials: trials.slice(0, 3).map(t => ({ redundancy_mode: t.redundancy_mode }))
+  });
+  console.log('🔍 DETAILED REDUNDANCY DEBUG:', {
+    allRedundancyModes: trials.map(t => t.redundancy_mode),
+    uniqueModes: [...new Set(trials.map(t => t.redundancy_mode))],
+    firstFewTrials: trials.slice(0, 10).map(t => ({
+      redundancy_mode: t.redundancy_mode,
+      redundancy_count: t.redundancy_count
+    }))
+  });
   const sourceAnalysis = analyzeByRNGSource(trials);
   const sequentialAnalysis = analyzeSequentialDependency(trials);
   const targetBiasAnalysis = analyzeTargetSelectionBias(trials);
@@ -1568,15 +1583,15 @@ function PatternsPanel({ trials, title = 'Patterns' }) {
 
   // ---------- 4) Timing vs accuracy (optional) ----------
   const withBuckets = trials.filter((r) =>
-    Number.isFinite(r.press_bucket_ms)
+    Number.isFinite(r.response_time_ms)
   );
   let timingLine = null;
   if (withBuckets.length) {
     const sorted = [...withBuckets].sort(
-      (a, b) => a.press_bucket_ms - b.press_bucket_ms
+      (a, b) => a.response_time_ms - b.response_time_ms
     );
     const median =
-      sorted[Math.floor(sorted.length / 2)].press_bucket_ms;
+      sorted[Math.floor(sorted.length / 2)].response_time_ms;
     const acc = (arr) => {
       const n = arr.length;
       const k = arr.reduce(
@@ -1586,10 +1601,10 @@ function PatternsPanel({ trials, title = 'Patterns' }) {
       return n ? ((100 * k) / n).toFixed(1) : '—';
     };
     const fast = withBuckets.filter(
-      (t) => t.press_bucket_ms <= median
+      (t) => t.response_time_ms <= median
     );
     const slow = withBuckets.filter(
-      (t) => t.press_bucket_ms > median
+      (t) => t.response_time_ms > median
     );
     timingLine = `Fast: ${acc(fast)}%  |  Slow: ${acc(slow)}% (N=${withBuckets.length
       })`;
@@ -2336,8 +2351,12 @@ export default function QAExport() {
                   options: Array.isArray(options) ? options : null,
 
                   // timing (used in Quantum timing split)
-                  press_bucket_ms: toNum(r.press_bucket_ms),
+                  response_time_ms: toNum(r.response_time_ms),
                   press_start_ts: r.press_start_ts ?? null,
+
+                  // redundancy manipulation
+                  redundancy_mode: r.redundancy_mode ?? 'single',
+                  redundancy_count: toInt(r.redundancy_count) ?? 1,
 
                   // block label for grouping
                   block_type: (
@@ -3525,12 +3544,12 @@ export default function QAExport() {
             </tr>
             <tr>
               <td style={{ padding: '6px 8px' }}>
-                <code>press_bucket_ms</code>
+                <code>response_time_ms</code>
               </td>
               <td style={{ padding: '6px 8px' }}>Timing</td>
               <td style={{ padding: '6px 8px' }}>int</td>
               <td style={{ padding: '6px 8px' }}>
-                Rounded response-time bucket for the button press.
+                Response time in milliseconds from trial start to button press.
               </td>
             </tr>
             <tr>
