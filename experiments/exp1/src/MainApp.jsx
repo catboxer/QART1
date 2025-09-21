@@ -951,22 +951,18 @@ function MainApp() {
   const cachedDocIdRef = useRef(null); // Session-level cache that doesn't rely on React state
 
   async function ensureRunDoc() {
-    console.log('🔥 ensureRunDoc called, exp1DocId:', exp1DocId, 'cachedDocId:', cachedDocIdRef.current, 'hasPromise:', !!ensureDocPromiseRef.current);
 
     // Check both React state and ref cache
     const existingId = exp1DocId || cachedDocIdRef.current;
     if (existingId) {
-      console.log('✅ Returning existing docId:', existingId);
       return existingId;
     }
 
     // If we already have a promise in flight, await it
     if (ensureDocPromiseRef.current) {
-      console.log('⏳ Already creating doc, waiting for existing promise...');
       return await ensureDocPromiseRef.current;
     }
 
-    console.log('🏗️ Starting doc creation - creating new promise');
 
     // Create and store the promise immediately (synchronously)
     ensureDocPromiseRef.current = (async () => {
@@ -974,7 +970,6 @@ function MainApp() {
       const participant_id = auth.currentUser?.uid ?? null;
 
       // Create parent doc
-      console.log('📝 Creating Firebase doc with session_id:', sessionId);
       const mainRef = await addDoc(collection(db, 'experiment1_responses'), {
         participant_id,
         session_id: sessionId,
@@ -983,7 +978,6 @@ function MainApp() {
         timestamp: serverTimestamp(),
       });
       const parentId = mainRef.id;
-      console.log('✨ Created Firebase doc with ID:', parentId);
 
       // Decide once per session: which half first?
       const redundancy_order = Math.random() < 0.5 ? 'single_then_redundant' : 'redundant_then_single';
@@ -992,10 +986,8 @@ function MainApp() {
         redundancy_order,
       }, { merge: true });
 
-      console.log('🎯 Setting exp1DocId to:', parentId);
       setExp1DocId(parentId);
       cachedDocIdRef.current = parentId; // Cache in ref immediately
-      console.log('✅ ensureRunDoc complete, returning:', parentId);
       return parentId;
     })();
 
@@ -1357,20 +1349,20 @@ function MainApp() {
     // correct: did the ghost pick the actual target?
     const demon_hit =
       resolvedGhostIndex === resolvedCorrectIndex ? 1 : 0;
-    console.log('HIT CALCULATION:', {
-      selectedIndex,
-      resolvedGhostIndex,
-      resolvedCorrectIndex,
-      subject_hit,
-      demon_hit,
-      subjectMatch: selectedIndex === resolvedCorrectIndex,
-      ghostMatch: resolvedGhostIndex === resolvedCorrectIndex
-  });
     const selectedLabel =
       choiceOptions[selectedIndex]?.id ?? String(selectedIndex);
 
     const optionsIds = choiceOptions.map((o) => o.id);
     const commitHash = tapesRef.current[blockId]?.hashHex ?? null;
+
+    // Calculate symbolic IDs for selected and target options
+    const selectedId = optionsIds && Number.isFinite(selectedIndex)
+      ? optionsIds[selectedIndex] ?? null
+      : null;
+    const targetId = optionsIds && Number.isFinite(resolvedCorrectIndex)
+      ? optionsIds[resolvedCorrectIndex] ?? null
+      : null;
+
     const logRow = {
       // session/meta
       session_id: sessionId,
@@ -1400,10 +1392,7 @@ function MainApp() {
       // target/ghost (resolved indices for this press)
       target_index_0based: resolvedCorrectIndex,
       ghost_index_0based: resolvedGhostIndex,
-      target_symbol_id:
-        resolvedMeta?.primary_symbol_id ??
-        rngMeta?.primary_symbol_id ??
-        null,
+      target_symbol_id: targetId,
       ghost_symbol_id:
         resolvedMeta?.ghost_symbol_id ??
         rngMeta?.ghost_symbol_id ??
@@ -1412,7 +1401,8 @@ function MainApp() {
       // selection + options (display order)
       options: optionsIds,
       selected_index: selectedIndex,
-      selected_id: selectedLabel,
+      selected_id: selectedId,
+
       // --- redundancy manipulation (new) ---
       redundancy_mode: redundancyMode,
       redundancy_count: redundancyCount,
@@ -1469,15 +1459,12 @@ function MainApp() {
       const allDemonHits = allRows.reduce((sum, t) => sum + (t.ghost_hit || 0), 0);
       const allSubjectPct = (allSubjectHits / allRows.length * 100);
       const allDemonPct = (allDemonHits / allRows.length * 100);
-      console.log(`${currentBlockId} BEFORE filtering: ${allRows.length} trials, Subject: ${allSubjectPct.toFixed(1)}%, Demon: ${allDemonPct.toFixed(1)}%`);
     }
     if (validRows.length > 0) {
       const validSubjectHits = validRows.reduce((sum, t) => sum + (t.subject_hit || 0), 0);
       const validDemonHits = validRows.reduce((sum, t) => sum + (t.ghost_hit || 0), 0);
       const validSubjectPct = (validSubjectHits / validRows.length * 100);
       const validDemonPct = (validDemonHits / validRows.length * 100);
-      console.log(`${currentBlockId} AFTER filtering: ${validRows.length} trials, Subject: ${validSubjectPct.toFixed(1)}%, Demon: ${validDemonPct.toFixed(1)}%`);
-      console.log(`${currentBlockId} Filtered out: ${allRows.length - validRows.length} trials`);
     }
 
     // console.log('[LOG GUARD]', { exp1DocId, sealedEnvelopeId });
@@ -1499,23 +1486,7 @@ function MainApp() {
             ? currentTrial.options
             : null;
 
-        const selectedId =
-          optionsArr && Number.isFinite(selectedIndex)
-            ? optionsArr[selectedIndex] ?? null
-            : null;
-
-        const targetId =
-          optionsArr && Number.isFinite(targetIndex)
-            ? optionsArr[targetIndex] ?? null
-            : null;
-
-        const matchedFlag =
-          Number.isFinite(selectedIndex) &&
-            Number.isFinite(targetIndex)
-            ? selectedIndex === targetIndex
-              ? 1
-              : 0
-            : 0;
+        // Variables already calculated above in logRow section
 
 
         // 🔧 Ensure client_local writes the enriched fields used by the dashboard
@@ -1594,67 +1565,10 @@ function MainApp() {
         }
 
         const docId = exp1DocId || cachedDocIdRef.current;
-        console.log('📊 About to write log with docId:', docId, 'exp1DocId:', exp1DocId, 'cached:', cachedDocIdRef.current);
         if (!docId) {
           console.error('❌ No document ID available for logs write!');
           return;
         }
-        console.log('📝 Writing log to:', `experiment1_responses/${docId}/logs`);
-        await addDoc(
-          collection(db, `experiment1_responses/${docId}/logs`),
-          {
-            // meta
-            session_id: logRow.session_id,
-            app_version: logRow.app_version,
-            condition: logRow.condition,
-            k_options: logRow.k_options,
-            block_type: logRow.block_type,
-            // trial identity & timing
-            trial_index: logRow.trial_index,
-            press_time: logRow.press_time,
-            press_start_ts: logRow.press_start_ts,
-            press_release_ts: logRow.press_release_ts,
-            hold_duration_ms: logRow.hold_duration_ms,
-            response_time_ms: logRow.response_time_ms,
-            timing_arm: logRow.timing_arm,
-
-            // selection + options (display order)  🔴 REQUIRED for Patterns
-            options: optionsArr,
-            selected_index: selectedIndex,
-            selected_id: selectedId,
-
-            // results
-            subject_hit: Number.isFinite(logRow.subject_hit)
-              ? logRow.subject_hit
-              : matchedFlag,
-            ghost_hit: logRow.ghost_hit ?? 0,
-            matched: logRow.matched,
-
-            // resolved target/ghost for this press
-            target_symbol_id: logRow.target_symbol_id,
-            ghost_index_0based: logRow.ghost_index_0based ?? null,
-            ghost_symbol_id: logRow.ghost_symbol_id ?? null,
-            // --- redundancy manipulation (new) ---
-            redundancy_mode: logRow.redundancy_mode,
-            redundancy_count: logRow.redundancy_count,
-            redundancy_orders: logRow.redundancy_orders,
-            redundancy_timestamps_ms: logRow.redundancy_timestamps_ms,
-            punctuation: { flash_ms: FLASH_MS, isi_ms: ISI_MS },
-            // RNG provenance
-            rng_source: logRow.rng_source || null,
-            raw_byte: logRow.raw_byte ?? null,
-            ghost_raw_byte: logRow.ghost_raw_byte ?? null,
-            target_index_0based: logRow.target_index_0based,
-            // sealed envelope id (baseline/quantum have it; client_local null)
-            sealed_envelope_id: logRow.sealed_envelope_id,
-
-
-            // audit marker for context shape
-            proof_ctx_version: logRow.proof_ctx_version ?? 1,
-
-            created_at: serverTimestamp(),
-          }
-        );
       } catch (e) {
         console.warn('guess log write failed', e);
       }
@@ -1668,10 +1582,10 @@ function MainApp() {
     );
     const gamesPlayedInBlock = trialsThisBlock.length;
 
-    // ✅ put this line back:
+    // Individual trial feedback (Correct ✅/Incorrect ❌ + star) already works via setLastResult()
+    // Match summary modal - show only every 5 trials (complete rounds)
     const justCompletedARound =
       gamesPlayedInBlock > 0 && gamesPlayedInBlock % MATCH_SIZE === 0;
-
     if (justCompletedARound) {
       const isLastRoundOfBlock =
         gamesPlayedInBlock === totalThisBlock;
@@ -1722,11 +1636,8 @@ function MainApp() {
     }
 
     // ===== Next trial =====
-    setCurrentTrial((c) => {
-      const next = c + 1;
-      prepareTrial(next, exp1DocId, currentBlockId);
-      return next;
-    });
+    // Trials advance via "Next Trial" button click for individual trials
+    // Match-ending trials (every 5th) advance via modal "Play Next Round" button
   }
 
   async function prepareTrial(
@@ -1734,7 +1645,6 @@ function MainApp() {
     parentId = exp1DocId,
     activeBlockId = currentBlockId
   ) {
-    console.log('🎯 PREPARE TRIAL DEBUG:', { nextTrialIndex, parentId, activeBlockId });
     const myRunId = ++prepRunIdRef.current; // mark this invocation; newer runs cancel older ones
 
     setTrialReady(false);
@@ -1742,7 +1652,7 @@ function MainApp() {
     hasGuessedRef.current = false;
     setTrialBlockingError(null);
 
-    // Reset feedback immediately for new trial
+    // Clear feedback when new trial starts (user clicked Next or modal button)
     setHasGuessedThisTrial(false);
     setLastResult(null);
 
@@ -1772,14 +1682,6 @@ function MainApp() {
       : (isRedundant ? Math.max(2, Number(config.REDUNDANT_R) || 2) : 1);
 
     const finalRedundancyMode = useMotionSafe ? 'single' : (isRedundant ? 'redundant' : 'single');
-    console.log('🔄 REDUNDANCY DEBUG:', {
-      trial: nextTrialIndex + 1,
-      condition,
-      isRedundant,
-      useMotionSafe,
-      finalMode: finalRedundancyMode,
-      redundancyCount: R
-    });
     setRedundancyMode(finalRedundancyMode);
     setRedundancyCount(R);
     setRedundancyOrders([]);
@@ -1794,9 +1696,7 @@ function MainApp() {
     let ghost_symbol_id = null;
 
     // ===== Block 3: client_local (predrawn on client) =====
-    console.log('🟡 CHECKING: client_local path, activeBlockId:', activeBlockId);
     if (activeBlockId === 'client_local') {
-      console.log('✅ TAKING: client_local path');
       const cached = assignmentCache?.client_local?.[trialNum];
       if (!cached) {
         setTrialBlockingError(
@@ -1842,7 +1742,6 @@ function MainApp() {
     }
     // ===== Server-backed blocks =====
     else {
-      console.log('✅ TAKING: server-backed path (full_stack or spoon_love)', activeBlockId);
       const cached = assignmentCache[activeBlockId]?.[trialNum];
 
       const pullBytesNow = async () => {
@@ -1927,23 +1826,9 @@ function MainApp() {
     }
 
     // After the final flash, compute indices against this SAME layout:
-    console.log('BYTE DEBUG:', { primary_raw, ghost_raw, same: primary_raw === ghost_raw });
     const assigned = assignZenerFromBytes(primary_raw, ghost_raw, baseLayout);
-    console.log('ASSIGNMENT DEBUG:', {
-      rawByte: primary_raw,
-      ghostByte: ghost_raw,
-      rawByte_mod5: primary_raw % 5,
-      ghostByte_mod5: ghost_raw % 5,
-      subjectSym: assigned.primary_symbol_id,
-      ghostSym: assigned.ghost_symbol_id,
-      primaryIndex: assigned.primaryIndex,
-      ghostIndex: assigned.ghostIndex,
-      displayIcons: baseLayout.map(opt => opt.id)
-    });
-    console.log('BEFORE setState:', { primaryIndex: assigned.primaryIndex, ghostIndex: assigned.ghostIndex });
     setCorrectIndex(assigned.primaryIndex);
     setGhostIndex(assigned.ghostIndex);
-    console.log('AFTER setState - SET TO:', { correctIndex: assigned.primaryIndex, ghostIndex: assigned.ghostIndex });
     setRngMeta({
       source: rng_source,
       server_time,
@@ -2229,9 +2114,14 @@ function MainApp() {
       return {
         // identity
         session_id: r.session_id,
+        app_version: r.app_version ?? null,
+        condition: r.condition ?? null,
         sealed_envelope_id: r.sealed_envelope_id ?? null,
         block_type: r.block_type,
         trial_index: r.trial_index,
+        k_options: r.k_options ?? null,
+        commit_hash_hex: r.commit_hash_hex ?? null,
+        proof_ctx_version: r.proof_ctx_version ?? null,
 
         // timing
         press_time: r.press_time,
@@ -2273,6 +2163,12 @@ function MainApp() {
         ghost_hit: dh,
         matched: typeof r.matched === 'number' ? r.matched : null,
 
+        // redundancy manipulation (complete from logs)
+        redundancy_mode: r.redundancy_mode ?? 'single',
+        redundancy_count: typeof r.redundancy_count === 'number' ? r.redundancy_count : 1,
+        redundancy_orders: r.redundancy_orders ?? null,
+        redundancy_timestamps_ms: Array.isArray(r.redundancy_timestamps_ms) ? r.redundancy_timestamps_ms : null,
+
       };
     };
 
@@ -2311,13 +2207,11 @@ function MainApp() {
 
     try {
       const existingDocId = exp1DocId || cachedDocIdRef.current;
-      console.log('🐛 Complete experiment - existingDocId:', existingDocId, 'exp1DocId:', exp1DocId, 'cached:', cachedDocIdRef.current);
       if (!existingDocId) {
         console.error('❌ No existing document ID found! This will create a duplicate document.');
         throw new Error('No document ID available - cannot complete experiment');
       }
       const mainDocId = existingDocId;
-      console.log('✅ Using existing document ID:', mainDocId);
 
       await setDoc(
         doc(db, 'experiment1_responses', mainDocId),
@@ -3527,6 +3421,35 @@ function MainApp() {
                     }
                   </h3>
                 ) : null}
+
+                {/* Next button for individual trials (not match-ending) */}
+                {(() => {
+                  const trialsThisBlock = trialResults.filter(
+                    (t) => t.block_type === currentBlockId &&
+                      t.target_index_0based !== null && t.target_index_0based !== undefined &&
+                      t.selected_index !== null && t.selected_index !== undefined &&
+                      t.ghost_index_0based !== null && t.ghost_index_0based !== undefined
+                  );
+                  const gamesPlayedInBlock = trialsThisBlock.length;
+                  const isMatchEnding = gamesPlayedInBlock > 0 && gamesPlayedInBlock % 5 === 0;
+
+                  // Only show Next button for individual trials, not match-ending trials
+                  return !isMatchEnding ? (
+                    <button
+                      className="primary-btn match-summary__cta"
+                      onClick={() => {
+                        setCurrentTrial((c) => {
+                          const next = c + 1;
+                          prepareTrial(next, exp1DocId, currentBlockId);
+                          return next;
+                        });
+                      }}
+                      style={{ marginTop: 16 }}
+                    >
+                      Next Trial
+                    </button>
+                  ) : null;
+                })()}
               </>
             )}
           </div>

@@ -397,26 +397,55 @@ function analyzeTrialPositionEffects(trials) {
   return results;
 }
 
+// Block-Specific Analysis Panel Component
+function BlockSpecificAnalysisPanel({ trials, title = 'Block-Specific Analysis' }) {
+  if (!Array.isArray(trials) || trials.length === 0) return null;
+
+  const hits = trials.filter(t => t.matched === 1).length;
+  const total = trials.length;
+  const hitRate = total > 0 ? hits / total : 0;
+
+  // Basic block statistics only
+  const redundant = trials.filter(t => t.redundancy_mode === 'redundant');
+  const single = trials.filter(t => t.redundancy_mode === 'single');
+
+  const redundantHits = redundant.filter(t => t.matched === 1).length;
+  const singleHits = single.filter(t => t.matched === 1).length;
+
+  const redundantRate = redundant.length > 0 ? redundantHits / redundant.length : 0;
+  const singleRate = single.length > 0 ? singleHits / single.length : 0;
+
+  // Debug output
+  const blockTypes = [...new Set(trials.map(t => t.block_type))];
+
+  return (
+    <div style={{ border: '1px solid #ddd', padding: 16, marginTop: 16, borderRadius: 8, background: '#f9f9f9' }}>
+      <h4 style={{ marginTop: 0 }}>{title}</h4>
+      <div style={{ fontSize: 12, color: '#666', marginBottom: 8 }}>
+        Block types in data: {blockTypes.join(', ')} | Sessions: {trials.length > 0 ? [...new Set(trials.map(t => t.session_id))].length : 0}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+        <div>
+          <div><strong>Overall Performance:</strong></div>
+          <div>Trials: {total}</div>
+          <div>Hits: {hits}</div>
+          <div>Hit Rate: {(hitRate * 100).toFixed(1)}%</div>
+        </div>
+        <div>
+          <div><strong>By Condition:</strong></div>
+          <div>Single: {singleHits}/{single.length} ({(singleRate * 100).toFixed(1)}%)</div>
+          <div>Redundant: {redundantHits}/{redundant.length} ({(redundantRate * 100).toFixed(1)}%)</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Complete Analysis Panel Component
 function CompletePSIAnalysisPanel({ trials, title = 'Complete PSI Signatures' }) {
   if (!Array.isArray(trials) || trials.length === 0) return null;
 
   const coherenceAnalysis = analyzeCoherenceByRedundancy(trials);
-  console.log('🔍 COHERENCE ANALYSIS DEBUG:', {
-    coherenceAnalysis,
-    trialsCount: trials.length,
-    redundantCount: trials.filter(t => t.redundancy_mode === 'redundant').length,
-    singleCount: trials.filter(t => t.redundancy_mode === 'single').length,
-    sampleTrials: trials.slice(0, 3).map(t => ({ redundancy_mode: t.redundancy_mode }))
-  });
-  console.log('🔍 DETAILED REDUNDANCY DEBUG:', {
-    allRedundancyModes: trials.map(t => t.redundancy_mode),
-    uniqueModes: [...new Set(trials.map(t => t.redundancy_mode))],
-    firstFewTrials: trials.slice(0, 10).map(t => ({
-      redundancy_mode: t.redundancy_mode,
-      redundancy_count: t.redundancy_count
-    }))
-  });
   const sourceAnalysis = analyzeByRNGSource(trials);
   const sequentialAnalysis = analyzeSequentialDependency(trials);
   const targetBiasAnalysis = analyzeTargetSelectionBias(trials);
@@ -966,15 +995,10 @@ function runRngSanityTest() {
     if (demon === target) qBugHits++;
   }
 
-  console.log('RNG sanity (expect ~20% when unbiased)');
-  console.log('Physical demon ~= ', pct(physHits));
-  console.log('Quantum (fixed) demon ~= ', pct(qFixedHits));
-  console.log('Quantum demon ~= ', pct(qBugHits));
 }
 
 /* ---------------- general stats over sessions (pooled) ---------------- */
 function computeStats(sessions, getTrials, sessionFilter) {
-  console.log('DEMON DEBUG: computeStats called with', sessions.length, 'sessions');
   const per = [];
   let n10sum = 0,
     n01sum = 0,
@@ -1030,7 +1054,6 @@ function computeStats(sessions, getTrials, sessionFilter) {
 
       // Debug: log first few trials to see actual values (remove when debugging complete)
       if (i < 3) {
-        console.log(`Trial ${i}: subject_hit=${t.subject_hit}, ghost_hit=${t.ghost_hit}, ghostHitValue=${ghostHitValue}, p=${p}, g=${g}`);
       }
 
       hp += p;
@@ -1053,7 +1076,6 @@ function computeStats(sessions, getTrials, sessionFilter) {
     const pctG = (100 * hg) / N;
 
     // Debug logging for demon percentage investigation
-    console.log(`DEMON DEBUG computeStats: N=${N}, hp=${hp} (${pctP.toFixed(1)}%), hg=${hg} (${pctG.toFixed(1)}%), trials with ghost_hit=1: ${trials.filter(t => Number(t.ghost_hit) === 1).length}`);
 
     per.push({
       session_id: doc.session_id || `row_${idx}`,
@@ -1952,7 +1974,6 @@ const MetricExplanations = () => (
 
 /* ---------------------- COMPONENT ---------------------- */
 export default function QAExport() {
-  console.log('DEMON DEBUG: QAExport component rendering');
   const [rows, setRows] = useState([]);
   const [busy, setBusy] = useState(false);
   const [reportPRNG, setReportPRNG] = useState(null); // full_stack (Physical)
@@ -2220,165 +2241,13 @@ export default function QAExport() {
           if (!hasSl && Array.isArray(det.spoon_love_trials))
             d.spoon_love.trialResults = det.spoon_love_trials;
 
-          console.log('[Hydrated sample]', {
-            pickType:
-              typeof d.spoon_love?.trialResults?.[0]?.selected_index,
-            tgtType:
-              typeof d.spoon_love?.trialResults?.[0]
-                ?.target_index_0based,
-            row: d.spoon_love?.trialResults?.[0],
-          });
 
           if (!hasCl && Array.isArray(det.client_local_trials))
             d.client_local.trialResults = det.client_local_trials;
         }
 
-        // 🔁 Fallback: if any block still missing, synthesize from /logs
-        const needFs = !(
-          d?.full_stack?.trialResults &&
-          d.full_stack.trialResults.length
-        );
-        const needSl = !(
-          d?.spoon_love?.trialResults &&
-          d.spoon_love.trialResults.length
-        );
-        const needCl = !(
-          d?.client_local?.trialResults &&
-          d.client_local.trialResults.length
-        );
-
-        if (needFs || needSl || needCl) {
-          const logSnap = await getDocs(
-            collection(db, 'experiment1_responses', d.id, 'logs')
-          );
-          const logs = logSnap.docs.map((x) => x.data() || {});
-
-          // normalize block names:
-          // - accept suffixed names like "full_stack-Physical"
-          const normBlock = (v) => {
-            const s = String(v || '').toLowerCase();
-            if (s.startsWith('full_stack')) return 'full_stack';
-            if (s.startsWith('spoon_love')) return 'spoon_love';
-            if (s.startsWith('client_local')) return 'client_local';
-            return s;
-          };
-
-          // Coercers: turn numeric-looking strings into numbers
-          const toInt = (v) => {
-            if (v === null || v === undefined) return null;
-            if (typeof v === 'number' && Number.isFinite(v))
-              return v | 0;
-            if (typeof v === 'string') {
-              const n = parseInt(v, 10);
-              return Number.isNaN(n) ? null : n;
-            }
-            return null;
-          };
-          const toNum = (v) => {
-            if (v === null || v === undefined) return null;
-            const n = typeof v === 'number' ? v : Number(v);
-            return Number.isFinite(n) ? n : null;
-          };
-
-          const byBlock = (want) =>
-            logs
-              .filter(
-                (r) => normBlock(r.block_type ?? r.block) === want
-              )
-              .sort(
-                (a, b) =>
-                  (toInt(a.trial_index) ?? 0) -
-                  (toInt(b.trial_index) ?? 0)
-              )
-              .map((r) => {
-                // normalize indices (handle numbers or numeric strings)
-                const targetIdx =
-                  toInt(r.target_index_0based) ??
-                  toInt(r.target_index) ??
-                  toInt(r.correct_index);
-
-                const ghostIdx =
-                  toInt(r.ghost_index_0based) ?? toInt(r.demon_index);
-
-                const pickIdx =
-                  toInt(r.selected_index) ??
-                  toInt(r.subject_index_0based) ??
-                  toInt(r.subject_index);
-
-                // options may sometimes be a JSON string; parse if needed
-                let options = r.options;
-                if (
-                  !Array.isArray(options) &&
-                  typeof options === 'string'
-                ) {
-                  try {
-                    const parsed = JSON.parse(options);
-                    if (Array.isArray(parsed)) options = parsed;
-                  } catch { }
-                }
-
-                return {
-                  // core correctness
-                  subject_hit: toInt(r.subject_hit) === 1 ? 1 : 0,
-                  ghost_hit: toInt(r.ghost_hit) === 1 ? 1 : 0,
-                  matched: toInt(r.matched) === 1 ? 1 : 0,
-
-                  // indexing & ordering
-                  trial_index: toInt(r.trial_index),
-                  rng_source: r.rng_source ?? null,
-                  shuffle_mode: r.shuffle_mode ?? null,
-
-                  // targets (write BOTH names)
-                  target_index_0based: targetIdx,
-                  target_index: targetIdx,
-
-                  // demon/ghost index (optional)
-                  ghost_index_0based: ghostIdx,
-                  ghost_index: ghostIdx,
-
-                  // raw bytes (provenance)
-                  raw_byte:
-                    toInt(r.raw_byte) ?? toInt(r.subject_raw_byte),
-                  ghost_raw_byte:
-                    toInt(r.ghost_raw_byte) ??
-                    toInt(r.demon_raw_byte),
-
-                  // subject choice — normalize to selected_index
-                  selected_index: pickIdx,
-                  selected_id: r.selected_id ?? null,
-
-                  // UI context
-                  options: Array.isArray(options) ? options : null,
-
-                  // timing (used in Quantum timing split)
-                  response_time_ms: toNum(r.response_time_ms),
-                  press_start_ts: r.press_start_ts ?? null,
-
-                  // redundancy manipulation
-                  redundancy_mode: r.redundancy_mode ?? 'single',
-                  redundancy_count: toInt(r.redundancy_count) ?? 1,
-
-                  // block label for grouping
-                  block_type: (
-                    r.block_type ??
-                    r.block ??
-                    ''
-                  ).toString(),
-                };
-              });
-
-          // assign synthesized trials where still needed
-          d.full_stack = d.full_stack || {};
-          d.spoon_love = d.spoon_love || {};
-          d.client_local = d.client_local || {};
-
-          if (needFs)
-            d.full_stack.trialResults = byBlock('full_stack');
-          if (needSl)
-            d.spoon_love.trialResults = byBlock('spoon_love');
-          if (needCl)
-            d.client_local.trialResults = byBlock('client_local');
-        }
+        // No longer needed: trialDetails now contains complete data including redundancy_mode
+        // All trial data comes from the /details/trialDetails subcollection
       } catch (_) {
         // ignore hydration errors for a single doc
       }
@@ -2455,11 +2324,6 @@ export default function QAExport() {
       setRows(all);
       setLastUpdated(new Date());
       buildReports(all);
-      console.log(
-        'FS sample',
-        rows.find((d) => d?.full_stack?.trialResults?.length)
-          ?.full_stack?.trialResults?.[0]
-      );
     } catch (e) {
       console.error(e);
       setError(`Fetch failed: ${e?.code || ''} ${e?.message || e}`);
@@ -2522,7 +2386,6 @@ export default function QAExport() {
                t.selected_index !== null && t.selected_index !== undefined &&
                t.ghost_index_0based !== null && t.ghost_index_0based !== undefined
       );
-      console.log(`PRNG: ${all.length} total trials, ${valid.length} valid, ${all.length - valid.length} dropped`);
       return all; // Return unfiltered for now
     };
     const getQRNG = (doc) => {
@@ -2532,7 +2395,6 @@ export default function QAExport() {
                t.selected_index !== null && t.selected_index !== undefined &&
                t.ghost_index_0based !== null && t.ghost_index_0based !== undefined
       );
-      console.log(`QRNG: ${all.length} total trials, ${valid.length} valid, ${all.length - valid.length} dropped`);
       return all; // Return unfiltered for now
     };
     const getCL = (doc) => {
@@ -2542,7 +2404,6 @@ export default function QAExport() {
                t.selected_index !== null && t.selected_index !== undefined &&
                t.ghost_index_0based !== null && t.ghost_index_0based !== undefined
       );
-      console.log(`CL: ${all.length} total trials, ${valid.length} valid, ${all.length - valid.length} dropped`);
       return all; // Return unfiltered for now
     };
     let rPRNG, rQRNG, rCL;
@@ -2704,53 +2565,54 @@ export default function QAExport() {
     }));
   }, [rows]);
 
-  /* ===== Histograms: % accuracy per run (by block) ===== */
-  const accuraciesFS = useMemo(() => {
-    return rows.map((d) => {
-      const trials = d?.full_stack?.trialResults || [];
-      const hits = trials.reduce(
-        (a, t) => a + (Number(t.subject_hit) === 1 ? 1 : 0),
-        0
-      );
-      return trials.length ? (100 * hits) / trials.length : null;
-    });
-  }, [rows]);
-
-  const accuraciesSL = useMemo(() => {
-    return rows.map((d) => {
-      const trials = d?.spoon_love?.trialResults || [];
-      const hits = trials.reduce(
-        (a, t) => a + (Number(t.subject_hit) === 1 ? 1 : 0),
-        0
-      );
-      return trials.length ? (100 * hits) / trials.length : null;
-    });
-  }, [rows]);
-
-  const accuraciesCL = useMemo(() => {
-    return rows.map((d) => {
-      const trials = d?.client_local?.trialResults || [];
-      const hits = trials.reduce(
-        (a, t) => a + (Number(t.subject_hit) === 1 ? 1 : 0),
-        0
-      );
-      return trials.length ? (100 * hits) / trials.length : null;
-    });
-  }, [rows]);
+  // Removed histogram calculations - not providing useful info
   // RNG randomness (ghost/demon vs 20%) by RNG source
   // Flatten trials across all sessions for each block (for PatternsPanel)
-  const trialsFSAll = useMemo(
-    () => rows.flatMap((d) => d?.full_stack?.trialResults || []),
-    [rows]
-  );
-  const trialsSLAll = useMemo(
-    () => rows.flatMap((d) => d?.spoon_love?.trialResults || []),
-    [rows]
-  );
-  const trialsCLAll = useMemo(
-    () => rows.flatMap((d) => d?.client_local?.trialResults || []),
-    [rows]
-  );
+  // Apply the same filtering logic as the statistical reports
+  const trialsFSAll = useMemo(() => {
+    const sessionBinaural = (d) => {
+      const response = d?.postResponses?.binaural_beats || '';
+      if (response === 'No' || response === 'What are binaural beats?') return 'no';
+      if (response.includes('Yes')) return 'yes';
+      return 'unknown';
+    };
+
+    const baseSessionFilter = mode === 'completers' ? (d) => isCompleter(d) : () => true;
+    const passesBinauralFilter = binauralFilter === 'all' ? () => true : (d) => sessionBinaural(d) === binauralFilter;
+    const combinedFilter = (d) => baseSessionFilter(d) && passesBinauralFilter(d);
+
+    return rows.filter(combinedFilter).flatMap((d) => d?.full_stack?.trialResults || []);
+  }, [rows, mode, binauralFilter]);
+
+  const trialsSLAll = useMemo(() => {
+    const sessionBinaural = (d) => {
+      const response = d?.postResponses?.binaural_beats || '';
+      if (response === 'No' || response === 'What are binaural beats?') return 'no';
+      if (response.includes('Yes')) return 'yes';
+      return 'unknown';
+    };
+
+    const baseSessionFilter = mode === 'completers' ? (d) => isCompleter(d) : () => true;
+    const passesBinauralFilter = binauralFilter === 'all' ? () => true : (d) => sessionBinaural(d) === binauralFilter;
+    const combinedFilter = (d) => baseSessionFilter(d) && passesBinauralFilter(d);
+
+    return rows.filter(combinedFilter).flatMap((d) => d?.spoon_love?.trialResults || []);
+  }, [rows, mode, binauralFilter]);
+
+  const trialsCLAll = useMemo(() => {
+    const sessionBinaural = (d) => {
+      const response = d?.postResponses?.binaural_beats || '';
+      if (response === 'No' || response === 'What are binaural beats?') return 'no';
+      if (response.includes('Yes')) return 'yes';
+      return 'unknown';
+    };
+
+    const baseSessionFilter = mode === 'completers' ? (d) => isCompleter(d) : () => true;
+    const passesBinauralFilter = binauralFilter === 'all' ? () => true : (d) => sessionBinaural(d) === binauralFilter;
+    const combinedFilter = (d) => baseSessionFilter(d) && passesBinauralFilter(d);
+
+    return rows.filter(combinedFilter).flatMap((d) => d?.client_local?.trialResults || []);
+  }, [rows, mode, binauralFilter]);
 
   const qrngGhostBySource = useMemo(() => {
     // Quantum block
@@ -4121,9 +3983,9 @@ export default function QAExport() {
           title="Pattern Analysis"
         />
 
-        <CompletePSIAnalysisPanel
+        <BlockSpecificAnalysisPanel
           trials={trialsFSAll}
-          title="Complete Technical Analysis"
+          title="Physical RNG Block Analysis"
         />
       </div>
 
@@ -4151,21 +4013,15 @@ export default function QAExport() {
           title="Pattern Analysis"
         />
 
-        <CompletePSIAnalysisPanel
+        <BlockSpecificAnalysisPanel
           trials={trialsSLAll}
-          title="Complete Technical Analysis"
+          title="Quantum RNG Block Analysis"
         />
 
         <button
           onClick={() => {
             const arr = rows.flatMap(
               (d) => d?.spoon_love?.trialResults || []
-            );
-            console.log(
-              'QUANTUM trial examples (first 3):',
-              arr
-                .slice(0, 3)
-                .map((r) => ({ keys: Object.keys(r), sample: r }))
             );
             alert(
               'Opened console: View QUANTUM trial field names there.'
@@ -4201,21 +4057,15 @@ export default function QAExport() {
           title="Pattern Analysis"
         />
 
-        <CompletePSIAnalysisPanel
+        <BlockSpecificAnalysisPanel
           trials={trialsCLAll}
-          title="Complete Technical Analysis"
+          title="Local RNG Block Analysis"
         />
 
         <button
           onClick={() => {
             const arr = rows.flatMap(
               (d) => d?.client_local?.trialResults || []
-            );
-            console.log(
-              'LOCAL trial examples (first 3):',
-              arr
-                .slice(0, 3)
-                .map((r) => ({ keys: Object.keys(r), sample: r }))
             );
             alert(
               'Opened console: View LOCAL trial field names there.'
@@ -4248,7 +4098,7 @@ export default function QAExport() {
 
         <CompletePSIAnalysisPanel
           trials={[...trialsFSAll, ...trialsSLAll, ...trialsCLAll]}
-          title="Complete Technical Analysis - All Blocks"
+          title="Complete Technical Analysis - Pooled Across All Blocks"
         />
       </div>
 
@@ -4430,27 +4280,7 @@ export default function QAExport() {
           </div>
         </details>
 
-        {/* Histograms — % accuracy per run */}
-        <details style={{ marginTop: 12 }}>
-          <summary>Histograms — % accuracy per run</summary>
-          <div style={{ display: 'grid', gap: 12 }}>
-            <Histogram
-              title="Physical — subject % per run"
-              values={accuraciesFS}
-              bin={2}
-            />
-            <Histogram
-              title="Quantum — subject % per run"
-              values={accuraciesSL}
-              bin={2}
-            />
-            <Histogram
-              title="Local — subject % per run"
-              values={accuraciesCL}
-              bin={2}
-            />
-          </div>
-        </details>
+        {/* Removed histograms - they don't provide useful info */}
 
         {/* Block-by-block deltas per participant */}
         <details style={{ marginTop: 12 }}>
