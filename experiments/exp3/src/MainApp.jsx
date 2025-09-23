@@ -19,7 +19,7 @@ import {
 
 import { db, ensureSignedIn } from './firebase';
 import {
-  collection, doc, addDoc, setDoc, serverTimestamp,
+  collection, doc, addDoc, setDoc, getDoc, updateDoc, serverTimestamp,
 } from 'firebase/firestore';
 
 import { useLiveStreamQueue } from './useLiveStreamQueue';
@@ -134,23 +134,44 @@ function ExitDoorButton({ onClick, title = 'Exit and save' }) {
         display: 'inline-flex',
         alignItems: 'center',
         justifyContent: 'center',
-        width: 44,
-        height: 44,
+        padding: '12px 16px',
         borderRadius: 10,
-        // make it visually “floating” with no square/black background:
-        background: 'transparent',
-        border: 'none',
-        boxShadow: 'none',
+        background: '#f5f7fa',
+        border: '1px solid #ccc',
+        boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
         cursor: 'pointer',
-        fontSize: 28,
-        lineHeight: 1,
-        // subtle glow so it’s visible over any background
-        textShadow: '0 1px 2px rgba(0,0,0,0.6)',
+        fontSize: 16,
+        fontWeight: 500,
+        color: '#2b2b2b',
+        fontFamily: 'inherit',
       }}
     >
-      <span role="img" aria-hidden="true">🚪</span>
+      <span role="img" aria-hidden="true" style={{ marginRight: 6, fontSize: 42 }}>🚪</span>
+      EXIT
     </button>
   );
+}
+// Compute binary Shannon entropy (in bits per symbol, 0..1)
+function shannonEntropy(bits) {
+  const n = bits.length;
+  if (n === 0) return null;
+  const ones = bits.reduce((a, b) => a + b, 0);
+  const p = ones / n;
+  if (p === 0 || p === 1) return 0;
+  return -p * Math.log2(p) - (1 - p) * Math.log2(1 - p);
+}
+
+// Break a bit array into non-overlapping windows and compute entropy per window.
+// Leaves any trailing remainder in-place in the accumulator.
+function extractEntropyWindowsFromAccumulator(accumArray, winSize = 1000) {
+  const out = [];
+  while (accumArray.length >= winSize) {
+    const chunk = accumArray.slice(0, winSize);
+    const h = shannonEntropy(chunk);
+    out.push(h);
+    accumArray.splice(0, winSize); // remove consumed bits
+  }
+  return out;
 }
 
 
@@ -172,8 +193,20 @@ function CircularGauge({ value = 0.5, targetBit = 1, width = 220, label = 'Short
   const tickY2 = tickY1 - tickLen;
 
   return (
-    <div style={{ display: 'inline-block' }}>
-      <svg width={width} height={r + 72} viewBox={`0 0 ${width} ${r + 72}`}>
+    <div style={{
+      display: 'inline-block',
+      width: width,
+      height: r + 72,
+      flexShrink: 0,
+      overflow: 'visible'
+    }}>
+      <svg
+        width={width}
+        height={r + 72}
+        viewBox={`0 0 ${width} ${r + 72}`}
+        preserveAspectRatio="xMidYMid meet"
+        style={{ width: '100%', height: '100%', display: 'block' }}
+      >
         <path d={d} stroke={track} strokeWidth="14" fill="none" />
         <path d={d} stroke={main} strokeWidth="14" fill="none" strokeLinecap="round"
           style={{ strokeDasharray: dashArray, strokeDashoffset: dashOffset, transition: 'stroke-dashoffset 120ms linear' }} />
@@ -310,7 +343,11 @@ export default function MainApp() {
     const H_commit = await sha256Hex(new TextEncoder().encode(commitStr));
     const bits = bytesToBits(bytes, C.RETRO_TAPE_BITS);
     try {
-      const tapesCol = collection(db, C.FIRESTORE_TAPES);
+      // Ensure main experiment document exists first
+      const mainRef = await ensureRunDoc();
+
+      // Save tape as subcollection under main document (like exp1/exp2)
+      const tapesCol = collection(mainRef, 'tapes');
       const tapeDocRef = await addDoc(tapesCol, {
         label, lenBits: C.RETRO_TAPE_BITS,
         createdAt: serverTimestamp(), createdAtISO: createdISO,
@@ -359,12 +396,12 @@ export default function MainApp() {
 
   // ---- run doc
   const [runRef, setRunRef] = useState(null);
-  async function ensureRunDoc() {
+  async function ensureRunDoc(exitInfo = null) {
     if (runRef) return runRef;
     if (!target || !primeCond) throw new Error('logic/order: target and primeCond must be set before creating run');
     const uidNow = uid || (await requireUid());
-    const col = collection(db, C.FIRESTORE_RUNS);
-    const docRef = await addDoc(col, {
+    const col = collection(db, 'experiment3_responses');
+    const docData = {
       participant_id: uidNow,
       experimentId: C.EXPERIMENT_ID,
       createdAt: serverTimestamp(),
@@ -372,7 +409,23 @@ export default function MainApp() {
       prime_condition: primeCond,
       tape_meta: tapeMeta || null,
       minutes_planned: schedule,
-    });
+      timestamp: new Date().toISOString(),
+    };
+
+    // Add exit info if provided
+    if (exitInfo) {
+      docData.exitedEarly = true;
+      docData.exit_reason = exitInfo.reason || 'unspecified';
+      docData.exit_reason_notes = exitInfo.notes || null;
+      docData.exit_block_index = exitInfo.blockIdx || null;
+    } else {
+      docData.exitedEarly = false;
+      docData.exit_reason = null;
+      docData.exit_reason_notes = null;
+      docData.exit_block_index = null;
+    }
+
+    const docRef = await addDoc(col, docData);
     setRunRef(docRef);
     return docRef;
   }
@@ -394,6 +447,12 @@ export default function MainApp() {
   const hitsRef = useRef(0); const ghostHitsRef = useRef(0);
   const trialsPerMinute = trialsPerBlock;
   const targetBit = target === 'RED' ? 1 : 0;
+  // Accumulate bits across minutes until we have full windows (e.g., 1000 bits)
+  const entropyAccumRef = useRef({ subj: [], ghost: [] });
+  // Running store of computed entropy windows (keeps history of windows across the run)
+  const entropyWindowsRef = useRef({ subj: [], ghost: [] });
+  // Configuration: window size for Shannon entropy (1000-bit standard)
+  const ENTROPY_WINDOW_SIZE = 1000;
 
   // Retro pass & redundancy info (audit)
   const retroPassRef = useRef(0);
@@ -480,6 +539,36 @@ export default function MainApp() {
 
     const kind = schedule[blockIdx];
     const isLastRetro = kind === 'retro' && C.RETRO_USE_TAPE_B_LAST && blockIdx === lastRetroIdx;
+    // ---- Entropy windowing (accumulate & compute 1000-bit windows) ----
+    let newSubjWindows = [];
+    let newGhostWindows = [];
+    let subjCount = 0;
+    let ghostCount = 0;
+
+    try {
+      // Append this minute's bits to accumulators
+      if (Array.isArray(bitsThisMinute) && bitsThisMinute.length) {
+        entropyAccumRef.current.subj.push(...bitsThisMinute);
+      }
+      if (Array.isArray(ghostBitsThisMinute) && ghostBitsThisMinute.length) {
+        entropyAccumRef.current.ghost.push(...ghostBitsThisMinute);
+      }
+
+      // Extract any completed windows
+      newSubjWindows = extractEntropyWindowsFromAccumulator(entropyAccumRef.current.subj, ENTROPY_WINDOW_SIZE);
+      newGhostWindows = extractEntropyWindowsFromAccumulator(entropyAccumRef.current.ghost, ENTROPY_WINDOW_SIZE);
+
+      // Append to running windows history
+      if (newSubjWindows.length) entropyWindowsRef.current.subj.push(...newSubjWindows);
+      if (newGhostWindows.length) entropyWindowsRef.current.ghost.push(...newGhostWindows);
+
+      subjCount = entropyWindowsRef.current.subj.length;
+      ghostCount = entropyWindowsRef.current.ghost.length;
+
+    } catch (entropyErr) {
+      console.warn('entropy-windowing failed', entropyErr);
+    }
+
 
     const mdoc = doc(runRef, 'minutes', String(blockIdx));
 
@@ -507,6 +596,15 @@ export default function MainApp() {
       replay: kind === 'retro' ? { passIndex: retroPassRef.current, tape: isLastRetro ? 'B' : 'A' } : null,
       mapping_type: mappingType,
       micro_entropy: microEntropyRef.current.count ? (microEntropyRef.current.sum / microEntropyRef.current.count) : null,
+      entropy: {
+        window_size: ENTROPY_WINDOW_SIZE,
+        new_windows_subj: newSubjWindows,
+        new_windows_ghost: newGhostWindows,
+        cumulative: {
+          subj_count: subjCount,
+          ghost_count: ghostCount,
+        },
+      },
       redundancy: kind === 'retro' ? (redundancyRef.current || null) : null,
       invalidated: minuteInvalidRef.current || false,
       invalid_reason: minuteInvalidRef.current ? invalidReasonRef.current : null,
@@ -590,10 +688,10 @@ export default function MainApp() {
         ghost = ghostRetro[i % (ghostRetro.length || 1)] || 0;
       } else if (C.USE_LIVE_STREAM) {
         const now = performance.now();
-        if (isBuffering) { maybeResume(now); return; }
-        else { maybePause(now); if (isBuffering) return; }
+        if (isBuffering) { maybeResume(now); i += 1; return; }
+        else { maybePause(now); if (isBuffering) { i += 1; return; } }
         const sBit = livePopBit(); const gBit = livePopBit();
-        if (sBit === null || gBit === null) { maybePause(now); return; }
+        if (sBit === null || gBit === null) { maybePause(now); i += 1; return; }
         bit = sBit === '1' ? 1 : 0; ghost = gBit === '1' ? 1 : 0;
         if (shouldInvalidate()) {
           minuteInvalidRef.current = true; invalidReasonRef.current = 'invalidated-buffer';
@@ -725,7 +823,10 @@ export default function MainApp() {
 
   // Exit → persist + mark ended_by
   const userExitRef = useRef(false);
-  const handleExitNow = useCallback(async () => {
+  const [showExitModal, setShowExitModal] = useState(false);
+  const [exitReason, setExitReason] = useState('time');
+  const [exitNotes, setExitNotes] = useState('');
+  const handleExitNow = useCallback(async (exitInfo = null) => {
     userExitRef.current = true;
     try {
       if (C.USE_LIVE_STREAM && schedule[blockIdx] === 'live') {
@@ -734,25 +835,37 @@ export default function MainApp() {
       if (isRunning) {
         setIsRunning(false);
         await persistMinute();
-        if (runRef) {
-          const mdoc = doc(runRef, 'minutes', String(blockIdx));
-          await setDoc(mdoc, { ended_by: 'user_exit' }, { merge: true });
+      }
+
+      // Ensure run doc is created with exit info if it doesn't exist
+      if (!runRef && target && primeCond) {
+        try {
+          await ensureRunDoc({
+            reason: exitInfo?.reason || 'user_exit',
+            notes: exitInfo?.notes || null,
+            blockIdx: blockIdx >= 0 ? blockIdx : 0  // Use 0 if blockIdx is still -1
+          });
+        } catch (saveError) {
+          console.warn('Exit save failed (non-blocking):', saveError);
         }
       }
+    } catch (e) {
+      console.warn('Exit error (non-blocking):', e);
     } finally {
       setPhase('summary');
     }
-  }, [blockIdx, isRunning, liveDisconnect, schedule, persistMinute, runRef]);
+  }, [blockIdx, isRunning, liveDisconnect, schedule, persistMinute, runRef, target, primeCond, ensureRunDoc]);
 
   // ===== flow gates =====
   if (!userReady || !target || !checkedReturning) {
     return (
       <div style={{ padding: 24 }}>
         Loading…
-        <ExitDoorButton onClick={handleExitNow} />
       </div>
     );
   }
+
+  // In MainApp.jsx, replace the ConsentGate section with:
 
   // CONSENT
   if (phase === 'consent') {
@@ -760,15 +873,28 @@ export default function MainApp() {
       <div style={{ position: 'relative' }}>
         <ConsentGate
           title="Consent to Participate"
+          studyDescription="This study investigates whether focused attention can correlate with patterns in random symbol selection. You will complete multiple short trials and brief questionnaires (approximately 15–20 minutes total)."
           bullets={[
-            'This task involves short visual blocks and brief breaks.',
-            'You may stop at any time without penalty.',
-            'No personally identifying data is required.',
-            'We collect anonymous performance metrics for research.',
+            'You will focus on an assigned target symbol (red or green) while random symbols are generated.',
+            'Your task is to maintain focused attention on your target throughout each trial block.',
+            'We collect data on randomly generated sequences, timing patterns, and your questionnaire responses.',
+            'Participation is completely voluntary; you may exit at any time using the door button.',
+            'All data is stored anonymously and securely for research purposes.',
+            'Data will be retained indefinitely to enable scientific replication and analysis.',
+            'Hosting providers may log IP addresses for security purposes, but these are not linked to your study data.',
           ]}
-          onAgree={() => setPhase(preDone ? 'onboarding' : 'preQ')}
+          onAgree={() => {
+            // Double-check localStorage before deciding
+            let localPreDone = false;
+            try {
+              localPreDone = localStorage.getItem(`pre_done_global:${C.EXPERIMENT_ID}`) === '1';
+            } catch {}
+
+            console.log('Pre-questions check:', { preDone, localPreDone, checkedReturning });
+            const shouldSkipPre = preDone || localPreDone;
+            setPhase(shouldSkipPre ? 'onboarding' : 'preQ');
+          }}
         />
-        <ExitDoorButton onClick={handleExitNow} />
       </div>
     );
   }
@@ -783,11 +909,30 @@ export default function MainApp() {
           requiredAll
           onSubmit={async (answers, { valid }) => {
             if (!valid) return;
-            setPhase('onboarding');
+            setPhase('prime');
             try {
-              const ref = await ensureRunDoc();
-              await setDoc(ref, { pre_survey: answers, pre_survey_done: true }, { merge: true });
               const uidNow = await requireUid();
+              // Save to participants collection like exp1
+              const ref = doc(db, 'participants', uidNow);
+              const snap = await getDoc(ref);
+              const demographics = { ...answers };
+
+              if (snap.exists()) {
+                await updateDoc(ref, {
+                  demographics,
+                  demographics_version: 'v1',
+                  updated_at: serverTimestamp(),
+                });
+              } else {
+                await setDoc(ref, {
+                  demographics,
+                  demographics_version: 'v1',
+                  created_at: serverTimestamp(),
+                  updated_at: serverTimestamp(),
+                  profile_version: 1,
+                });
+              }
+
               if (typeof localStorage !== 'undefined') {
                 localStorage.setItem(`pre_done:${C.EXPERIMENT_ID}:${uidNow}`, '1');
                 localStorage.setItem(`pre_done_global:${C.EXPERIMENT_ID}`, '1');
@@ -795,10 +940,58 @@ export default function MainApp() {
               setPreDone(true);
             } catch (e) {
               console.warn('Pre survey save error (non-blocking):', e);
+              console.warn('Debug info:', {
+                uid: uid,
+                runRefId: runRef?.id,
+                userReady: userReady,
+                errorCode: e?.code,
+                errorMessage: e?.message
+              });
             }
           }}
         />
-        <ExitDoorButton onClick={handleExitNow} />
+      </div>
+    );
+  }
+
+  // INFO SCREEN (binaural beats information)
+  if (phase === 'info') {
+    const binauralText = primeCond === 'prime'
+      ? "Correlations have been found with some researchers claiming mental coherence increasing PSI through use of binaural beats."
+      : "Optional background audio that some people find helpful for maintaining focus during attention tasks.";
+
+    return (
+      <div style={{ padding: 24, maxWidth: 760, position: 'relative' }}>
+        <h3 style={{ marginTop: 0, color: '#2c3e50' }}>Optional Enhancement: Binaural Beats</h3>
+        <div style={{ marginTop: 20, padding: 20, background: '#f8f9fa', borderRadius: 12, border: '1px solid #e9ecef' }}>
+          <ul style={{ fontSize: 16, lineHeight: 1.6 }}>
+            <li><strong>About binaural beats:</strong> {binauralText}</li>
+            <li><strong>What you need:</strong> A pair of headphones.</li>
+            <li><strong>How:</strong> Use <a href="https://mynoise.net/NoiseMachines/binauralBrainwaveGenerator.php" target="_blank" rel="noopener noreferrer">this binaural beat generator</a> or your preferred app and set the frequency between <strong>4–8&nbsp;Hz</strong>, choosing the level that feels most comfortable.</li>
+            <li><strong>Choose:</strong>You must choose to either use binaural beats for your entire session or complete the whole session without them. You're welcome to take this experiment multiple times. Try some sessions with binaural beats and others without them to explore different approaches</li>
+            <li><strong>Prepare:</strong> Listen for at least 1–2 minutes before starting. Breathe deeply and try to empty your mind.</li>
+          </ul>
+        </div>
+
+        <div style={{ marginTop: 20 }}>
+          <button
+            className="primary-btn"
+            onClick={() => setPhase('onboarding')}
+            style={{
+              padding: '12px 20px',
+              borderRadius: 8,
+              border: '1px solid #999',
+              background: '#1a8f1a',
+              color: '#fff',
+              cursor: 'pointer',
+              fontSize: 16,
+              transition: 'background 150ms ease'
+            }}
+          >
+            Continue
+          </button>
+        </div>
+
       </div>
     );
   }
@@ -808,15 +1001,104 @@ export default function MainApp() {
     const canContinue = !!tapeA && tapesReady && !busyTape;
     return (
       <div style={{ padding: 24, maxWidth: 760, position: 'relative' }}>
-        <h1>PK / Retro-PK — Pilot</h1>
-        <p><strong>Your target:</strong> {target === 'RED' ? '🟥 RED' : '🟩 GREEN'}. Keep this target the entire session.</p>
-        <ul>
-          <li>You’ll complete short blocks with breaks. Nudge the color toward your target.</li>
-          <li>{C.VISUAL_HZ} Hz flashes; the small meter shows the short-term average.</li>
-          {debugUI && (
-            <li style={{ opacity: 0.8 }}>{POLICY_TEXT.warmup}; {POLICY_TEXT.pause}; {POLICY_TEXT.resume}</li>
-          )}
-        </ul>
+        <h1>Assessing Randomness Suppression During Conscious Intention Tasks — Pilot Study</h1>
+        <div style={{
+          textAlign: 'center',
+          margin: '20px 0',
+          padding: '20px',
+          border: '3px solid #ddd',
+          borderRadius: '12px',
+          background: '#f9f9f9'
+        }}>
+          <p style={{ fontSize: '24px', fontWeight: 'bold', margin: '0 0 10px 0' }}>
+            Your Target:
+          </p>
+          <div style={{ fontSize: '48px', fontWeight: 'bold', margin: '10px 0' }}>
+            {target === 'RED' ? '🟥 RED' : '🟩 GREEN'}
+          </div>
+          <p style={{ fontSize: '18px', margin: '10px 0 0 0', color: '#666' }}>
+            Keep this target the entire session
+          </p>
+        </div>
+        <div style={{ marginBottom: 20 }}>
+          <h3 style={{ color: '#2c3e50', marginBottom: 15 }}>What to Expect:</h3>
+          <ul>
+            <li>You'll complete short blocks with breaks. Nudge the color toward your target.</li>
+            <li>The screen will display visual patterns - stay focused on your target color intention.</li>
+            <li>During breaks, you'll see your performance summary before continuing.</li>
+            {debugUI && (
+              <li style={{ opacity: 0.8 }}>{POLICY_TEXT.warmup}; {POLICY_TEXT.pause}; {POLICY_TEXT.resume}</li>
+            )}
+          </ul>
+
+          <div style={{
+            marginTop: 20,
+            padding: 15,
+            border: '2px solid #e9ecef',
+            borderRadius: 8,
+            background: '#f8f9fa'
+          }}>
+            <h4 style={{ margin: '0 0 10px 0', color: '#495057' }}>Visual Preview:</h4>
+            <p style={{ margin: '5px 0 15px 0', fontSize: 14, color: '#6c757d' }}>
+              You'll see patterns like this during the experiment:
+            </p>
+            <div style={{
+              background: '#f0f0f0',
+              borderRadius: 8,
+              padding: 20,
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              minHeight: 200,
+              border: '1px dashed #ccc'
+            }}>
+              <div style={{ display: 'flex', gap: 20, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center' }}>
+                <div style={{ textAlign: 'center' }}>
+                  <img
+                    src={`${process.env.PUBLIC_URL}/ring-pattern.webp`}
+                    alt="Ring pattern example"
+                    loading="lazy"
+                    style={{
+                      maxWidth: 150,
+                      height: 'auto',
+                      borderRadius: 8,
+                      imageRendering: 'crisp-edges'
+                    }}
+                    onError={(e) => {
+                      console.log('Image failed to load:', e.target.src);
+                      e.target.style.display = 'none';
+                    }}
+                    onLoad={() => console.log('Image loaded successfully')}
+                  />
+                  <p style={{ fontSize: 12, color: '#666', marginTop: 8 }}>Ring Pattern</p>
+                </div>
+                <div style={{ textAlign: 'center' }}>
+                  <img
+                    src={`${process.env.PUBLIC_URL}/mosaic-pattern.webp`}
+                    alt="Mosaic pattern example"
+                    loading="lazy"
+                    style={{
+                      maxWidth: 150,
+                      height: 'auto',
+                      borderRadius: 8,
+                      imageRendering: 'crisp-edges'
+                    }}
+                    onError={(e) => {
+                      console.log('Mosaic image failed to load:', e.target.src);
+                      e.target.style.display = 'none';
+                    }}
+                    onLoad={() => console.log('Mosaic image loaded successfully')}
+                  />
+                  <p style={{ fontSize: 12, color: '#666', marginTop: 8 }}>Mosaic Pattern</p>
+                </div>
+              </div>
+            </div>
+            <p style={{ margin: '10px 0 5px 0', fontSize: 13, color: '#6c757d', fontStyle: 'italic' }}>
+              Focus on your intention to influence the patterns toward your target color.
+              The patterns will change continuously during the experiment.
+            </p>
+          </div>
+        </div>
 
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <button
@@ -835,7 +1117,7 @@ export default function MainApp() {
           <button
             className="primary-btn"
             disabled={!canContinue}
-            onClick={async () => { await ensureRunDoc(); setPhase('prime'); }}
+            onClick={async () => { await ensureRunDoc(); startNextMinute(); }}
             style={{
               padding: '10px 16px',
               borderRadius: 8,
@@ -850,7 +1132,6 @@ export default function MainApp() {
           </button>
         </div>
 
-        <ExitDoorButton onClick={handleExitNow} />
       </div>
     );
   }
@@ -859,26 +1140,37 @@ export default function MainApp() {
   if (phase === 'prime') {
     return (
       <div style={{ padding: 24, position: 'relative' }}>
-        <h2>{primeCond === 'prime' ? 'Priming' : 'Neutral'}</h2>
-        <div style={{ height: 220, border: '1px solid #ddd', padding: 16, borderRadius: 12 }}>
+        <h2>{primeCond === 'prime' ? 'Research Background' : 'Study Overview'}</h2>
+        <div style={{ border: '1px solid #ddd', padding: 20, borderRadius: 12, background: '#f9f9f9', minHeight: 300 }}>
           {primeCond === 'prime' ? (
-            <ul>
-              <li>“Think like a physicist.” — John A. Wheeler</li>
-              <li>Schmidt/Rhine explored mind–matter effects seriously.</li>
-              <li>Breathe and steer gently; playful nudge, not force.</li>
+            <div>
+              <h3 style={{ marginTop: 0, color: '#2c3e50' }}>PK Research: Moving Beyond "Does It Exist?"</h3>
+              <div style={{ lineHeight: 1.6, fontSize: 15 }}>
+                <p>Decades of data already show small but highly reliable deviations from chance in mind–matter interaction studies. Radin & Nelson’s meta-analysis of 515 experiments (1959–2000, 91 researchers) found a consistent 0.7% shift from chance, an effect 16.1 standard errors beyond randomness—replicated across four decades and many labs worldwide.</p>
+
+                <p>Criticisms that early effects were due to weak methods don’t hold up: as experimental rigor improved, effect sizes held steady. Likewise, the “file drawer” objection fails as over 3,000 null studies would be needed to cancel the signal, yet surveys of researchers suggest at most ~60 exist.</p>
+
+                <p>Because the effect size is so small, we're exploring whether statistical signatures might help distinguish genuine anomalies from methodological artifacts. By examining patterns in how these small deviations manifest—their temporal structure, correlation patterns, and relationship to other variables—we aim to develop more specific, testable hypotheses. If consistent signatures emerge alongside positive results, this convergent evidence could help clarify whether we're observing a real phenomenon or persistent experimental confounds.</p>
+
+                <p style={{ fontStyle: 'italic', color: '#555', marginBottom: 0 }}>Your participation helps map the landscape of consciousness-matter interaction.</p>
+              </div>
+            </div>
+          ) :  null}
+          
+          <div style={{ marginTop: 8}}>
+            <h3 style={{ marginTop: 0, color: '#2c3e50' }}>Instructions</h3>
+            <ul style={{ lineHeight: 1.6 }}>
+              <li>This experiment uses quantum random number generators for true randomness.</li>
+              <li>You'll focus on influencing random color sequences toward your assigned target color.</li>
+              <li>Use your mental intention to nudge the quantum processes toward your target.</li>
+              <li>Statistical analysis will examine patterns in the data for signatures of your influence.</li>
+              <li>Take your time and maintain relaxed focus during each block.</li>
             </ul>
-          ) : (
-            <ul>
-              <li>Fun fact: mantis shrimp can see polarized light.</li>
-              <li>Paper beats rock 54% after a loss (bias study).</li>
-              <li>We’ll begin shortly.</li>
-            </ul>
-          )}
+          </div>
         </div>
         <div style={{ marginTop: 8 }}>
-          <button onClick={() => startNextMinute()}>Start now</button>
+          <button onClick={() => setPhase('info')}>Continue</button>
         </div>
-        <ExitDoorButton onClick={handleExitNow} />
       </div>
     );
   }
@@ -899,13 +1191,6 @@ export default function MainApp() {
     return (
       <div style={{ padding: 24, textAlign: 'center', position: 'relative' }}>
         <p>Take a short breather…</p>
-        <p>
-          Next block:{' '}
-          <strong>{nextKind === 'live' ? 'Live' : `Retro (Tape ${nextIsLastRetro ? 'B' : 'A'})`}</strong>
-          {nextKind === 'live' && redoCurrentMinuteRef.current && (
-            <span style={{ marginLeft: 6, color: '#b00' }}>(redo due to buffering)</span>
-          )}
-        </p>
 
         {/* Participant score (no ghost) */}
         {lastBlock && lastBlock.n > 0 && (
@@ -920,7 +1205,7 @@ export default function MainApp() {
               fontWeight: 600
             }}
           >
-            Last block: {pctLast}% ({lastBlock.k}/{lastBlock.n}) · {nextKind === 'live' ? 'Live' : 'Retro'}
+            Last block: {pctLast}% ({lastBlock.k}/{lastBlock.n})
           </div>
         )}
 
@@ -929,23 +1214,9 @@ export default function MainApp() {
           last={lastBlock || { k: hits, n: alignedSeries.length, z: 0, pTwo: 1, kg: 0, ng: 0, zg: 0, pg: 1, kind: nextKind }}
           totals={totals}
           targetSide={target}
+          hideGhost={true}
+          hideBlockType={true}
         />
-
-        {/* === AUDIT TRAIL: redundancy gate for retro minutes === */}
-        {/* {nextKind === 'retro' && (
-          <div style={{ maxWidth: 760, margin: "12px auto" }}>
-            <RedundancyGate
-              tier={redundancyPlan[retroOrdinalRef.current] || "R0"}
-              commitPayload={{
-                H_tape: nextIsLastRetro ? tapeB?.H_tape : tapeA?.H_tape,
-                H_commit: nextIsLastRetro ? tapeB?.H_commit : tapeA?.H_commit,
-                lenBits: C.RETRO_TAPE_BITS,
-                createdISO: nextIsLastRetro ? tapeB?.createdISO : tapeA?.createdISO
-              }}
-              onDone={(info) => { redundancyRef.current = info; }}
-            />
-          </div>
-        )} */}
 
         <div style={{ marginTop: 12 }}>
           <button
@@ -964,11 +1235,10 @@ export default function MainApp() {
             {redundancyReady ? 'Continue' : 'Complete check above…'}
           </button>
           <div style={{ fontSize: 12, opacity: 0.75, marginTop: 8 }}>
-            Planned trials per block: {trialsPlanned} (set via config)
+            Block {blockIdx + 1} of {C.BLOCKS_TOTAL} complete
           </div>
         </div>
 
-        <ExitDoorButton onClick={handleExitNow} />
       </div>
     );
   }
@@ -984,7 +1254,7 @@ export default function MainApp() {
           height: '100vh',
           display: 'grid',
           placeItems: 'center',
-          background: '#000',
+          background: '#f5f7fa',
           position: 'relative'
         }}
       >
@@ -1056,12 +1326,14 @@ export default function MainApp() {
             const toward = targetBit === 1 ? 'RED' : 'GREEN';
             return (
               <>
-                <CircularGauge
-                  value={minuteVal}
-                  targetBit={targetBit}
-                  label={`Toward ${toward}`}
-                  subLabel={`This minute average`}
-                />
+                {C.SHOW_FEEDBACK_GAUGE && (
+                  <CircularGauge
+                    value={minuteVal}
+                    targetBit={targetBit}
+                    label={`Toward ${toward}`}
+                    subLabel={`This minute average`}
+                  />
+                )}
                 <div style={{ fontSize: 12, opacity: 0.8, marginTop: 6 }}>
                   Trial {n}/{trialsPlanned} · This minute: <strong>{Math.round(minuteVal * 100)}%</strong>
                 </div>
@@ -1081,7 +1353,7 @@ export default function MainApp() {
           )}
         </div>
 
-        <ExitDoorButton onClick={handleExitNow} />
+        <ExitDoorButton onClick={() => setShowExitModal(true)} />
       </div>
     );
   }
@@ -1093,10 +1365,9 @@ export default function MainApp() {
         <QuestionsForm
           title="Quick wrap-up"
           questions={postQuestions}
-          requiredAll
           onSubmit={async (answers, { valid }) => {
             if (!valid) return;
-            setPhase('summary');
+            setPhase('results');
             try {
               if (runRef) await setDoc(runRef, { post_survey: answers }, { merge: true });
             } catch (e) {
@@ -1104,47 +1375,227 @@ export default function MainApp() {
             }
           }}
         />
-        <ExitDoorButton onClick={handleExitNow} />
       </div>
     );
   }
 
-  // SUMMARY + exp2-style email gate
-  if (phase === 'summary') {
+  // SIMPLE RESULTS
+  if (phase === 'results') {
     const finalPct = totals.n ? Math.round((100 * totals.k) / totals.n) : 0;
 
     return (
-      <>
+      <div className="App" style={{ textAlign: 'center', maxWidth: 600, margin: '0 auto', padding: 24 }}>
+        <h1>Your Results</h1>
+
+        <div
+          style={{
+            display: 'inline-block',
+            padding: '20px 30px',
+            borderRadius: 12,
+            border: '2px solid #ddd',
+            background: '#eef8ee',
+            marginBottom: 24,
+            fontSize: 24,
+            fontWeight: 700
+          }}
+        >
+          Final Score: {finalPct}%
+        </div>
+
+        <div style={{ textAlign: 'left', marginBottom: 32, padding: '16px', background: '#f8f9fa', borderRadius: 8 }}>
+          <p><strong>Important:</strong> A single session doesn't tell us much about whether you have any ability. The effect being studied is subtle and requires multiple sessions to detect meaningful patterns.</p>
+
+          <p>To assess your personal performance, you would need to complete approximately 10+ sessions and calculate your average score. Consistently high (above 52-53%) or low (below 47-48%) averages across multiple sets could indicate a genuine effect. Low scores are just as telling as high scores—we would simply test you with reversed instructions.</p>
+
+          <p>Thank you for contributing to this research!</p>
+        </div>
+
         <HighScoreEmailGate
           experiment="exp3"
           step="done"
           sessionId={runRef?.id}
           participantId={uid}
           finalPercent={finalPct}
-          cutoffOverride={C.FINALIST_MIN_PCT /* e.g., 55 */}
+          cutoffOverride={C.FINALIST_MIN_PCT}
         />
 
-        <div style={{ padding: 24 }}>
-          <div
-            style={{
-              display: 'inline-block',
-              padding: '10px 14px',
-              borderRadius: 10,
-              border: '1px solid #ddd',
-              background: '#eef8ee',
-              marginBottom: 12,
-              fontWeight: 700
-            }}
-          >
-            Total: {finalPct}% ({totals.k}/{totals.n})
-          </div>
-        </div>
-
-        <SessionSummary totals={totals} blocks={blocks} />
-        <ExitDoorButton onClick={handleExitNow} />
-      </>
+        <button
+          className="primary-btn"
+          onClick={() => setPhase('summary')}
+          style={{ marginTop: 16 }}
+        >
+          Continue to Session Details
+        </button>
+      </div>
     );
   }
 
-  return null;
+  // FINAL SCREEN
+  if (phase === 'summary') {
+    return (
+      <div className="App" style={{ textAlign: 'center', maxWidth: 600, margin: '0 auto', padding: 24 }}>
+        <h1>Thank You!</h1>
+
+        <div style={{ textAlign: 'left', marginBottom: 32, padding: '20px', background: '#f8f9fa', borderRadius: 8 }}>
+          <h3>Study Complete</h3>
+          <p>Thank you for participating in this research on attention and random pattern generation.</p>
+
+          <h4>What This Study Investigated</h4>
+          <p>This experiment tested whether focused mental intention could reduce entropy (increase order) in randomly generated sequences. You were asked to focus attention on specific target symbols while observing rapid visual displays to see if your intention could make the patterns less random.</p>
+
+          <h4>Understanding Your Score</h4>
+          <p>A single session score doesn't tell us much about whether you have any ability, but repeating the experiment multiple times can reveal meaningful patterns. Very high scores (consistently above 55%) or very low scores (consistently below 45%) across many sessions could indicate an effect.</p>
+
+          <p>To evaluate your personal performance: complete at least 10 sessions, then calculate your average score. If your average is consistently above 52-53% or below 47-48% across multiple sets of 10 sessions, this might indicate a genuine pattern rather than random variation. Remember, low scores are just as telling as high scores—we would simply test you with reversed instructions.</p>
+
+          <h4>Next Steps</h4>
+          <p>Your data contributes to a larger dataset that will be analyzed for statistical patterns. Results will be made available once data collection is complete and analysis is finished.</p>
+
+          <h4>Questions or Concerns</h4>
+          <p>If you have any questions about this research, please contact the research team at <a href="mailto:h@whatthequark.com">h@whatthequark.com</a></p>
+        </div>
+
+        <div style={{ marginTop: 24, padding: '16px', background: '#fff', border: '1px solid #ddd', borderRadius: 8 }}>
+          <p>Session ID: <code>{runRef?.id}</code></p>
+          <p>To keep the study fair and unbiased for future participants, we're holding back full details until data collection is complete.</p>
+
+          <ul style={{ textAlign: 'left', marginTop: 16 }}>
+            <li>Try again in different moods or mindsets.</li>
+            <li>Make sure to save your Session ID to earn prizes.</li>
+            <li>Share with friends—large datasets matter here.</li>
+            <li>
+              We'll post a full debrief at{' '}
+              <a href="https://whatthequark.com/debriefs/">https://whatthequark.com/debriefs/</a> when the study closes.
+            </li>
+          </ul>
+
+          <button
+            onClick={() => window.location.reload()}
+            className="primary-btn"
+            style={{ marginTop: '1em' }}
+          >
+            Run It Again
+          </button>
+
+          <div style={{ marginTop: 12 }}>
+            <a
+              className="secondary-btn"
+              href="mailto:h@whatthequark.com?subject=Experiment%20Results%20Updates"
+            >
+              Email me when results are posted
+            </a>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Exit modal (like exp1/exp2)
+  return (
+    <>
+      {showExitModal && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="exit-title"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.45)',
+            display: 'grid',
+            placeItems: 'center',
+            zIndex: 9999,
+            padding: 16,
+          }}
+        >
+          <div
+            style={{
+              maxWidth: 400,
+              padding: 20,
+              borderRadius: 12,
+              background: '#fff',
+              boxShadow: '0 10px 30px rgba(0,0,0,0.2)',
+            }}
+          >
+            <h3 id="exit-title" style={{ marginTop: 0 }}>
+              Exit early — quick reason?
+            </h3>
+            <p style={{ marginTop: 0 }}>
+              Totally optional, but helpful for improving the study.
+            </p>
+
+            <div style={{ display: 'grid', gap: 8 }}>
+              {[
+                ['time', 'Ran out of time'],
+                ['tech', 'Technical/network issue'],
+                ['interest', 'Lost interest'],
+                ['fatigue', 'Felt tired / needed a break'],
+                ['other', 'Other'],
+              ].map(([value, label]) => (
+                <label
+                  key={value}
+                  style={{ display: 'flex', gap: 8, alignItems: 'center' }}
+                >
+                  <input
+                    type="radio"
+                    name="exit_reason"
+                    value={value}
+                    checked={exitReason === value}
+                    onChange={() => setExitReason(value)}
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
+
+            <label style={{ display: 'block', marginTop: 12 }}>
+              <span
+                style={{
+                  display: 'block',
+                  fontSize: 12,
+                  color: '#666',
+                }}
+              >
+                Optional details
+              </span>
+              <textarea
+                value={exitNotes}
+                onChange={(e) => setExitNotes(e.target.value)}
+                rows={3}
+                style={{ width: '100%' }}
+              />
+            </label>
+
+            <div
+              style={{
+                display: 'flex',
+                gap: 12,
+                justifyContent: 'flex-end',
+                marginTop: 16,
+              }}
+            >
+              <button
+                className="secondary-btn"
+                onClick={() => setShowExitModal(false)}
+              >
+                Never mind
+              </button>
+              <button
+                className="primary-btn"
+                onClick={async () => {
+                  setShowExitModal(false);
+                  await handleExitNow({
+                    reason: exitReason,
+                    notes: exitNotes,
+                  });
+                }}
+              >
+                Save & Exit
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
 }

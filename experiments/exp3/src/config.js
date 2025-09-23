@@ -22,6 +22,7 @@ config.experiments = {
     PRIME_PROB: 0.75, // 75% prime / 25% neutral
     TARGET_SIDES: ['RED', 'GREEN'],
     LOW_CONTRAST_MODE: false, // default OFF (toggle available)
+    SHOW_FEEDBACK_GAUGE: false, // circular gauge showing real-time performance
     SHOW_CONDITION_IN_HUD: false,
     SESSION_ALPHA: 0.01,
     BLOCK_HIGHLIGHT_PCT: 52, //what score gets a congrats

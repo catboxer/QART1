@@ -86,62 +86,6 @@ export const preQuestions = [
   },
 ];
 
-// ——— BLOCK METADATA ———
-// export const cueBlocks = [
-//   {
-//     id: 'instructions',
-//     label: 'Physical RNG - Match One',
-//     preInstructions: `
-//       <h1>Focus & Breathe</h1>
-      
-//       <h3>Your Task:</h3>
-// <ul>
-//    <li><strong>Draw your envelopes.</strong> Click the <em>Draw Your Sealed Envelopes</em> button.</li>
-//   <li><strong>Start the trials.</strong> Click the <em>Start Match One Trials</em> button when it turns green.</li>
-//   <li><strong>How many:</strong> ${
-//     config.trialsPerBlock.full_stack
-//   } trials (~${Math.ceil(
-//       Number(config.trialsPerBlock.full_stack) / 5
-//     )} rounds of 5).</li>
-//   <li><strong>Play in rounds.</strong> Each round has 5 trials. After each round you’ll see your result.</li>
-//   <li><strong>Round win.</strong> Getting 3 or more correct out of 5 wins the round.</li>
-//   <li><strong>Progress.</strong> You’ll complete several rounds; your total round & trial wins are shown on screen at the end.</li>
-//   <li><strong>Goal.</strong> Choose the hidden symbol more often than chance (~20% per trial).</li>
-//   <li><strong>Need to stop early?</strong> Click <em>Exit Study</em> (bottom-right) to send your completed results.</li>
-// </ul>
-//  `,
-//     trialInstructions: `
-//       <h2>Physical RNG (Match One)</h2>
-//         <ul>
-//         <li>You’ll see five symbols. On each trial, one is the target.</li>
-//         <li>Pick the one you feel is right.</li>
-//         <li>Encountering issues? <a href="{{ISSUE_MAILTO}}">Email us at h@whatthequark.com</a> about the problem.</li>
-//       </ul>
-//       `,
-//     showFeedback: true,
-//   }
-// ];
-// export function buildIssueMailto(sessionId) {
-//   const subject = 'Experiment issue report';
-//   const body = `Hi team,
-
-// I hit a problem during the experiment.
-
-// - What I was doing: [brief steps]
-// - What happened: [error message or behavior]
-// - When: [date/time and timezone]
-// - Device / browser: [e.g., iPhone 14, Safari]
-// - Session ID: ${sessionId}
-
-// Thanks!`;
-//   return (
-//     'mailto:h@whatthequark.com' +
-//     '?subject=' +
-//     encodeURIComponent(subject) +
-//     '&body=' +
-//     encodeURIComponent(body)
-//   );
-// }
 // ——— POST ———
 
 export const postQuestions = [

@@ -9,34 +9,42 @@ export function BlockScoreboard({
   last = { k: 0, n: 0, z: 0, pTwo: 1, kg: 0, ng: 0, zg: 0, pg: 1, kind: '?' },
   totals = { k: 0, n: 0 },
   targetSide = 'RED',
+  hideGhost = false,
+  hideBlockType = false,
 }) {
   const pct = last.n ? Math.round((last.k / last.n) * 100) : 50;
   const totPct = totals.n ? Math.round((totals.k / totals.n) * 100) : 50;
 
   return (
     <div style={{ maxWidth: 760, margin: '16px auto', textAlign: 'center' }}>
-      <div style={{ fontSize: 18, marginBottom: 8 }}>
-        Last block ({last.kind?.toUpperCase?.() || last.kind})
-      </div>
+      {!hideBlockType && (
+        <div style={{ fontSize: 18, marginBottom: 8 }}>
+          Last block ({last.kind?.toUpperCase?.() || last.kind})
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
         <MiniGauge label={`Toward ${targetSide}`} value={last.n ? last.k / last.n : 0.5} />
-        <MiniGauge label="Ghost control" value={last.ng ? last.kg / last.ng : 0.5} muted />
+        {!hideGhost && (
+          <MiniGauge label="Ghost control" value={last.ng ? last.kg / last.ng : 0.5} muted />
+        )}
       </div>
 
       <div style={{ fontSize: 14, opacity: 0.9, marginTop: 8 }}>
         <div>
           <b>{last.k}/{last.n}</b> hits → {pct}% · z={last.z?.toFixed?.(2)} · p={fmtP(last.pTwo)}
         </div>
-        <div style={{ opacity: 0.8 }}>
-          ghost: {last.kg}/{last.ng} → {last.ng ? Math.round((100 * last.kg) / last.ng) : 50}% · z={last.zg?.toFixed?.(2)} · p={fmtP(last.pg)}
-        </div>
+        {!hideGhost && (
+          <div style={{ opacity: 0.8 }}>
+            ghost: {last.kg}/{last.ng} → {last.ng ? Math.round((100 * last.kg) / last.ng) : 50}% · z={last.zg?.toFixed?.(2)} · p={fmtP(last.pg)}
+          </div>
+        )}
       </div>
 
       <hr style={{ margin: '16px auto', maxWidth: 380 }} />
 
       <div style={{ fontSize: 16 }}>
-        Session total so far: <b>{totals.k}/{totals.n}</b> → {totPct}%
+        Totals so far: <b>{totals.k} hits/{totals.n} trials</b> → {totPct}%
       </div>
     </div>
   );

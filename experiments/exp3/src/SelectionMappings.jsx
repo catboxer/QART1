@@ -21,10 +21,15 @@ function HighEntropyMosaic({
     const canvas = canvasRef.current; if (!canvas) return;
     const cw = width || Math.min(900, Math.floor(window.innerWidth * 0.9));
     const ch = height || Math.min(600, Math.floor(window.innerHeight * 0.8));
-    canvas.width = cw; canvas.height = ch;
-    const ctx = canvas.getContext("2d", { alpha: false });
 
     const cellW = Math.floor(cw / cols), cellH = Math.floor(ch / rows);
+    // Adjust canvas size to exactly fit the grid
+    const actualCW = cellW * cols;
+    const actualCH = cellH * rows;
+
+    canvas.width = actualCW;
+    canvas.height = actualCH;
+    const ctx = canvas.getContext("2d", { alpha: false });
     const n = cols * rows;
 
         // start from previous frame if we have one
@@ -66,7 +71,7 @@ function HighEntropyMosaic({
         height: height || "80vh",
         borderRadius: 16,
         boxShadow: "0 8px 40px rgba(0,0,0,0.35)",
-        background: "#000",
+        background: "#f5f7fa",
       }}
     />
   );
@@ -96,7 +101,12 @@ function LowEntropyProgressRing({
       width || Math.floor(window.innerWidth * 0.9),
       height || Math.floor(window.innerHeight * 0.8)
     );
-    canvas.width = size; canvas.height = size;
+    canvas.width = size;
+    canvas.height = size;
+
+    // Force canvas to maintain square aspect ratio
+    canvas.style.width = size + 'px';
+    canvas.style.height = size + 'px';
 
     const ctx = canvas.getContext("2d", { alpha: false });
 
@@ -120,14 +130,14 @@ function LowEntropyProgressRing({
     }
 
     // draw
-    ctx.fillStyle = "#000";
+    ctx.fillStyle = "#f5f7fa";
     ctx.fillRect(0, 0, size, size);
 
     // track
     ctx.beginPath();
     ctx.arc(cx, cy, ringR, 0, 2 * Math.PI);
     ctx.lineWidth = lineW;
-    ctx.strokeStyle = "rgba(255,255,255,0.08)";
+    ctx.strokeStyle = "rgba(0,0,0,0.15)";
     ctx.stroke();
 
     // progress arcs
@@ -160,11 +170,13 @@ function LowEntropyProgressRing({
     <canvas
       ref={canvasRef}
       style={{
-        width: width || "90vw",
-        height: height || "80vh",
+        maxWidth: width || "90vw",
+        maxHeight: height || "80vh",
+        aspectRatio: "1 / 1",
         borderRadius: 16,
         boxShadow: "0 8px 40px rgba(0,0,0,0.35)",
-        background: "#000",
+        background: "#f5f7fa",
+        objectFit: "contain",
       }}
     />
   );
