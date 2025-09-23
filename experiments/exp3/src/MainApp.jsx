@@ -396,52 +396,84 @@ export default function MainApp() {
 
   // ---- run doc
   const [runRef, setRunRef] = useState(null);
-  async function ensureRunDoc(exitInfo = null) {
-    if (runRef) return runRef;
-    if (!target || !primeCond) throw new Error('logic/order: target and primeCond must be set before creating run');
-    const uidNow = uid || (await requireUid());
-    const col = collection(db, 'experiment3_responses');
-    const docData = {
-      participant_id: uidNow,
-      experimentId: C.EXPERIMENT_ID,
-      createdAt: serverTimestamp(),
-      target_side: target,
-      prime_condition: primeCond,
-      tape_meta: tapeMeta || null,
-      minutes_planned: schedule,
-      timestamp: new Date().toISOString(),
-    };
+  const ensureRunDocPromiseRef = useRef(null); // Prevent race conditions
+  const isCreatingDocRef = useRef(false); // Immediate flag to prevent race conditions
 
-    // Add exit info if provided
-    if (exitInfo) {
-      docData.exitedEarly = true;
-      docData.exit_reason = exitInfo.reason || 'unspecified';
-      docData.exit_reason_notes = exitInfo.notes || null;
-      docData.exit_block_index = exitInfo.blockIdx || null;
-    } else {
-      docData.exitedEarly = false;
-      docData.exit_reason = null;
-      docData.exit_reason_notes = null;
-      docData.exit_block_index = null;
+  async function ensureRunDoc(exitInfo = null) {
+    if (runRef) {
+      console.log('ensureRunDoc: returning existing runRef', runRef.id);
+      return runRef;
     }
 
-    const docRef = await addDoc(col, docData);
-    setRunRef(docRef);
-    return docRef;
+    // If already creating, wait for the existing promise
+    if (isCreatingDocRef.current || ensureRunDocPromiseRef.current) {
+      console.log('ensureRunDoc: waiting for existing promise');
+      return await ensureRunDocPromiseRef.current;
+    }
+
+    // Set flag immediately to block concurrent calls
+    isCreatingDocRef.current = true;
+    console.log('ensureRunDoc: creating new document');
+
+    // Create new promise and store it IMMEDIATELY
+    const createPromise = (async () => {
+      try {
+        if (!target || !primeCond) throw new Error('logic/order: target and primeCond must be set before creating run');
+        const uidNow = uid || (await requireUid());
+        const col = collection(db, 'experiment3_responses');
+        const docData = {
+          participant_id: uidNow,
+          experimentId: C.EXPERIMENT_ID,
+          createdAt: serverTimestamp(),
+          target_side: target,
+          prime_condition: primeCond,
+          tape_meta: tapeMeta || null,
+          minutes_planned: schedule,
+          timestamp: new Date().toISOString(),
+        };
+
+        // Add exit info if provided
+        if (exitInfo) {
+          docData.exitedEarly = true;
+          docData.exit_reason = exitInfo.reason || 'unspecified';
+          docData.exit_reason_notes = exitInfo.notes || null;
+          docData.exit_block_index = exitInfo.blockIdx || null;
+        } else {
+          docData.exitedEarly = false;
+          docData.exit_reason = null;
+          docData.exit_reason_notes = null;
+          docData.exit_block_index = null;
+        }
+
+        const docRef = await addDoc(col, docData);
+        console.log('ensureRunDoc: created document', docRef.id);
+        setRunRef(docRef);
+        return docRef;
+      } catch (error) {
+        console.error('ensureRunDoc: error creating document', error);
+        throw error;
+      } finally {
+        ensureRunDocPromiseRef.current = null; // Clear the promise
+        isCreatingDocRef.current = false; // Clear the flag
+      }
+    })();
+
+    // Store the promise immediately to block concurrent calls
+    ensureRunDocPromiseRef.current = createPromise;
+
+    const result = await createPromise;
+    return result;
   }
 
   // ---- phase & per-minute state
   const [phase, setPhase] = useState('consent');
   const [blockIdx, setblockIdx] = useState(-1);
   const [isRunning, setIsRunning] = useState(false);
-  const [bitsThisMinute, setBitsThisMinute] = useState([]);
-  const [ghostBitsThisMinute, setGhostBitsThisMinute] = useState([]);
-  const [alignedSeries, setAlignedSeries] = useState([]);
-  const [hits, setHits] = useState(0);
-  const [ghostHits, setGhostHits] = useState(0);
+  // Removed redundant state - using refs as single source of truth for performance
   const [lastBlock, setLastBlock] = useState(null);
   const [totals, setTotals] = useState({ k: 0, n: 0 });
   const [blocks, setBlocks] = useState([]);
+  const [renderTrigger, setRenderTrigger] = useState(0); // Force re-renders for ref updates
 
   const bitsRef = useRef([]); const ghostBitsRef = useRef([]); const alignedRef = useRef([]);
   const hitsRef = useRef(0); const ghostHitsRef = useRef(0);
@@ -520,22 +552,22 @@ export default function MainApp() {
   const persistMinute = useCallback(async () => {
     if (!runRef) return;
 
-    const n = alignedSeries.length;
-    const k = hits;
-    const kg = ghostHits;
+    const n = alignedRef.current.length;
+    const k = hitsRef.current;
+    const kg = ghostHitsRef.current;
 
     const z = zFromBinom(k, n, 0.5);
     const pTwo = twoSidedP(z);
     const zg = zFromBinom(kg, n, 0.5);
     const pg = twoSidedP(zg);
 
-    const cohRange = cumulativeRange(bitsThisMinute);
-    const hurst = hurstApprox(bitsThisMinute);
-    const ac1 = lag1Autocorr(bitsThisMinute);
+    const cohRange = cumulativeRange(bitsRef.current);
+    const hurst = hurstApprox(bitsRef.current);
+    const ac1 = lag1Autocorr(bitsRef.current);
 
-    const gCohRange = cumulativeRange(ghostBitsThisMinute);
-    const gHurst = hurstApprox(ghostBitsThisMinute);
-    const gAc1 = lag1Autocorr(ghostBitsThisMinute);
+    const gCohRange = cumulativeRange(ghostBitsRef.current);
+    const gHurst = hurstApprox(ghostBitsRef.current);
+    const gAc1 = lag1Autocorr(ghostBitsRef.current);
 
     const kind = schedule[blockIdx];
     const isLastRetro = kind === 'retro' && C.RETRO_USE_TAPE_B_LAST && blockIdx === lastRetroIdx;
@@ -547,11 +579,11 @@ export default function MainApp() {
 
     try {
       // Append this minute's bits to accumulators
-      if (Array.isArray(bitsThisMinute) && bitsThisMinute.length) {
-        entropyAccumRef.current.subj.push(...bitsThisMinute);
+      if (Array.isArray(bitsRef.current) && bitsRef.current.length) {
+        entropyAccumRef.current.subj.push(...bitsRef.current);
       }
-      if (Array.isArray(ghostBitsThisMinute) && ghostBitsThisMinute.length) {
-        entropyAccumRef.current.ghost.push(...ghostBitsThisMinute);
+      if (Array.isArray(ghostBitsRef.current) && ghostBitsRef.current.length) {
+        entropyAccumRef.current.ghost.push(...ghostBitsRef.current);
       }
 
       // Extract any completed windows
@@ -572,7 +604,7 @@ export default function MainApp() {
 
     const mdoc = doc(runRef, 'minutes', String(blockIdx));
 
-    const blockSummary = { k, n, z, pTwo, kg: ghostHits, ng: n, zg, pg, kind };
+    const blockSummary = { k, n, z, pTwo, kg: ghostHitsRef.current, ng: n, zg, pg, kind };
     setLastBlock(blockSummary);
     setTotals((t) => ({ k: t.k + k, n: t.n + n }));
     setBlocks((b) => [...b, blockSummary]);
@@ -615,8 +647,7 @@ export default function MainApp() {
       } : null,
     }, { merge: true });
   }, [
-    runRef, alignedSeries, hits, ghostHits, bitsThisMinute, ghostBitsThisMinute,
-    schedule, blockIdx, lastRetroIdx, tapeA, tapeB, target, primeCond, mappingType
+    runRef, schedule, blockIdx, lastRetroIdx, tapeA, tapeB, target, primeCond, mappingType
   ]);
 
   const endMinute = useCallback(async () => {
@@ -654,7 +685,7 @@ export default function MainApp() {
   useEffect(() => {
     if (!isRunning) return;
     const TICK = Math.round(1000 / C.VISUAL_HZ);
-    const MAX_TICKS = Math.round(C.BLOCK_MS / TICK);
+    const MAX_TRIALS = trialsPerMinute; // Should be exactly 150 trials
     const isRetro = schedule[blockIdx] === 'retro';
     const isLastRetro = isRetro && C.RETRO_USE_TAPE_B_LAST && blockIdx === lastRetroIdx;
 
@@ -675,7 +706,7 @@ export default function MainApp() {
     tickTimerRef.current = setInterval(() => {
       const elapsed = Date.now() - start;
       const hitCap = elapsed >= (C.BLOCK_MS + 5000);
-      if (i >= MAX_TICKS || hitCap) {
+      if (i >= MAX_TRIALS || hitCap) {
         clearInterval(tickTimerRef.current);
         tickTimerRef.current = null;
         endMinuteRef.current?.();
@@ -712,11 +743,8 @@ export default function MainApp() {
       hitsRef.current += align;
       ghostHitsRef.current += alignGhost;
 
-      setBitsThisMinute([...bitsRef.current]);
-      setGhostBitsThisMinute([...ghostBitsRef.current]);
-      setAlignedSeries([...alignedRef.current]);
-      setHits(hitsRef.current);
-      setGhostHits(ghostHitsRef.current);
+      // Trigger re-render for UI updates
+      setRenderTrigger(prev => prev + 1);
 
       i += 1;
     }, TICK);
@@ -813,10 +841,10 @@ export default function MainApp() {
       retroPassRef.current += 1;
     }
 
-    setBitsThisMinute([]); setGhostBitsThisMinute([]);
-    setAlignedSeries([]); setHits(0); setGhostHits(0);
     bitsRef.current = []; ghostBitsRef.current = []; alignedRef.current = [];
     hitsRef.current = 0; ghostHitsRef.current = 0;
+    resetLivePauseCounters();
+    setRenderTrigger(0);
 
     setIsRunning(true);
   }
@@ -837,17 +865,26 @@ export default function MainApp() {
         await persistMinute();
       }
 
-      // Ensure run doc is created with exit info if it doesn't exist
-      if (!runRef && target && primeCond) {
-        try {
+      // Save exit info to existing doc or create new one
+      try {
+        if (runRef) {
+          // Update existing document with exit info
+          await setDoc(runRef, {
+            exitedEarly: true,
+            exit_reason: exitInfo?.reason || 'user_exit',
+            exit_reason_notes: exitInfo?.notes || null,
+            exit_block_index: blockIdx >= 0 ? blockIdx : 0
+          }, { merge: true });
+        } else if (target && primeCond) {
+          // Create new document with exit info
           await ensureRunDoc({
             reason: exitInfo?.reason || 'user_exit',
             notes: exitInfo?.notes || null,
-            blockIdx: blockIdx >= 0 ? blockIdx : 0  // Use 0 if blockIdx is still -1
+            blockIdx: blockIdx >= 0 ? blockIdx : 0
           });
-        } catch (saveError) {
-          console.warn('Exit save failed (non-blocking):', saveError);
         }
+      } catch (saveError) {
+        console.warn('Exit save failed (non-blocking):', saveError);
       }
     } catch (e) {
       console.warn('Exit error (non-blocking):', e);
@@ -855,6 +892,13 @@ export default function MainApp() {
       setPhase('summary');
     }
   }, [blockIdx, isRunning, liveDisconnect, schedule, persistMinute, runRef, target, primeCond, ensureRunDoc]);
+
+  // Ensure document is created early in onboarding phase
+  useEffect(() => {
+    if (phase === 'onboarding' && !runRef && target && primeCond) {
+      ensureRunDoc().catch(console.error);
+    }
+  }, [phase, runRef, target, primeCond]);
 
   // ===== flow gates =====
   if (!userReady || !target || !checkedReturning) {
@@ -892,7 +936,7 @@ export default function MainApp() {
 
             console.log('Pre-questions check:', { preDone, localPreDone, checkedReturning });
             const shouldSkipPre = preDone || localPreDone;
-            setPhase(shouldSkipPre ? 'onboarding' : 'preQ');
+            setPhase(shouldSkipPre ? 'prime' : 'preQ');
           }}
         />
       </div>
@@ -954,6 +998,45 @@ export default function MainApp() {
     );
   }
 
+  // PRIME SCREEN (research background/study overview)
+  if (phase === 'prime') {
+    return (
+      <div style={{ padding: 24, position: 'relative' }}>
+        <h2>{primeCond === 'prime' ? 'Research Background' : 'Study Overview'}</h2>
+        <div style={{ border: '1px solid #ddd', padding: 20, borderRadius: 12, background: '#f9f9f9', minHeight: 300 }}>
+          {primeCond === 'prime' ? (
+            <div>
+              <h3 style={{ marginTop: 0, color: '#2c3e50' }}>PK Research: Moving Beyond "Does It Exist?"</h3>
+              <div style={{ lineHeight: 1.6, fontSize: 15 }}>
+                <p>Decades of data already show small but highly reliable deviations from chance in mind–matter interaction studies. Radin & Nelson's meta-analysis of 515 experiments (1959–2000, 91 researchers) found a consistent 0.7% shift from chance, an effect 16.1 standard errors beyond randomness—replicated across four decades and many labs worldwide.</p>
+
+                <p>Criticisms that early effects were due to weak methods don't hold up: as experimental rigor improved, effect sizes held steady. Likewise, the "file drawer" objection fails as over 3,000 null studies would be needed to cancel the signal, yet surveys of researchers suggest at most ~60 exist.</p>
+
+                <p>Because the effect size is so small, we're exploring whether statistical signatures might help distinguish genuine anomalies from methodological artifacts. By examining patterns in how these small deviations manifest—their temporal structure, correlation patterns, and relationship to other variables—we aim to develop more specific, testable hypotheses. If consistent signatures emerge alongside positive results, this convergent evidence could help clarify whether we're observing a real phenomenon or persistent experimental confounds.</p>
+
+                <p style={{ fontStyle: 'italic', color: '#555', marginBottom: 0 }}>Your participation helps map the landscape of consciousness-matter interaction.</p>
+              </div>
+            </div>
+          ) :  null}
+
+          <div style={{ marginTop: 8}}>
+            <h3 style={{ marginTop: 0, color: '#2c3e50' }}>Instructions</h3>
+            <ul style={{ lineHeight: 1.6 }}>
+              <li>This experiment uses quantum random number generators for true randomness.</li>
+              <li>You'll focus on influencing random color sequences toward your assigned target color.</li>
+              <li>Use your mental intention to nudge the quantum processes toward your target.</li>
+              <li>Statistical analysis will examine patterns in the data for signatures of your influence.</li>
+              <li>Take your time and maintain relaxed focus during each block.</li>
+            </ul>
+          </div>
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <button onClick={() => setPhase('info')}>Continue</button>
+        </div>
+      </div>
+    );
+  }
+
   // INFO SCREEN (binaural beats information)
   if (phase === 'info') {
     const binauralText = primeCond === 'prime'
@@ -998,7 +1081,7 @@ export default function MainApp() {
 
   // ONBOARDING
   if (phase === 'onboarding') {
-    const canContinue = !!tapeA && tapesReady && !busyTape;
+    const canContinue = !!tapeA && tapesReady && !busyTape && !!runRef;
     return (
       <div style={{ padding: 24, maxWidth: 760, position: 'relative' }}>
         <h1>Assessing Randomness Suppression During Conscious Intention Tasks — Pilot Study</h1>
@@ -1117,7 +1200,10 @@ export default function MainApp() {
           <button
             className="primary-btn"
             disabled={!canContinue}
-            onClick={async () => { await ensureRunDoc(); startNextMinute(); }}
+            onClick={async () => {
+              if (!runRef) await ensureRunDoc();
+              startNextMinute();
+            }}
             style={{
               padding: '10px 16px',
               borderRadius: 8,
@@ -1137,44 +1223,6 @@ export default function MainApp() {
   }
 
   // PRIME
-  if (phase === 'prime') {
-    return (
-      <div style={{ padding: 24, position: 'relative' }}>
-        <h2>{primeCond === 'prime' ? 'Research Background' : 'Study Overview'}</h2>
-        <div style={{ border: '1px solid #ddd', padding: 20, borderRadius: 12, background: '#f9f9f9', minHeight: 300 }}>
-          {primeCond === 'prime' ? (
-            <div>
-              <h3 style={{ marginTop: 0, color: '#2c3e50' }}>PK Research: Moving Beyond "Does It Exist?"</h3>
-              <div style={{ lineHeight: 1.6, fontSize: 15 }}>
-                <p>Decades of data already show small but highly reliable deviations from chance in mind–matter interaction studies. Radin & Nelson’s meta-analysis of 515 experiments (1959–2000, 91 researchers) found a consistent 0.7% shift from chance, an effect 16.1 standard errors beyond randomness—replicated across four decades and many labs worldwide.</p>
-
-                <p>Criticisms that early effects were due to weak methods don’t hold up: as experimental rigor improved, effect sizes held steady. Likewise, the “file drawer” objection fails as over 3,000 null studies would be needed to cancel the signal, yet surveys of researchers suggest at most ~60 exist.</p>
-
-                <p>Because the effect size is so small, we're exploring whether statistical signatures might help distinguish genuine anomalies from methodological artifacts. By examining patterns in how these small deviations manifest—their temporal structure, correlation patterns, and relationship to other variables—we aim to develop more specific, testable hypotheses. If consistent signatures emerge alongside positive results, this convergent evidence could help clarify whether we're observing a real phenomenon or persistent experimental confounds.</p>
-
-                <p style={{ fontStyle: 'italic', color: '#555', marginBottom: 0 }}>Your participation helps map the landscape of consciousness-matter interaction.</p>
-              </div>
-            </div>
-          ) :  null}
-          
-          <div style={{ marginTop: 8}}>
-            <h3 style={{ marginTop: 0, color: '#2c3e50' }}>Instructions</h3>
-            <ul style={{ lineHeight: 1.6 }}>
-              <li>This experiment uses quantum random number generators for true randomness.</li>
-              <li>You'll focus on influencing random color sequences toward your assigned target color.</li>
-              <li>Use your mental intention to nudge the quantum processes toward your target.</li>
-              <li>Statistical analysis will examine patterns in the data for signatures of your influence.</li>
-              <li>Take your time and maintain relaxed focus during each block.</li>
-            </ul>
-          </div>
-        </div>
-        <div style={{ marginTop: 8 }}>
-          <button onClick={() => setPhase('info')}>Continue</button>
-        </div>
-      </div>
-    );
-  }
-
   // REST (manual Continue; participant score only; RedundancyGate for retro)
   if (phase === 'rest') {
     const next = redoCurrentMinuteRef.current ? blockIdx : (blockIdx + 1);
@@ -1211,7 +1259,7 @@ export default function MainApp() {
 
         {/* Optional totals board (ghost hidden if your component supports) */}
         <BlockScoreboard
-          last={lastBlock || { k: hits, n: alignedSeries.length, z: 0, pTwo: 1, kg: 0, ng: 0, zg: 0, pg: 1, kind: nextKind }}
+          last={lastBlock || { k: hitsRef.current, n: alignedRef.current.length, z: 0, pTwo: 1, kg: 0, ng: 0, zg: 0, pg: 1, kind: nextKind }}
           totals={totals}
           targetSide={target}
           hideGhost={true}
@@ -1274,7 +1322,7 @@ export default function MainApp() {
         <MappingDisplay
           key={`block-${blockIdx}`}
           mapping={mappingType}
-          bit={bitsThisMinute[bitsThisMinute.length - 1] ?? 0}
+          bit={bitsRef.current[bitsRef.current.length - 1] ?? 0}
           targetBit={targetBit}
           segments={trialsPlanned}
           onFrameDelta={(f) => {
@@ -1320,8 +1368,8 @@ export default function MainApp() {
           </div>
 
           {(() => {
-            const n = alignedSeries.length;
-            const k = hits;
+            const n = alignedRef.current.length;
+            const k = hitsRef.current;
             const minuteVal = n ? k / n : 0.5;
             const toward = targetBit === 1 ? 'RED' : 'GREEN';
             return (
@@ -1353,7 +1401,101 @@ export default function MainApp() {
           )}
         </div>
 
-        <ExitDoorButton onClick={() => setShowExitModal(true)} />
+        <ExitDoorButton onClick={() => {
+          console.log('Exit button clicked!', { showExitModal });
+          setShowExitModal(true);
+          console.log('Set showExitModal to true');
+        }} />
+
+        {/* Exit modal */}
+        {showExitModal && (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="exit-title"
+            style={{
+              position: 'fixed',
+              inset: 0,
+              background: 'rgba(0,0,0,0.45)',
+              display: 'grid',
+              placeItems: 'center',
+              zIndex: 9999,
+              padding: 16,
+            }}
+          >
+            <div
+              style={{
+                maxWidth: 400,
+                background: '#fff',
+                borderRadius: 12,
+                boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
+                padding: 24,
+              }}
+            >
+              <h3 id="exit-title" style={{ marginTop: 0, marginBottom: 16 }}>
+                Exit Survey
+              </h3>
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ display: 'block', marginBottom: 8, fontWeight: 500 }}>
+                  Why are you exiting?
+                </label>
+                <select
+                  value={exitReason}
+                  onChange={(e) => setExitReason(e.target.value)}
+                  style={{ width: '100%', padding: 8, borderRadius: 4 }}
+                >
+                  <option value="time">Out of time</option>
+                  <option value="difficulty">Too difficult</option>
+                  <option value="technical">Technical problems</option>
+                  <option value="other">Other reason</option>
+                </select>
+              </div>
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ display: 'block', marginBottom: 8, fontWeight: 500 }}>
+                  Additional notes (optional):
+                </label>
+                <textarea
+                  value={exitNotes}
+                  onChange={(e) => setExitNotes(e.target.value)}
+                  rows={3}
+                  style={{ width: '100%', padding: 8, borderRadius: 4, resize: 'vertical' }}
+                  placeholder="Any additional feedback..."
+                />
+              </div>
+              <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
+                <button
+                  onClick={() => setShowExitModal(false)}
+                  style={{
+                    padding: '10px 16px',
+                    borderRadius: 6,
+                    border: '1px solid #28a745',
+                    background: '#28a745',
+                    color: 'white',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    setShowExitModal(false);
+                    handleExitNow({ reason: exitReason, notes: exitNotes });
+                  }}
+                  style={{
+                    padding: '10px 16px',
+                    borderRadius: 6,
+                    border: 'none',
+                    background: '#dc3545',
+                    color: 'white',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Save & Exit
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -1489,113 +1631,4 @@ export default function MainApp() {
       </div>
     );
   }
-
-  // Exit modal (like exp1/exp2)
-  return (
-    <>
-      {showExitModal && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="exit-title"
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(0,0,0,0.45)',
-            display: 'grid',
-            placeItems: 'center',
-            zIndex: 9999,
-            padding: 16,
-          }}
-        >
-          <div
-            style={{
-              maxWidth: 400,
-              padding: 20,
-              borderRadius: 12,
-              background: '#fff',
-              boxShadow: '0 10px 30px rgba(0,0,0,0.2)',
-            }}
-          >
-            <h3 id="exit-title" style={{ marginTop: 0 }}>
-              Exit early — quick reason?
-            </h3>
-            <p style={{ marginTop: 0 }}>
-              Totally optional, but helpful for improving the study.
-            </p>
-
-            <div style={{ display: 'grid', gap: 8 }}>
-              {[
-                ['time', 'Ran out of time'],
-                ['tech', 'Technical/network issue'],
-                ['interest', 'Lost interest'],
-                ['fatigue', 'Felt tired / needed a break'],
-                ['other', 'Other'],
-              ].map(([value, label]) => (
-                <label
-                  key={value}
-                  style={{ display: 'flex', gap: 8, alignItems: 'center' }}
-                >
-                  <input
-                    type="radio"
-                    name="exit_reason"
-                    value={value}
-                    checked={exitReason === value}
-                    onChange={() => setExitReason(value)}
-                  />
-                  {label}
-                </label>
-              ))}
-            </div>
-
-            <label style={{ display: 'block', marginTop: 12 }}>
-              <span
-                style={{
-                  display: 'block',
-                  fontSize: 12,
-                  color: '#666',
-                }}
-              >
-                Optional details
-              </span>
-              <textarea
-                value={exitNotes}
-                onChange={(e) => setExitNotes(e.target.value)}
-                rows={3}
-                style={{ width: '100%' }}
-              />
-            </label>
-
-            <div
-              style={{
-                display: 'flex',
-                gap: 12,
-                justifyContent: 'flex-end',
-                marginTop: 16,
-              }}
-            >
-              <button
-                className="secondary-btn"
-                onClick={() => setShowExitModal(false)}
-              >
-                Never mind
-              </button>
-              <button
-                className="primary-btn"
-                onClick={async () => {
-                  setShowExitModal(false);
-                  await handleExitNow({
-                    reason: exitReason,
-                    notes: exitNotes,
-                  });
-                }}
-              >
-                Save & Exit
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </>
-  );
 }

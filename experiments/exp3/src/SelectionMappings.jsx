@@ -19,8 +19,8 @@ function HighEntropyMosaic({
 
   useEffect(() => {
     const canvas = canvasRef.current; if (!canvas) return;
-    const cw = width || Math.min(900, Math.floor(window.innerWidth * 0.9));
-    const ch = height || Math.min(600, Math.floor(window.innerHeight * 0.8));
+    const cw = width || Math.min(900, Math.floor(window.innerWidth * 0.765));
+    const ch = height || Math.min(600, Math.floor(window.innerHeight * 0.68));
 
     const cellW = Math.floor(cw / cols), cellH = Math.floor(ch / rows);
     // Adjust canvas size to exactly fit the grid
@@ -67,8 +67,8 @@ function HighEntropyMosaic({
     <canvas
       ref={canvasRef}
       style={{
-        width: width || "90vw",
-        height: height || "80vh",
+        width: width || "76.5vw",
+        height: height || "68vh",
         borderRadius: 16,
         boxShadow: "0 8px 40px rgba(0,0,0,0.35)",
         background: "#f5f7fa",
