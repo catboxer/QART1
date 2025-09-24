@@ -90,6 +90,28 @@ export const preQuestions = [
 
 export const postQuestions = [
   {
+    id: 'binaural_beats',
+    type: 'select',
+    question: 'Did you listen to binaural beats during any part of this experiment?',
+    options: ['No', 'Yes - during all blocks', 'Yes - during Block 1 (Physical)', 'Yes - during Block 2 (Quantum)', 'Yes - during Block 3 (Local)', 'What are binaural beats?'],
+  },
+  {
+    id: 'binaural_level',
+    question: 'What hertz did you listen to?',
+    type: 'number',
+    min: 1,
+    max: 32,
+    showIf: {
+      id: 'binaural_beats',
+      values: [
+        'Yes - during all blocks',
+        'Yes - during Block 1 (Physical)',
+        'Yes - during Block 2 (Quantum)',
+        'Yes - during Block 3 (Local)'
+      ]
+    }
+  },
+  {
     id: 'focusLevel',
     question:
       'How focused did you feel? (1 = not at all, 10 = extremely focused)',

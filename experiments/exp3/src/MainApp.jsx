@@ -1,6 +1,7 @@
 // src/MainApp.jsx
 import './App.css';
 import React, {
+  Component,
   useEffect,
   useMemo,
   useRef,
@@ -8,7 +9,6 @@ import React, {
   useCallback,
 } from 'react';
 import { pkConfig as C } from './config.js';
-
 import {
   zFromBinom,
   twoSidedP,
@@ -16,21 +16,70 @@ import {
   hurstApprox,
   lag1Autocorr,
 } from './stats/index.js';
-
 import { db, ensureSignedIn } from './firebase';
 import {
   collection, doc, addDoc, setDoc, getDoc, updateDoc, serverTimestamp,
 } from 'firebase/firestore';
-
 import { useLiveStreamQueue } from './useLiveStreamQueue';
-// import RedundancyGate from './RedundancyGate.jsx';
 import { MappingDisplay } from './SelectionMappings.jsx';
-
 import { preQuestions, postQuestions } from './questions';
 import { QuestionsForm } from './Forms.jsx';
 import { BlockScoreboard, SessionSummary } from './Scoring.jsx';
 import HighScoreEmailGate from './ui/HighScoreEmailGate.jsx';
 import ConsentGate from './ui/ConsentGate.jsx';
+
+// Runtime configuration validation
+function validateConfig() {
+  const errors = [];
+
+  if (!C.VISUAL_HZ || C.VISUAL_HZ <= 0) errors.push('VISUAL_HZ must be positive');
+  if (!C.BLOCK_MS || C.BLOCK_MS <= 0) errors.push('BLOCK_MS must be positive');
+  if (!C.BLOCKS_TOTAL || C.BLOCKS_TOTAL <= 0) errors.push('BLOCKS_TOTAL must be positive');
+  if (C.PRIME_PROB < 0 || C.PRIME_PROB > 1) errors.push('PRIME_PROB must be between 0 and 1');
+  if (!Array.isArray(C.TARGET_SIDES) || C.TARGET_SIDES.length === 0) errors.push('TARGET_SIDES must be non-empty array');
+  if (!C.RETRO_TAPE_BITS || C.RETRO_TAPE_BITS <= 0) errors.push('RETRO_TAPE_BITS must be positive');
+  if (C.emailSignificanceThreshold < 0 || C.emailSignificanceThreshold > 1) errors.push('emailSignificanceThreshold must be between 0 and 1');
+
+  if (errors.length > 0) {
+    throw new Error(`Configuration validation failed: ${errors.join(', ')}`);
+  }
+}
+
+// Validate configuration on load
+validateConfig();
+
+// Error boundary component for data collection protection
+class DataCollectionErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error('Data collection error caught by boundary:', error, errorInfo);
+    // Continue experiment - don't crash completely
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ padding: 20, background: '#ffebee', border: '1px solid #f44336', borderRadius: 8 }}>
+          <h3>Data Collection Issue</h3>
+          <p>A non-critical error occurred but the experiment continues:</p>
+          <code>{this.state.error?.message}</code>
+          <button onClick={() => this.setState({ hasError: false, error: null })}>
+            Continue Experiment
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 const QRNG_URL = '/.netlify/functions/qrng-race';
 
@@ -580,15 +629,26 @@ export default function MainApp() {
     try {
       // Append this minute's bits to accumulators
       if (Array.isArray(bitsRef.current) && bitsRef.current.length) {
+        const beforeLength = entropyAccumRef.current.subj.length;
         entropyAccumRef.current.subj.push(...bitsRef.current);
+        console.log(`Entropy: Added ${bitsRef.current.length} subject bits (accumulator: ${beforeLength} → ${entropyAccumRef.current.subj.length})`);
       }
       if (Array.isArray(ghostBitsRef.current) && ghostBitsRef.current.length) {
+        const beforeLength = entropyAccumRef.current.ghost.length;
         entropyAccumRef.current.ghost.push(...ghostBitsRef.current);
+        console.log(`Entropy: Added ${ghostBitsRef.current.length} ghost bits (accumulator: ${beforeLength} → ${entropyAccumRef.current.ghost.length})`);
       }
 
       // Extract any completed windows
       newSubjWindows = extractEntropyWindowsFromAccumulator(entropyAccumRef.current.subj, ENTROPY_WINDOW_SIZE);
       newGhostWindows = extractEntropyWindowsFromAccumulator(entropyAccumRef.current.ghost, ENTROPY_WINDOW_SIZE);
+
+      if (newSubjWindows.length) {
+        console.log(`Entropy: Extracted ${newSubjWindows.length} subject windows, avg entropy: ${(newSubjWindows.reduce((a,b) => a+b, 0) / newSubjWindows.length).toFixed(4)}`);
+      }
+      if (newGhostWindows.length) {
+        console.log(`Entropy: Extracted ${newGhostWindows.length} ghost windows, avg entropy: ${(newGhostWindows.reduce((a,b) => a+b, 0) / newGhostWindows.length).toFixed(4)}`);
+      }
 
       // Append to running windows history
       if (newSubjWindows.length) entropyWindowsRef.current.subj.push(...newSubjWindows);
@@ -596,6 +656,8 @@ export default function MainApp() {
 
       subjCount = entropyWindowsRef.current.subj.length;
       ghostCount = entropyWindowsRef.current.ghost.length;
+
+      console.log(`Entropy: Total windows - Subject: ${subjCount}, Ghost: ${ghostCount}`);
 
     } catch (entropyErr) {
       console.warn('entropy-windowing failed', entropyErr);
@@ -657,8 +719,8 @@ export default function MainApp() {
     setIsRunning(false);
     await persistMinute();
     if (minuteInvalidRef.current) { setPhase('rest'); return; }
-    if (blockIdx + 1 >= C.BLOCKS_TOTAL) setPhase('done');
-    else setPhase('rest');
+    // Always go to rest phase first, even for the final block
+    setPhase('rest');
   }, [blockIdx, liveDisconnect, schedule, persistMinute]);
   // Idle prefetch during PRIME/REST in non-streaming mode
   useEffect(() => {
@@ -824,6 +886,13 @@ export default function MainApp() {
   async function startNextMinute() {
     const redo = redoCurrentMinuteRef.current;
     const next = redo ? blockIdx : (blockIdx + 1);
+
+    // If we've completed all blocks, go to post-experiment questions
+    if (!redo && blockIdx + 1 >= C.BLOCKS_TOTAL) {
+      setPhase('done');
+      return;
+    }
+
     if (redo) {
       redoCurrentMinuteRef.current = false;
       minuteInvalidRef.current = false;
@@ -917,7 +986,7 @@ export default function MainApp() {
       <div style={{ position: 'relative' }}>
         <ConsentGate
           title="Consent to Participate"
-          studyDescription="This study investigates whether focused attention can correlate with patterns in random symbol selection. You will complete multiple short trials and brief questionnaires (approximately 15–20 minutes total)."
+          studyDescription="This study investigates whether focused attention can correlate with patterns in random color generation during attention tasks. You will complete 18 blocks and brief questionnaires (approximately 20-25 minutes total)."
           bullets={[
             'You will focus on an assigned target symbol (red or green) while random symbols are generated.',
             'Your task is to maintain focused attention on your target throughout each trial block.',
@@ -1319,18 +1388,23 @@ export default function MainApp() {
           </div>
         )}
 
-        <MappingDisplay
-          key={`block-${blockIdx}`}
-          mapping={mappingType}
-          bit={bitsRef.current[bitsRef.current.length - 1] ?? 0}
-          targetBit={targetBit}
-          segments={trialsPlanned}
-          onFrameDelta={(f) => {
-            const m = microEntropyRef.current;
-            m.sum += Math.max(0, Math.min(1, f));
-            m.count += 1;
-          }}
-        />
+        <DataCollectionErrorBoundary>
+          <MappingDisplay
+            key={`block-${blockIdx}`}
+            mapping={mappingType}
+            bit={bitsRef.current[bitsRef.current.length - 1] ?? 0}
+            targetBit={targetBit}
+            segments={trialsPlanned}
+            onFrameDelta={mappingType === "high_entropy"
+              ? (alignedRef.current.length > 0 ? hitsRef.current / alignedRef.current.length : 0.5)
+              : ((f) => {
+                  const m = microEntropyRef.current;
+                  m.sum += Math.max(0, Math.min(1, f));
+                  m.count += 1;
+                })
+            }
+          />
+        </DataCollectionErrorBoundary>
 
         <div
           style={{
@@ -1545,11 +1619,16 @@ export default function MainApp() {
         </div>
 
         <div style={{ textAlign: 'left', marginBottom: 32, padding: '16px', background: '#f8f9fa', borderRadius: 8 }}>
-          <p><strong>Important:</strong> A single session doesn't tell us much about whether you have any ability. The effect being studied is subtle and requires multiple sessions to detect meaningful patterns.</p>
+          <h4>What This Study Investigated</h4>
+          <p>This experiment tested whether focused mental intention could reduce entropy (increase order) in randomly generated sequences. You were asked to focus attention on specific target symbols while observing rapid visual displays to see if your intention could make the patterns less random.</p>
 
-          <p>To assess your personal performance, you would need to complete approximately 10+ sessions and calculate your average score. Consistently high (above 52-53%) or low (below 47-48%) averages across multiple sets could indicate a genuine effect. Low scores are just as telling as high scores—we would simply test you with reversed instructions.</p>
+          <h4>Understanding Your Score</h4>
+          <p>A single session score doesn't tell us much about whether you have any ability, but repeating the experiment multiple times can reveal meaningful patterns. Very high scores (consistently above 55%) or very low scores (consistently below 45%) across many sessions could indicate an effect.</p>
 
-          <p>Thank you for contributing to this research!</p>
+          <p>To evaluate your personal performance: complete at least 10 sessions, then calculate your average score. If your average is consistently above 52-53% or below 47-48% across multiple sets of 10 sessions, this might indicate a genuine pattern rather than random variation. Remember, low scores are just as telling as high scores—we would simply test you with reversed instructions.</p>
+
+          <h4>Next Steps</h4>
+          <p>Your data contributes to a larger dataset that will be analyzed for statistical patterns. Results will be made available once data collection is complete and analysis is finished.</p>
         </div>
 
         <HighScoreEmailGate
@@ -1582,17 +1661,6 @@ export default function MainApp() {
           <h3>Study Complete</h3>
           <p>Thank you for participating in this research on attention and random pattern generation.</p>
 
-          <h4>What This Study Investigated</h4>
-          <p>This experiment tested whether focused mental intention could reduce entropy (increase order) in randomly generated sequences. You were asked to focus attention on specific target symbols while observing rapid visual displays to see if your intention could make the patterns less random.</p>
-
-          <h4>Understanding Your Score</h4>
-          <p>A single session score doesn't tell us much about whether you have any ability, but repeating the experiment multiple times can reveal meaningful patterns. Very high scores (consistently above 55%) or very low scores (consistently below 45%) across many sessions could indicate an effect.</p>
-
-          <p>To evaluate your personal performance: complete at least 10 sessions, then calculate your average score. If your average is consistently above 52-53% or below 47-48% across multiple sets of 10 sessions, this might indicate a genuine pattern rather than random variation. Remember, low scores are just as telling as high scores—we would simply test you with reversed instructions.</p>
-
-          <h4>Next Steps</h4>
-          <p>Your data contributes to a larger dataset that will be analyzed for statistical patterns. Results will be made available once data collection is complete and analysis is finished.</p>
-
           <h4>Questions or Concerns</h4>
           <p>If you have any questions about this research, please contact the research team at <a href="mailto:h@whatthequark.com">h@whatthequark.com</a></p>
         </div>
@@ -1603,7 +1671,6 @@ export default function MainApp() {
 
           <ul style={{ textAlign: 'left', marginTop: 16 }}>
             <li>Try again in different moods or mindsets.</li>
-            <li>Make sure to save your Session ID to earn prizes.</li>
             <li>Share with friends—large datasets matter here.</li>
             <li>
               We'll post a full debrief at{' '}

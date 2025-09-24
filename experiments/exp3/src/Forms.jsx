@@ -45,10 +45,16 @@ export function QuestionsForm({
     setTouched((t) => ({ ...t, [id]: true }));
   };
 
-  // per-question validity
+  // per-question validity (only check visible questions)
   const validity = useMemo(() => {
     const map = {};
-    for (const q of questions) {
+    const visibleQuestions = questions.filter((q) => {
+      if (!q.showIf) return true; // always show if no condition
+      const parentAnswer = answers[q.showIf.id]; // user's answer to the parent question
+      return q.showIf.values.includes(parentAnswer);
+    });
+
+    for (const q of visibleQuestions) {
       const v = answers[q.id];
 
       // If requiredAll is true → everything is required.
@@ -109,7 +115,14 @@ export function QuestionsForm({
     <form onSubmit={handleSubmit} className="App" style={{ textAlign: 'left' }}>
       {title && <h2>{title}</h2>}
 
-      {questions.map((q, idx) => {
+      {questions
+        .filter((q) => {
+          if (!q.showIf) return true; // always show if no condition
+
+          const parentAnswer = answers[q.showIf.id]; // user's answer to the parent question
+          return q.showIf.values.includes(parentAnswer);
+        })
+        .map((q, idx) => {
         const value = answers[q.id] ?? '';
         const bad = touchedSubmit && !validity[q.id];
 
