@@ -102,9 +102,10 @@ export const cueBlocks = [
    <h1>Focus & Breathe</h1>
 <h3>Optional Enhancement: Binaural Beats</h3>
 <ul>
-  <li><strong>Try with and without.</strong> Some subjects showed a 1–3% increase in PSI ability while listening to binaural beats.Experiment by trying once with and once without them.</li>
+  <li><strong>Try with and without.</strong> Optional background audio that some people find helpful for maintaining focus during attention tasks. Experiment by trying both with and without the beats.</li>
   <li><strong>What you need:</strong> A pair of headphones.</li>
   <li><strong>How:</strong> Use <a href="https://mynoise.net/NoiseMachines/binauralBrainwaveGenerator.php" target="_blank" rel="noopener noreferrer">this binaural beat generator</a> and set the frequency between <strong>4–8&nbsp;Hz</strong>, choosing the level that feels most comfortable. If you already have a preferred app, you can use that instead—just be sure the frequency is within the <strong>4–8&nbsp;Hz</strong> range.</li>
+
   <li><strong>Prepare:</strong> Listen for at least 1–2 minutes before starting. Breathe deeply and try to empty your mind.</li>
 </ul>
 
@@ -137,7 +138,7 @@ export const cueBlocks = [
  <h1>Focus & Breathe</h1>
 <h3>Optional Enhancement: Binaural Beats</h3>
 <ul>
-  <li><strong>Try with and without.</strong> Some subjects showed a 1–3% increase in PSI ability while listening to binaural beats.Experiment by trying once with and once without them.</li>
+  <li><strong>Try with and without.</strong> Optional background audio that some people find helpful for maintaining focus during attention tasks. Experiment by trying both with and without the beats.</li>
   <li><strong>What you need:</strong> A pair of headphones.</li>
   <li><strong>How:</strong> Use <a href="https://mynoise.net/NoiseMachines/binauralBrainwaveGenerator.php" target="_blank" rel="noopener noreferrer">this binaural beat generator</a> and set the frequency between <strong>4–8&nbsp;Hz</strong>, choosing the level that feels most comfortable. If you already have a preferred app, you can use that instead—just be sure the frequency is within the <strong>4–8&nbsp;Hz</strong> range.</li>
 
@@ -174,9 +175,10 @@ export const cueBlocks = [
     <h1>Focus & Breathe</h1>
 <h3>Optional Enhancement: Binaural Beats</h3>
 <ul>
-  <li><strong>Try with and without.</strong> Some subjects showed a 1–3% increase in PSI ability while listening to binaural beats.Experiment by trying once with and once without them.</li>
+  <li><strong>Try with and without.</strong> Optional background audio that some people find helpful for maintaining focus during attention tasks. Experiment by trying both with and without the beats.</li>
   <li><strong>What you need:</strong> A pair of headphones.</li>
   <li><strong>How:</strong> Use <a href="https://mynoise.net/NoiseMachines/binauralBrainwaveGenerator.php" target="_blank" rel="noopener noreferrer">this binaural beat generator</a> and set the frequency between <strong>4–8&nbsp;Hz</strong>, choosing the level that feels most comfortable. If you already have a preferred app, you can use that instead—just be sure the frequency is within the <strong>4–8&nbsp;Hz</strong> range.</li>
+
   <li><strong>Prepare:</strong> Listen for at least 1–2 minutes before starting. Breathe deeply and try to empty your mind.</li>
 </ul>
 

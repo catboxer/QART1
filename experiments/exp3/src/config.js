@@ -8,16 +8,14 @@ export const config = {
 // Experiment constants grouped under experiments.pk
 config.experiments = {
   pk: {
-    EXPERIMENT_ID: 'pk_retro_pk_pilot_v0',
+    EXPERIMENT_ID: 'pk_live_pilot_v1',
     VISUAL_HZ: 5,                  // 200 ms ticks
-    BLOCK_MS: 30000,               // 15 s blocks (~75 trials)
+    BLOCK_MS: 30000,               // 30 s blocks (~150 trials)
     REST_MS: 2500,                 // 2.5 s breather
-    BLOCKS_TOTAL: 18,             // 24 micro-blocks ≈ 7.5–8.5 min total runtime
+    BLOCKS_TOTAL: 18,             // 18 blocks ≈ 9 min total runtime
     SESSIONS_PER_PARTICIPANT: 2,
-    USE_LIVE_STREAM: true,          // set to true to use Edge /live
+    USE_LIVE_STREAM: true,          // Always use live quantum stream
     LIVE_STREAM_DURATION_MS: 90_000, // how long to stream per LS minute
-    RETRO_TAPE_BITS: 4096,
-    RETRO_USE_TAPE_B_LAST: true, // last Retro minute uses Tape B
     NEEDLE_WINDOW: 20,
     PRIME_PROB: 0.75, // 75% prime / 25% neutral
     TARGET_SIDES: ['RED', 'GREEN'],
