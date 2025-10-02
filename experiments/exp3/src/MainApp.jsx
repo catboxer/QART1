@@ -14,14 +14,15 @@ import {
   cumulativeRange,
   hurstApprox,
   lag1Autocorr,
+  shannonEntropy,
 } from './stats/index.js';
-import { db, ensureSignedIn } from './firebase';
+import { db, ensureSignedIn } from './firebase.js';
 import {
-  collection, doc, addDoc, setDoc, getDoc, updateDoc, serverTimestamp,
+  collection, doc, addDoc, setDoc, getDoc, getDocs, updateDoc, serverTimestamp,
 } from 'firebase/firestore';
-import { useLiveStreamQueue } from './useLiveStreamQueue';
+import { useLiveStreamQueue } from './useLiveStreamQueue.js';
 import { MappingDisplay } from './SelectionMappings.jsx';
-import { preQuestions, postQuestions } from './questions';
+import { preQuestions, postQuestions } from './questions.js';
 import { QuestionsForm } from './Forms.jsx';
 import { BlockScoreboard } from './Scoring.jsx';
 import HighScoreEmailGate from './ui/HighScoreEmailGate.jsx';
@@ -37,7 +38,6 @@ function validateConfig() {
   if (C.PRIME_PROB < 0 || C.PRIME_PROB > 1) errors.push('PRIME_PROB must be between 0 and 1');
   if (!Array.isArray(C.TARGET_SIDES) || C.TARGET_SIDES.length === 0) errors.push('TARGET_SIDES must be non-empty array');
   // RETRO_TAPE_BITS validation removed - live streams only
-  if (C.emailSignificanceThreshold < 0 || C.emailSignificanceThreshold > 1) errors.push('emailSignificanceThreshold must be between 0 and 1');
 
   if (errors.length > 0) {
     throw new Error(`Configuration validation failed: ${errors.join(', ')}`);
@@ -205,27 +205,29 @@ function ExitDoorButton({ onClick, title = 'Exit and save' }) {
     </button>
   );
 }
-// Compute binary Shannon entropy (in bits per symbol, 0..1)
-function shannonEntropy(bits) {
-  const n = bits.length;
-  if (n === 0) return null;
-  const ones = bits.reduce((a, b) => a + b, 0);
-  const p = ones / n;
-  if (p === 0 || p === 1) return 0;
-  return -p * Math.log2(p) - (1 - p) * Math.log2(1 - p);
+
+function flattenBits(accum) {
+  // flatten nested arrays deeply and coerce booleans/strings to numbers 0/1
+  return accum.flat ? accum.flat(Infinity).map(b => Number(b ? 1 : 0)) :
+    accum.reduce((out, item) => out.concat(Array.isArray(item) ? item : [item]), []).map(b => Number(b ? 1 : 0));
 }
 
 // Break a bit array into non-overlapping windows and compute entropy per window.
 // Leaves any trailing remainder in-place in the accumulator.
 function extractEntropyWindowsFromAccumulator(accumArray, winSize = 1000) {
-  const out = [];
-  while (accumArray.length >= winSize) {
-    const chunk = accumArray.slice(0, winSize);
-    const h = shannonEntropy(chunk);
-    out.push(h);
-    accumArray.splice(0, winSize); // remove consumed bits
+  const flat = flattenBits(accumArray);
+  if (flat.length > 0 && !flat.every(b => b === 0 || b === 1)) {
+    console.warn('Entropy accumulator contains non-binary elements (after flatten):', flat.slice(0,20));
   }
-  return out;
+  const windows = [];
+  while (flat.length >= winSize) {
+    const w = flat.splice(0, winSize);
+    windows.push(shannonEntropy(w));
+  }
+  // replace original accumulator with the leftover flat array
+  accumArray.length = 0;
+  accumArray.push(...flat);
+  return windows;
 }
 
 
@@ -282,11 +284,8 @@ export default function MainApp() {
   const [uid, setUid] = useState(null);
   const {
     connect: liveConnect,
-    disconnect: liveDisconnect,
-    popBit: livePopBit,
-    popSubjectBit: livePopSubjectBit,
-    popGhostBit: livePopGhostBit,
-    bufferedBits: liveBufferedBits,
+    disconnect: liveDisconnect,popSubjectBit: livePopSubjectBit,
+    popGhostBit: livePopGhostBit,    bufferedBits: liveBufferedBits,
     connected: liveConnected,
     lastSource: liveLastSource,
   } = useLiveStreamQueue({ durationMs: C.LIVE_STREAM_DURATION_MS });
@@ -295,6 +294,17 @@ export default function MainApp() {
   const [lowContrast, setLowContrast] = useState(C.LOW_CONTRAST_MODE);
   const [patternsMode, setPatternsMode] = useState(true);
   const [debugUI, setDebugUI] = useState(false);
+
+  // Background save tracking
+  const [backgroundSaves, setBackgroundSaves] = useState([]);
+  const [allDataSaved, setAllDataSaved] = useState(true);
+
+  // Monitor background saves completion
+  useEffect(() => {
+    if (backgroundSaves.length === 0) {
+      setAllDataSaved(true);
+    }
+  }, [backgroundSaves]);
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const check = () => setDebugUI(/(#qa|#\/qa|#debug)/i.test(window.location.hash));
@@ -303,9 +313,9 @@ export default function MainApp() {
     return () => window.removeEventListener('hashchange', check);
   }, []);
 
-  // ---- target & prime
+  // ---- target assignment
   const [target, setTarget] = useState(null);
-  const [primeCond, setPrimeCond] = useState(null);
+  // Note: Using trial-level bit strategy (odd=alternating, even=independent)
   const targetAssignedRef = useRef(false);
 
   useEffect(() => {
@@ -321,8 +331,9 @@ export default function MainApp() {
     const t = randomBit ? 'BLUE' : 'ORANGE';
     console.log('🎯 TARGET ASSIGNMENT:', { randomByte, randomBit, assignedTarget: t });
     setTarget(t);
-    const r = crypto.getRandomValues(new Uint8Array(1))[0] / 255;
-    setPrimeCond(r < C.PRIME_PROB ? 'prime' : 'neutral');
+
+    // Note: No session-level bit strategy assignment needed
+    // Using trial-level logic: odd trials = alternating, even trials = independent
   }, []);
 
   // ---- tapes
@@ -389,11 +400,11 @@ export default function MainApp() {
       }, []);
 
 
-  async function requireUid() {
+  const requireUid = useCallback(async () => {
     const u = await ensureSignedIn();
     if (!u || !u.uid) throw new Error('auth/no-user: sign-in required before writing');
     return u.uid;
-  }
+  }, []);
 
   // makeTape function removed - live streams only
 
@@ -427,7 +438,7 @@ export default function MainApp() {
     // Create new promise and store it IMMEDIATELY
     const createPromise = (async () => {
       try {
-        if (!target || !primeCond) throw new Error('logic/order: target and primeCond must be set before creating run');
+        if (!target) throw new Error('logic/order: target must be set before creating run');
         const uidNow = uid || (await requireUid());
         const col = collection(db, 'experiment3_responses');
         const docData = {
@@ -435,7 +446,6 @@ export default function MainApp() {
           experimentId: C.EXPERIMENT_ID,
           createdAt: serverTimestamp(),
           target_side: target,
-          prime_condition: primeCond,
           tape_meta: null, // No tapes in live-only mode
           minutes_planned: C.BLOCKS_TOTAL, // All blocks are live
           timestamp: new Date().toISOString(),
@@ -472,7 +482,7 @@ export default function MainApp() {
 
     const result = await createPromise;
     return result;
-  }, [runRef, target, primeCond, uid, requireUid]);
+  }, [runRef, target, uid, requireUid]);
 
   // ---- phase & per-minute state
   const [phase, setPhase] = useState('consent');
@@ -481,7 +491,7 @@ export default function MainApp() {
   // Removed redundant state - using refs as single source of truth for performance
   const [lastBlock, setLastBlock] = useState(null);
   const [totals, setTotals] = useState({ k: 0, n: 0 });
-  const [blocks, setBlocks] = useState([]);
+  // eslint-disable-next-line no-unused-vars
   const [renderTrigger, setRenderTrigger] = useState(0); // Force re-renders for ref updates
 
   const bitsRef = useRef([]); const ghostBitsRef = useRef([]); const alignedRef = useRef([]);
@@ -527,6 +537,9 @@ export default function MainApp() {
   const redoCurrentMinuteRef = useRef(false);
   const minuteInvalidRef = useRef(false);
   const invalidReasonRef = useRef('');
+  const blockStartTimeRef = useRef(0);
+  const blockEndTimeRef = useRef(0);
+  const previousBlockEndTimeRef = useRef(0);
 
   const resetLivePauseCounters = useCallback(() => {
     pauseCountRef.current = 0;
@@ -563,6 +576,8 @@ export default function MainApp() {
   // minute runner plumbing
   const tickTimerRef = useRef(null);
   const endMinuteRef = useRef(() => { });
+  const firstTrialTimeRef = useRef(0);
+  const lastTrialTimeRef = useRef(0);
 
   // --- persist & end-minute (persist must be defined BEFORE endMinute) ---
   const persistMinute = useCallback(async () => {
@@ -630,13 +645,15 @@ export default function MainApp() {
       console.warn('entropy-windowing failed', entropyErr);
     }
 
+    // Session-level temporal entropy is calculated in calculateSessionTemporalEntropy()
+    // at session end, not per-block
+
 
     const mdoc = doc(runRef, 'minutes', String(blockIdx));
 
     const blockSummary = { k, n, z, pTwo, kg: ghostHitsRef.current, ng: n, zg, pg, kind };
     setLastBlock(blockSummary);
     setTotals((t) => ({ k: t.k + k, n: t.n + n }));
-    setBlocks((b) => [...b, blockSummary]);
 
     await setDoc(mdoc, {
       idx: blockIdx,
@@ -645,12 +662,22 @@ export default function MainApp() {
       startedAt: serverTimestamp(),
       n, hits: k, z, pTwo,
       ghost_hits: kg, ghost_z: zg, ghost_pTwo: pg,
-      target, prime_condition: primeCond,
       // No tape metadata for live streams
       coherence: { cumRange: cohRange, hurst },
       resonance: { ac1 },
       ghost_metrics: { coherence: { cumRange: gCohRange, hurst: gHurst }, resonance: { ac1: gAc1 } },
       mapping_type: mappingType,
+      // Block-level timing (replaces per-trial timestamps)
+      timing: {
+        block_start_time: blockStartTimeRef.current,
+        block_end_time: blockEndTimeRef.current,
+        block_duration_ms: blockEndTimeRef.current - blockStartTimeRef.current,
+        pause_before_block_ms: previousBlockEndTimeRef.current > 0
+          ? blockStartTimeRef.current - previousBlockEndTimeRef.current
+          : 0,
+        first_trial_time: firstTrialTimeRef.current,
+        last_trial_time: lastTrialTimeRef.current,
+      },
       micro_entropy: microEntropyRef.current.count ? (microEntropyRef.current.sum / microEntropyRef.current.count) : null,
       entropy: {
         window_size: ENTROPY_WINDOW_SIZE,
@@ -666,6 +693,7 @@ export default function MainApp() {
           subj_count: subjCount,
           ghost_count: ghostCount,
         },
+        // Session-level temporal entropy (k2/k3) saved at session end by calculateSessionTemporalEntropy()
       },
       // No redundancy tracking for live streams
       invalidated: minuteInvalidRef.current || false,
@@ -680,7 +708,7 @@ export default function MainApp() {
     // Save raw trial data to subcollection for proper temporal analysis
     try {
       const trialsCollection = collection(mdoc, 'trials');
-      const blockStartTime = Date.now();
+      blockEndTimeRef.current = Date.now();
 
       console.log('💾 Saving raw trial data:', {
         blockIdx,
@@ -690,36 +718,51 @@ export default function MainApp() {
         outcomes: alignedRef.current.length
       });
 
-      // Save each trial with all raw data
+      // Save each trial with minimal essential data (storage optimization)
       const trialPromises = [];
       for (let i = 0; i < bitsRef.current.length; i++) {
         const trialDoc = {
           trialIndex: i,
           blockIndex: blockIdx,
-          timestamp: blockStartTime + (i * Math.round(1000 / C.VISUAL_HZ)), // Estimated trial time
           subjectBit: bitsRef.current[i],
           ghostBit: ghostBitsRef.current[i],
-          targetBit: targetBit,
-          target: target,
-          subjectOutcome: alignedRef.current[i], // 1 = hit, 0 = miss
-          ghostOutcome: ghostBitsRef.current[i] === targetBit ? 1 : 0, // Ghost hit/miss
-          mappingType: mappingType,
-          primeCond: primeCond
+          targetBit: targetBit
+          // Removed redundant fields:
+          // - subjectOutcome (calculate as subjectBit === targetBit ? 1 : 0)
+          // - ghostOutcome (calculate as ghostBit === targetBit ? 1 : 0)
+          // - timestamp (use block-level timing instead)
+          // - target, mappingType (saved at block level)
         };
 
         trialPromises.push(addDoc(trialsCollection, trialDoc));
       }
 
-      // Save all trials in parallel
-      await Promise.all(trialPromises);
-      console.log('✅ Raw trial data saved successfully');
+      // Save all trials in parallel (background - don't wait)
+      const savePromise = Promise.all(trialPromises).then(() => {
+        console.log('✅ Raw trial data saved successfully');
+        // Remove this save from the tracking array
+        setBackgroundSaves(saves => saves.filter(s => s !== savePromise));
+        return { blockIdx, success: true };
+      }).catch(err => {
+        console.error('❌ Background trial save failed:', err);
+        // Remove this save from the tracking array even if it failed
+        setBackgroundSaves(saves => saves.filter(s => s !== savePromise));
+        return { blockIdx, success: false, error: err };
+      });
+
+      // Track this background save
+      setBackgroundSaves(saves => [...saves, savePromise]);
+      setAllDataSaved(false);
 
     } catch (trialSaveError) {
       console.error('❌ Failed to save raw trial data:', trialSaveError);
       // Don't fail the entire block if trial saving fails
     }
+
+    // Update previous block end time for next block's pause calculation
+    previousBlockEndTimeRef.current = blockEndTimeRef.current;
   }, [
-    runRef, blockIdx, target, primeCond, mappingType
+    runRef, blockIdx, mappingType, targetBit
   ]);
 
   const endMinute = useCallback(async () => {
@@ -732,7 +775,7 @@ export default function MainApp() {
     if (minuteInvalidRef.current) { setPhase('rest'); return; }
     // Always go to rest phase first, even for the final block
     setPhase('rest');
-  }, [blockIdx, liveDisconnect, persistMinute]);
+  }, [liveDisconnect, persistMinute]);
   // Idle prefetch during PRIME/REST in non-streaming mode
   useEffect(() => {
     // Never prefetch in streaming mode
@@ -744,7 +787,6 @@ export default function MainApp() {
 
     // When NOT running, if the next minute is 'live' and not already staged, prefetch now
     if (phase !== 'running') {
-      const next = blockIdx + 1;
       // All blocks are live now - always prefetch
       if (!nextLiveBufRef.current) {
         prefetchLivePairs().catch(() => { /* ignore */ });
@@ -815,8 +857,19 @@ export default function MainApp() {
         const now = performance.now();
         if (isBuffering) { maybeResume(now); return; } // Don't increment i when buffering
         else { maybePause(now); if (isBuffering) { return; } } // Don't increment i when buffering starts
-        const sBit = livePopSubjectBit(); const gBit = livePopGhostBit();
-        if (sBit === null || gBit === null) { maybePause(now); return; } // Don't increment i when no bits available
+        // Use trial-level bit strategy: odd trials = alternating, even trials = independent
+        const trialNumber = i + 1; // Convert 0-based to 1-based for odd/even logic
+        const sBit = livePopSubjectBit(trialNumber); const gBit = livePopGhostBit(trialNumber);
+        if (sBit === null || gBit === null) {
+          console.warn('🔴 NULL BITS DETECTED - pausing:', {
+            trialNumber,
+            sBit, gBit,
+            bufferSize: liveBufferedBits(),
+            isBuffering
+          });
+          maybePause(now);
+          return;
+        } // Don't increment i when no bits available
         bit = sBit === '1' ? 1 : 0; ghost = gBit === '1' ? 1 : 0;
 
         // Debug early trials to see initial buffer bias
@@ -863,6 +916,13 @@ export default function MainApp() {
       }
 
       // Only process trial and increment counter when we have valid data
+      const now = Date.now();
+
+      // Capture first trial timestamp
+      if (i === 0) {
+        firstTrialTimeRef.current = now;
+      }
+
       bitsRef.current.push(bit);
       ghostBitsRef.current.push(ghost);
       const align = bit === targetBit ? 1 : 0;
@@ -874,13 +934,16 @@ export default function MainApp() {
       // Trigger re-render for UI updates
       setRenderTrigger(prev => prev + 1);
 
+      // Update last trial timestamp (will be final value when loop completes)
+      lastTrialTimeRef.current = now;
+
       i += 1; // Only increment when we actually process a trial
     }, TICK);
 
     return () => { if (tickTimerRef.current) { clearInterval(tickTimerRef.current); tickTimerRef.current = null; } };
   }, [
-    isRunning, blockIdx, trialsPerMinute, targetBit,
-    isBuffering, livePopSubjectBit, livePopGhostBit, maybePause, maybeResume, shouldInvalidate,
+    isRunning, blockIdx, trialsPerMinute, targetBit, target,
+    isBuffering, livePopSubjectBit, livePopGhostBit, liveBufferedBits, maybePause, maybeResume, shouldInvalidate, trialsPerBlock,
   ]);
 
 
@@ -917,12 +980,110 @@ export default function MainApp() {
     prefetchLivePairs,
   ]);
 
+  // Calculate and save session-level temporal entropy (k=2 and k=3 windows)
+  const calculateSessionTemporalEntropy = useCallback(async () => {
+    if (!runRef) return;
+
+    try {
+      const allSubjectBits = [];
+      const allGhostBits = [];
+
+      // Fetch all minutes to get their indices
+      const minutesSnapshot = await getDocs(collection(runRef, 'minutes'));
+      const sortedMinutes = minutesSnapshot.docs
+        .map(d => ({ id: d.id, ref: d.ref, idx: d.data().idx || 0 }))
+        .sort((a, b) => a.idx - b.idx);
+
+      // For each minute, read trials subcollection and extract bits in order
+      for (const minute of sortedMinutes) {
+        const trialsSnapshot = await getDocs(collection(minute.ref, 'trials'));
+
+        // Sort trials by trialIndex to maintain proper order
+        const sortedTrials = trialsSnapshot.docs
+          .map(d => d.data())
+          .sort((a, b) => (a.trialIndex || 0) - (b.trialIndex || 0));
+
+        sortedTrials.forEach(trial => {
+          allSubjectBits.push(trial.subjectBit);
+          allGhostBits.push(trial.ghostBit);
+        });
+      }
+
+      const n = allSubjectBits.length;
+
+      if (n === 0) {
+        console.warn('No subject bits found for session-level entropy calculation');
+        return;
+      }
+
+      // k=2: split into first/second half (1350/1350 for 2700 bits)
+      const half = Math.floor(n / 2);
+      const entropy_k2 = [
+        shannonEntropy(allSubjectBits.slice(0, half)),
+        shannonEntropy(allSubjectBits.slice(half, n))
+      ];
+      const ghost_entropy_k2 = [
+        shannonEntropy(allGhostBits.slice(0, half)),
+        shannonEntropy(allGhostBits.slice(half, n))
+      ];
+
+      // k=3: split into thirds (900/900/900 for 2700 bits)
+      const third = Math.floor(n / 3);
+      const entropy_k3 = [
+        shannonEntropy(allSubjectBits.slice(0, third)),
+        shannonEntropy(allSubjectBits.slice(third, 2 * third)),
+        shannonEntropy(allSubjectBits.slice(2 * third, n))
+      ];
+      const ghost_entropy_k3 = [
+        shannonEntropy(allGhostBits.slice(0, third)),
+        shannonEntropy(allGhostBits.slice(third, 2 * third)),
+        shannonEntropy(allGhostBits.slice(2 * third, n))
+      ];
+
+      console.log('📊 SESSION-LEVEL TEMPORAL ENTROPY:', {
+        totalBits: n,
+        k2_windows: entropy_k2.map((e, i) => `W${i+1}: ${e?.toFixed(4) || 'null'}`),
+        k3_windows: entropy_k3.map((e, i) => `W${i+1}: ${e?.toFixed(4) || 'null'}`),
+        k2_sizes: [half, n - half],
+        k3_sizes: [third, third, n - 2 * third]
+      });
+
+      // Save to session document
+      await setDoc(runRef, {
+        entropy: {
+          temporal: {
+            subj_bits_count: n,
+            entropy_k2: entropy_k2,
+            entropy_k3: entropy_k3,
+            ghost_entropy_k2: ghost_entropy_k2,
+            ghost_entropy_k3: ghost_entropy_k3,
+          }
+        }
+      }, { merge: true });
+
+      console.log('✅ Session-level temporal entropy saved to DB', {
+        bitsIncluded: n
+      });
+
+      // Reset all accumulators to prevent bleed into next session
+      bitsRef.current = [];
+      ghostBitsRef.current = [];
+      entropyAccumRef.current = { subj: [], ghost: [] };
+      entropyWindowsRef.current = { subj: [], ghost: [] };
+      console.log('🔄 Reset all entropy accumulators for next session');
+    } catch (error) {
+      console.error('Error calculating session temporal entropy:', error);
+    }
+  }, [runRef]);
+
   async function startNextMinute() {
     const redo = redoCurrentMinuteRef.current;
     const next = redo ? blockIdx : (blockIdx + 1);
 
     // If we've completed all blocks, go to post-experiment questions
     if (!redo && blockIdx + 1 >= C.BLOCKS_TOTAL) {
+      // Calculate and save session-level temporal entropy before ending
+      await calculateSessionTemporalEntropy();
       setPhase('done');
       return;
     }
@@ -945,6 +1106,9 @@ export default function MainApp() {
     hitsRef.current = 0; ghostHitsRef.current = 0;
     resetLivePauseCounters();
     setRenderTrigger(0);
+
+    // Track block start time for timing data
+    blockStartTimeRef.current = Date.now();
 
     setIsRunning(true);
   }
@@ -976,7 +1140,7 @@ export default function MainApp() {
             exit_reason_notes: exitInfo?.notes || null,
             exit_block_index: blockIdx >= 0 ? blockIdx : 0
           }, { merge: true });
-        } else if (target && primeCond) {
+        } else if (target) {
           // Create new document with exit info
           await ensureRunDoc({
             reason: exitInfo?.reason || 'user_exit',
@@ -992,14 +1156,14 @@ export default function MainApp() {
     } finally {
       setPhase('summary');
     }
-  }, [blockIdx, isRunning, liveDisconnect, persistMinute, runRef, target, primeCond, ensureRunDoc]);
+  }, [blockIdx, isRunning, liveDisconnect, persistMinute, runRef, target, ensureRunDoc]);
 
   // Ensure document is created early in onboarding phase
   useEffect(() => {
-    if (phase === 'onboarding' && !runRef && target && primeCond) {
+    if (phase === 'onboarding' && !runRef && target) {
       ensureRunDoc().catch(console.error);
     }
-  }, [phase, runRef, target, primeCond]);
+  }, [phase, runRef, target, ensureRunDoc]);
 
   // ===== flow gates =====
   if (!userReady || !target || !checkedReturning) {
@@ -1018,9 +1182,9 @@ export default function MainApp() {
       <div style={{ position: 'relative' }}>
         <ConsentGate
           title="Consent to Participate"
-          studyDescription="This study investigates whether focused attention can correlate with patterns in random color generation during attention tasks. You will complete 18 blocks and brief questionnaires (approximately 20-25 minutes total)."
+          studyDescription="This study investigates whether focused attention can correlate with patterns in random color generation during attention tasks. You will complete 18 blocks each 30 seconds long and brief questionnaires (approximately 10-15 minutes total)."
           bullets={[
-            'You will focus on an assigned target color (red or green) while random colors are generated.',
+            'You will focus on an assigned target color (orange or blue) while random colors are generated.',
             'Your task is to maintain focused attention on your target color throughout each trial block.',
             'We collect data on randomly generated sequences, timing patterns, and your questionnaire responses.',
             'Participation is completely voluntary; you may exit at any time using the door button.',
@@ -1099,26 +1263,26 @@ export default function MainApp() {
     );
   }
 
-  // PRIME SCREEN (research background/study overview)
+  // PRIME SCREEN (research background - shown to all participants)
   if (phase === 'prime') {
     return (
       <div style={{ padding: 24, position: 'relative' }}>
-        <h2>{primeCond === 'prime' ? 'Research Background' : 'Study Overview'}</h2>
+        <h2>Research Background</h2>
         <div style={{ border: '1px solid #ddd', padding: 20, borderRadius: 12, background: '#f9f9f9', minHeight: 300 }}>
-          {primeCond === 'prime' ? (
-            <div>
-              <h3 style={{ marginTop: 0, color: '#2c3e50' }}>PK Research: Moving Beyond "Does It Exist?"</h3>
-              <div style={{ lineHeight: 1.6, fontSize: 15 }}>
-                <p>Decades of data already show small but highly reliable deviations from chance in mind–matter interaction studies. Radin & Nelson's meta-analysis of 515 experiments (1959–2000, 91 researchers) found a consistent 0.7% shift from chance, an effect 16.1 standard errors beyond randomness—replicated across four decades and many labs worldwide.</p>
+          <div>
+            <h3 style={{ marginTop: 0, color: '#2c3e50' }}>PK Research: Moving Beyond "Does It Exist?"</h3>
+            <div style={{ lineHeight: 1.6, fontSize: 15 }}>
+              <p>Between 1959 and 2000, researchers conducted 515 carefully controlled laboratory experiments testing whether human intention could influence random number generators. The combined results deviated more than 16 standard deviations from pure chance. To put that in perspective: the odds of this happening by accident are essentially zero. The effect is tiny—less than 1% deviation on average. But here's what matters: it never goes away.</p>
 
-                <p>Criticisms that early effects were due to weak methods don't hold up: as experimental rigor improved, effect sizes held steady. Likewise, the "file drawer" objection fails as over 3,000 null studies would be needed to cancel the signal, yet surveys of researchers suggest at most ~60 exist.</p>
+              <p>Studies published after 1987 showed nearly identical effect sizes to earlier work (z-scores of 0.61 vs 0.73), even as experimental quality dramatically improved over this period. As scientists got better at controlling for errors and tightening protocols, the effect remained rock-solid stable.</p>
 
-                <p>Because the effect size is so small, we're exploring whether statistical signatures might help distinguish genuine anomalies from methodological artifacts. By examining patterns in how these small deviations manifest—their temporal structure, correlation patterns, and relationship to other variables—we aim to develop more specific, testable hypotheses. If consistent signatures emerge alongside positive results, this convergent evidence could help clarify whether we're observing a real phenomenon or persistent experimental confounds.</p>
+              <p>The skeptics' objections don't add up. To dismiss these results as publication bias, you'd need to believe that 91 researchers collectively conducted and hid nearly 3,000 failed experiments. When three independent labs—Princeton, Giessen, and Freiburg—ran a strict replication with identical equipment, all three found effects in the predicted direction with "substantial structural anomalies well beyond chance expectation". </p>
+              <p>Four decades. Nearly 100 researchers. Multiple continents. Increasingly rigorous controls. The same small, persistent deviation from randomness, appearing again and again and again.</p>
+              <p>Because the effect of human intention on RNG's is so small, we're now examining its statistical signatures including the temporal patterns, correlation structures, and relationships to other variables—to distinguish genuine anomalies from methodological artifacts and develop more specific, testable hypotheses about what's actually happening.</p>
 
-                <p style={{ fontStyle: 'italic', color: '#555', marginBottom: 0 }}>Your participation helps map the landscape of consciousness-matter interaction.</p>
-              </div>
+              <p style={{ fontStyle: 'italic', color: '#555', marginBottom: 0 }}>Your participation helps map the landscape of consciousness-matter interaction.</p>
             </div>
-          ) :  null}
+          </div>
 
           <div style={{ marginTop: 8}}>
             <h3 style={{ marginTop: 0, color: '#2c3e50' }}>Instructions</h3>
@@ -1140,9 +1304,7 @@ export default function MainApp() {
 
   // INFO SCREEN (binaural beats information)
   if (phase === 'info') {
-    const binauralText = primeCond === 'prime'
-      ? "Correlations have been found with some researchers claiming mental coherence increasing PSI through use of binaural beats."
-      : "Optional background audio that some people find helpful for maintaining focus during attention tasks.";
+    const binauralText = "Correlations have been found with some researchers claiming mental coherence increasing PSI through use of binaural beats.";
 
     return (
       <div style={{ padding: 24, maxWidth: 760, position: 'relative' }}>
@@ -1360,21 +1522,28 @@ export default function MainApp() {
         <div style={{ marginTop: 12 }}>
           <button
             onClick={() => startNextMinute()}
-            disabled={!redundancyReady}
+            disabled={!redundancyReady || (blockIdx + 1 >= C.BLOCKS_TOTAL && !allDataSaved)}
             style={{
               padding: '10px 16px',
               borderRadius: 8,
               border: '1px solid #999',
-              background: redundancyReady ? '#1a8f1a' : '#ccc',
-              color: redundancyReady ? '#fff' : '#444',
-              cursor: redundancyReady ? 'pointer' : 'not-allowed',
+              background: (redundancyReady && (blockIdx + 1 < C.BLOCKS_TOTAL || allDataSaved)) ? '#1a8f1a' : '#ccc',
+              color: (redundancyReady && (blockIdx + 1 < C.BLOCKS_TOTAL || allDataSaved)) ? '#fff' : '#444',
+              cursor: (redundancyReady && (blockIdx + 1 < C.BLOCKS_TOTAL || allDataSaved)) ? 'pointer' : 'not-allowed',
               transition: 'background 150ms ease'
             }}
           >
-            {redundancyReady ? 'Continue' : 'Complete check above…'}
+            {!redundancyReady ? 'Complete check above…' :
+             (blockIdx + 1 >= C.BLOCKS_TOTAL && !allDataSaved) ? 'Saving data...' :
+             'Continue'}
           </button>
           <div style={{ fontSize: 12, opacity: 0.75, marginTop: 8 }}>
             Block {blockIdx + 1} of {C.BLOCKS_TOTAL} complete
+            {blockIdx + 1 >= C.BLOCKS_TOTAL && backgroundSaves.length > 0 && (
+              <div style={{ marginTop: 4, color: '#666' }}>
+                Saving {backgroundSaves.length} block{backgroundSaves.length > 1 ? 's' : ''} of trial data...
+              </div>
+            )}
           </div>
         </div>
 
@@ -1416,6 +1585,7 @@ export default function MainApp() {
             mapping={mappingType}
             bit={bitsRef.current[bitsRef.current.length - 1] ?? 0}
             targetBit={targetBit}
+            target={target}
             segments={trialsPlanned}
             trialOutcomes={alignedRef.current.map(align => align === 1)} // Convert 1/0 to true/false
             onFrameDelta={mappingType === "high_entropy"
@@ -1668,6 +1838,7 @@ export default function MainApp() {
           participantId={uid}
           finalPercent={finalPct}
           cutoffOverride={C.FINALIST_MIN_PCT}
+          lowCutoffOverride={C.FINALIST_MAX_PCT}
         />
 
         <button
