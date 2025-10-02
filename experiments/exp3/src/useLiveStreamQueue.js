@@ -13,34 +13,84 @@ export function useLiveStreamQueue(
   const [lastSource, setLastSource] = useState(null);
   const qRef = useRef([]);       // queue of '0'/'1' chars
   const esRef = useRef(null);
+  const positionRef = useRef(0);  // track position in original stream
 
   const bufferedBits = useCallback(() => qRef.current.length, []);
 
-  const popBit = useCallback(() => {
-    if (qRef.current.length === 0) return null;
-    return qRef.current.shift();
-  }, []);
+  // Store ghost bit for alternating tests
+  const ghostBitRef = useRef(null);
 
-  // Spaced bit popping to eliminate temporal correlation
-  const popSubjectBit = useCallback(() => {
-    // Skip to every 3rd bit for subject
-    while (qRef.current.length > 0) {
-      const bit = qRef.current.shift();
-      // Keep every 3rd bit, discard the others
-      if (qRef.current.length % 3 === 0) {
-        return bit;
+  // Store ghost bit and index for alternating tests
+  const ghostBitIndexRef = useRef(null);
+
+  // Trial-based bit strategy: odd trials use alternating bits, even trials use independent bits
+  const popSubjectBit = useCallback((trialNumber) => {
+    if (trialNumber % 2 === 1) {
+      // Odd trials (1,3,5...): Use alternating bits from same stream
+      if (qRef.current.length >= 2) {
+        const subjectIndex = positionRef.current;
+        const subjectBit = qRef.current.shift(); // Take first bit for subject
+        ghostBitRef.current = qRef.current.shift(); // Store second bit for ghost
+        ghostBitIndexRef.current = positionRef.current + 1; // Ghost gets next index
+        positionRef.current += 2;
+
+        // Validate that we got valid bits
+        if (subjectBit !== '0' && subjectBit !== '1') {
+          console.error('❌ Invalid subject bit from stream:', subjectBit);
+          return null;
+        }
+        if (ghostBitRef.current !== '0' && ghostBitRef.current !== '1') {
+          console.error('❌ Invalid ghost bit from stream:', ghostBitRef.current);
+          ghostBitRef.current = null; // Clear invalid bit
+          ghostBitIndexRef.current = null;
+          return null;
+        }
+
+        return { bit: subjectBit, rawIndex: subjectIndex };
+      }
+    } else {
+      // Even trials (2,4,6...): Use fresh QRNG call (independent)
+      if (qRef.current.length >= 1) {
+        const subjectIndex = positionRef.current;
+        const subjectBit = qRef.current.shift();
+        positionRef.current++;
+
+        // Validate that we got a valid bit
+        if (subjectBit !== '0' && subjectBit !== '1') {
+          console.error('❌ Invalid subject bit from stream:', subjectBit);
+          return null;
+        }
+
+        return { bit: subjectBit, rawIndex: subjectIndex };
       }
     }
+
+    // Log when we can't provide bits
+    console.warn('⚠️ Insufficient bits in queue:', {
+      trialNumber,
+      isOdd: trialNumber % 2 === 1,
+      requiredBits: trialNumber % 2 === 1 ? 2 : 1,
+      availableBits: qRef.current.length
+    });
+
     return null;
   }, []);
 
-  const popGhostBit = useCallback(() => {
-    // Skip to every 5th bit for ghost
-    while (qRef.current.length > 0) {
-      const bit = qRef.current.shift();
-      // Keep every 5th bit, discard the others
-      if (qRef.current.length % 5 === 0) {
-        return bit;
+  const popGhostBit = useCallback((trialNumber) => {
+    if (trialNumber % 2 === 1) {
+      // Odd trials (1,3,5...): Use the stored alternating bit
+      const ghostBit = ghostBitRef.current;
+      const ghostIndex = ghostBitIndexRef.current;
+      ghostBitRef.current = null; // Clear after use
+      ghostBitIndexRef.current = null;
+      return ghostBit ? { bit: ghostBit, rawIndex: ghostIndex } : null;
+    } else {
+      // Even trials (2,4,6...): Use fresh QRNG call (independent from subject)
+      if (qRef.current.length >= 1) {
+        const ghostIndex = positionRef.current;
+        const ghostBit = qRef.current.shift();
+        positionRef.current++;
+        return { bit: ghostBit, rawIndex: ghostIndex };
       }
     }
     return null;
@@ -96,5 +146,5 @@ export function useLiveStreamQueue(
 
   useEffect(() => () => disconnect(), [disconnect]);
 
-  return { connect, disconnect, popBit, popSubjectBit, popGhostBit, bufferedBits, connected, lastSource };
+  return { connect, disconnect, popSubjectBit, popGhostBit, bufferedBits, connected, lastSource };
 }

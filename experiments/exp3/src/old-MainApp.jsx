@@ -16,17 +16,38 @@ import {
   lag1Autocorr,
   shannonEntropy,
 } from './stats/index.js';
-import { db, ensureSignedIn } from './firebase.js';
+import { db, ensureSignedIn } from './firebase';
 import {
   collection, doc, addDoc, setDoc, getDoc, getDocs, updateDoc, serverTimestamp,
 } from 'firebase/firestore';
-import { useLiveStreamQueue } from './useLiveStreamQueue.js';
+import { useLiveStreamQueue } from './useLiveStreamQueue';
 import { MappingDisplay } from './SelectionMappings.jsx';
-import { preQuestions, postQuestions } from './questions.js';
+import { preQuestions, postQuestions } from './questions';
 import { QuestionsForm } from './Forms.jsx';
 import { BlockScoreboard } from './Scoring.jsx';
 import HighScoreEmailGate from './ui/HighScoreEmailGate.jsx';
 import ConsentGate from './ui/ConsentGate.jsx';
+
+// Temporal windowing helpers for entropy analysis
+function splitIntoKWindows(bits, k = 2) {
+  const n = bits.length;
+  if (n === 0) return Array.from({ length: k }, () => []);
+  const base = Math.floor(n / k);
+  let rem = n - base * k;
+  const out = [];
+  let idx = 0;
+  for (let i = 0; i < k; i++) {
+    const thisSize = base + (rem > 0 ? 1 : 0);
+    if (rem > 0) rem--;
+    out.push(bits.slice(idx, idx + thisSize));
+    idx += thisSize;
+  }
+  return out;
+}
+
+function entropyPerWindow(bits, k = 2, shannonEntropy) {
+  return splitIntoKWindows(bits, k).map(w => (w.length ? shannonEntropy(w) : null));
+}
 
 // Runtime configuration validation
 function validateConfig() {
@@ -38,6 +59,7 @@ function validateConfig() {
   if (C.PRIME_PROB < 0 || C.PRIME_PROB > 1) errors.push('PRIME_PROB must be between 0 and 1');
   if (!Array.isArray(C.TARGET_SIDES) || C.TARGET_SIDES.length === 0) errors.push('TARGET_SIDES must be non-empty array');
   // RETRO_TAPE_BITS validation removed - live streams only
+  if (C.emailSignificanceThreshold < 0 || C.emailSignificanceThreshold > 1) errors.push('emailSignificanceThreshold must be between 0 and 1');
 
   if (errors.length > 0) {
     throw new Error(`Configuration validation failed: ${errors.join(', ')}`);
@@ -103,13 +125,13 @@ const WARMUP_TIMEOUT_MS = 1500;   // Max 1.5s to wait for warmup (fallback to lo
 // - Buffer interruptions could contaminate results by breaking concentration
 //
 const PAUSE_THRESHOLD_LT = 6;     // PAUSE when buffer < 6 bits (~1.2s of data remaining)
-                                  // - Low enough to maximize quantum data usage
-                                  // - High enough to prevent buffer starvation
+// - Low enough to maximize quantum data usage
+// - High enough to prevent buffer starvation
 
 const RESUME_THRESHOLD_GTE = 20;  // RESUME when buffer ≥ 20 bits (~4s of data available)
-                                  // - Creates 14-bit "dead zone" (6-20) to prevent flicker
-                                  // - Ensures sufficient buffer depth before resuming
-                                  // - Balances quantum authenticity vs. experimental continuity
+// - Creates 14-bit "dead zone" (6-20) to prevent flicker
+// - Ensures sufficient buffer depth before resuming
+// - Balances quantum authenticity vs. experimental continuity
 
 // TRIAL INVALIDATION LIMITS
 // If buffering becomes excessive, the trial block is invalidated to maintain data quality
@@ -206,28 +228,17 @@ function ExitDoorButton({ onClick, title = 'Exit and save' }) {
   );
 }
 
-function flattenBits(accum) {
-  // flatten nested arrays deeply and coerce booleans/strings to numbers 0/1
-  return accum.flat ? accum.flat(Infinity).map(b => Number(b ? 1 : 0)) :
-    accum.reduce((out, item) => out.concat(Array.isArray(item) ? item : [item]), []).map(b => Number(b ? 1 : 0));
-}
-
 // Break a bit array into non-overlapping windows and compute entropy per window.
 // Leaves any trailing remainder in-place in the accumulator.
 function extractEntropyWindowsFromAccumulator(accumArray, winSize = 1000) {
-  const flat = flattenBits(accumArray);
-  if (flat.length > 0 && !flat.every(b => b === 0 || b === 1)) {
-    console.warn('Entropy accumulator contains non-binary elements (after flatten):', flat.slice(0,20));
+  const out = [];
+  while (accumArray.length >= winSize) {
+    const chunk = accumArray.slice(0, winSize);
+    const h = shannonEntropy(chunk);
+    out.push(h);
+    accumArray.splice(0, winSize); // remove consumed bits
   }
-  const windows = [];
-  while (flat.length >= winSize) {
-    const w = flat.splice(0, winSize);
-    windows.push(shannonEntropy(w));
-  }
-  // replace original accumulator with the leftover flat array
-  accumArray.length = 0;
-  accumArray.push(...flat);
-  return windows;
+  return out;
 }
 
 
@@ -284,8 +295,11 @@ export default function MainApp() {
   const [uid, setUid] = useState(null);
   const {
     connect: liveConnect,
-    disconnect: liveDisconnect,popSubjectBit: livePopSubjectBit,
-    popGhostBit: livePopGhostBit,    bufferedBits: liveBufferedBits,
+    disconnect: liveDisconnect,
+    popBit: livePopBit,
+    popSubjectBit: livePopSubjectBit,
+    popGhostBit: livePopGhostBit,
+    bufferedBits: liveBufferedBits,
     connected: liveConnected,
     lastSource: liveLastSource,
   } = useLiveStreamQueue({ durationMs: C.LIVE_STREAM_DURATION_MS });
@@ -295,6 +309,16 @@ export default function MainApp() {
   const [patternsMode, setPatternsMode] = useState(true);
   const [debugUI, setDebugUI] = useState(false);
 
+  // Background save tracking
+  const [backgroundSaves, setBackgroundSaves] = useState([]);
+  const [allDataSaved, setAllDataSaved] = useState(true);
+
+  // Monitor background saves completion
+  useEffect(() => {
+    if (backgroundSaves.length === 0) {
+      setAllDataSaved(true);
+    }
+  }, [backgroundSaves]);
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const check = () => setDebugUI(/(#qa|#\/qa|#debug)/i.test(window.location.hash));
@@ -303,7 +327,7 @@ export default function MainApp() {
     return () => window.removeEventListener('hashchange', check);
   }, []);
 
-  // ---- target assignment
+  // ---- target & bit strategy
   const [target, setTarget] = useState(null);
   // Note: Using trial-level bit strategy (odd=alternating, even=independent)
   const targetAssignedRef = useRef(false);
@@ -368,39 +392,39 @@ export default function MainApp() {
     nextLiveBufRef.current = pairset;
     return pairset;
   }, []);
- 
+
   // ---- sign-in (local-only returning check)
-    useEffect(() => {
-        (async () => {
-         try {
-             const u = await ensureSignedIn();
-             setUid(u?.uid || null);
-             // fast local skip for preQ if they've done it on this device
-               try {
-                   const globalKey = `pre_done_global:${C.EXPERIMENT_ID}`;
-                   if (localStorage.getItem(globalKey) === '1') {
-                       setPreDone(true);
-                     }
-                 } catch { }
-           } finally {
-             setUserReady(true);
-             setCheckedReturning(true);
-           }
-          })();
-      }, []);
+  useEffect(() => {
+    (async () => {
+      try {
+        const u = await ensureSignedIn();
+        setUid(u?.uid || null);
+        // fast local skip for preQ if they've done it on this device
+        try {
+          const globalKey = `pre_done_global:${C.EXPERIMENT_ID}`;
+          if (localStorage.getItem(globalKey) === '1') {
+            setPreDone(true);
+          }
+        } catch { }
+      } finally {
+        setUserReady(true);
+        setCheckedReturning(true);
+      }
+    })();
+  }, []);
 
 
-  const requireUid = useCallback(async () => {
+  async function requireUid() {
     const u = await ensureSignedIn();
     if (!u || !u.uid) throw new Error('auth/no-user: sign-in required before writing');
     return u.uid;
-  }, []);
+  }
 
   // makeTape function removed - live streams only
 
   // prepareSessionArtifacts function removed - live streams only
 
-  // ---- schedule (20×150 driven by config: VISUAL_HZ * (BLOCK_MS/1000) should be 150; BLOCKS_TOTAL=20)
+  // ---- schedule (18×150 driven by config: VISUAL_HZ * (BLOCK_MS/1000) should be 150; BLOCKS_TOTAL=18)
   // All blocks are now live - no scheduling needed
   const trialsPerBlock = Math.round((C.BLOCK_MS / 1000) * C.VISUAL_HZ);
 
@@ -436,6 +460,7 @@ export default function MainApp() {
           experimentId: C.EXPERIMENT_ID,
           createdAt: serverTimestamp(),
           target_side: target,
+          prime_condition: 'prime', // All participants see research background
           tape_meta: null, // No tapes in live-only mode
           minutes_planned: C.BLOCKS_TOTAL, // All blocks are live
           timestamp: new Date().toISOString(),
@@ -481,12 +506,11 @@ export default function MainApp() {
   // Removed redundant state - using refs as single source of truth for performance
   const [lastBlock, setLastBlock] = useState(null);
   const [totals, setTotals] = useState({ k: 0, n: 0 });
-  // eslint-disable-next-line no-unused-vars
+  const [blocks, setBlocks] = useState([]);
   const [renderTrigger, setRenderTrigger] = useState(0); // Force re-renders for ref updates
 
   const bitsRef = useRef([]); const ghostBitsRef = useRef([]); const alignedRef = useRef([]);
   const hitsRef = useRef(0); const ghostHitsRef = useRef(0);
-  const subjectIndicesRef = useRef([]); const ghostIndicesRef = useRef([]); // Track raw QRNG stream indices
   const trialsPerMinute = trialsPerBlock;
   const targetBit = target === 'BLUE' ? 1 : 0;
   // Accumulate bits across minutes until we have full windows (e.g., 1000 bits)
@@ -531,6 +555,8 @@ export default function MainApp() {
   const blockStartTimeRef = useRef(0);
   const blockEndTimeRef = useRef(0);
   const previousBlockEndTimeRef = useRef(0);
+  const firstTrialTimeRef = useRef(0);
+  const lastTrialTimeRef = useRef(0);
 
   const resetLivePauseCounters = useCallback(() => {
     pauseCountRef.current = 0;
@@ -567,8 +593,6 @@ export default function MainApp() {
   // minute runner plumbing
   const tickTimerRef = useRef(null);
   const endMinuteRef = useRef(() => { });
-  const firstTrialTimeRef = useRef(0);
-  const lastTrialTimeRef = useRef(0);
 
   // --- persist & end-minute (persist must be defined BEFORE endMinute) ---
   const persistMinute = useCallback(async () => {
@@ -617,10 +641,10 @@ export default function MainApp() {
       newGhostWindows = extractEntropyWindowsFromAccumulator(entropyAccumRef.current.ghost, ENTROPY_WINDOW_SIZE);
 
       if (newSubjWindows.length) {
-        console.log(`Entropy: Extracted ${newSubjWindows.length} subject windows, avg entropy: ${(newSubjWindows.reduce((a,b) => a+b, 0) / newSubjWindows.length).toFixed(4)}`);
+        console.log(`Entropy: Extracted ${newSubjWindows.length} subject windows, avg entropy: ${(newSubjWindows.reduce((a, b) => a + b, 0) / newSubjWindows.length).toFixed(4)}`);
       }
       if (newGhostWindows.length) {
-        console.log(`Entropy: Extracted ${newGhostWindows.length} ghost windows, avg entropy: ${(newGhostWindows.reduce((a,b) => a+b, 0) / newGhostWindows.length).toFixed(4)}`);
+        console.log(`Entropy: Extracted ${newGhostWindows.length} ghost windows, avg entropy: ${(newGhostWindows.reduce((a, b) => a + b, 0) / newGhostWindows.length).toFixed(4)}`);
       }
 
       // Append to running windows history
@@ -636,15 +660,12 @@ export default function MainApp() {
       console.warn('entropy-windowing failed', entropyErr);
     }
 
-    // Session-level temporal entropy is calculated in calculateSessionTemporalEntropy()
-    // at session end, not per-block
-
-
     const mdoc = doc(runRef, 'minutes', String(blockIdx));
 
     const blockSummary = { k, n, z, pTwo, kg: ghostHitsRef.current, ng: n, zg, pg, kind };
     setLastBlock(blockSummary);
     setTotals((t) => ({ k: t.k + k, n: t.n + n }));
+    setBlocks((b) => [...b, blockSummary]);
 
     await setDoc(mdoc, {
       idx: blockIdx,
@@ -653,6 +674,7 @@ export default function MainApp() {
       startedAt: serverTimestamp(),
       n, hits: k, z, pTwo,
       ghost_hits: kg, ghost_z: zg, ghost_pTwo: pg,
+      target, prime_condition: 'prime', // All participants see research background
       // No tape metadata for live streams
       coherence: { cumRange: cohRange, hurst },
       resonance: { ac1 },
@@ -684,7 +706,7 @@ export default function MainApp() {
           subj_count: subjCount,
           ghost_count: ghostCount,
         },
-        // Session-level temporal entropy (k2/k3) saved at session end by calculateSessionTemporalEntropy()
+        // Session-level temporal entropy (k=2, k=3) is calculated at session end by calculateSessionTemporalEntropy()
       },
       // No redundancy tracking for live streams
       invalidated: minuteInvalidRef.current || false,
@@ -694,30 +716,68 @@ export default function MainApp() {
         totalPausedMs: Math.round(totalPausedMsRef.current),
         longestSinglePauseMs: Math.round(longestPauseMsRef.current),
       } : null,
-      // Store trial sequences as arrays (much more efficient than subcollection)
-      trial_data: {
-        subject_bits: bitsRef.current,
-        ghost_bits: ghostBitsRef.current,
-        subject_raw_indices: subjectIndicesRef.current,
-        ghost_raw_indices: ghostIndicesRef.current,
-        source_label: liveLastSource || 'unknown',
-        target_bit: targetBit,
-        trial_count: bitsRef.current.length
-        // Outcomes can be calculated: subject_bits[i] === target_bit ? 1 : 0
-      }
     }, { merge: true });
 
-    console.log('💾 Saved block data with trial arrays:', {
-      blockIdx,
-      totalTrials: bitsRef.current.length,
-      subjectBits: bitsRef.current.length,
-      ghostBits: ghostBitsRef.current.length
-    });
+    // Save raw trial data to subcollection for proper temporal analysis
+    try {
+      const trialsCollection = collection(mdoc, 'trials');
+      blockEndTimeRef.current = Date.now();
+
+      console.log('💾 Saving raw trial data:', {
+        blockIdx,
+        totalTrials: bitsRef.current.length,
+        subjectBits: bitsRef.current.length,
+        ghostBits: ghostBitsRef.current.length,
+        outcomes: alignedRef.current.length
+      });
+
+      // Save each trial with minimal essential data (storage optimization)
+      const trialPromises = [];
+      for (let i = 0; i < bitsRef.current.length; i++) {
+        const globalTrialNumber = (blockIdx * trialsPerBlock) + i + 1; // 1-based global numbering (1-2700)
+        const trialDoc = {
+          trialIndex: i,  // 0-based index within block (0-149)
+          blockIndex: blockIdx,  // Which block (0-17)
+          globalTrialNumber: globalTrialNumber,  // Global 1-based trial number (1-2700)
+          subjectBit: bitsRef.current[i],
+          ghostBit: ghostBitsRef.current[i],
+          targetBit: targetBit
+          // Removed redundant fields:
+          // - subjectOutcome (calculate as subjectBit === targetBit ? 1 : 0)
+          // - ghostOutcome (calculate as ghostBit === targetBit ? 1 : 0)
+          // - timestamp (use block-level timing instead)
+          // - target, mappingType (saved at block level)
+        };
+
+        trialPromises.push(addDoc(trialsCollection, trialDoc));
+      }
+
+      // Save all trials in parallel (background - don't wait)
+      const savePromise = Promise.all(trialPromises).then(() => {
+        console.log('✅ Raw trial data saved successfully');
+        // Remove this save from the tracking array
+        setBackgroundSaves(saves => saves.filter(s => s !== savePromise));
+        return { blockIdx, success: true };
+      }).catch(err => {
+        console.error('❌ Background trial save failed:', err);
+        // Remove this save from the tracking array even if it failed
+        setBackgroundSaves(saves => saves.filter(s => s !== savePromise));
+        return { blockIdx, success: false, error: err };
+      });
+
+      // Track this background save
+      setBackgroundSaves(saves => [...saves, savePromise]);
+      setAllDataSaved(false);
+
+    } catch (trialSaveError) {
+      console.error('❌ Failed to save raw trial data:', trialSaveError);
+      // Don't fail the entire block if trial saving fails
+    }
 
     // Update previous block end time for next block's pause calculation
     previousBlockEndTimeRef.current = blockEndTimeRef.current;
   }, [
-    runRef, blockIdx, mappingType, targetBit, liveLastSource
+    runRef, blockIdx, target, mappingType, targetBit
   ]);
 
   const endMinute = useCallback(async () => {
@@ -730,7 +790,7 @@ export default function MainApp() {
     if (minuteInvalidRef.current) { setPhase('rest'); return; }
     // Always go to rest phase first, even for the final block
     setPhase('rest');
-  }, [liveDisconnect, persistMinute]);
+  }, [blockIdx, liveDisconnect, persistMinute]);
   // Idle prefetch during PRIME/REST in non-streaming mode
   useEffect(() => {
     // Never prefetch in streaming mode
@@ -742,6 +802,7 @@ export default function MainApp() {
 
     // When NOT running, if the next minute is 'live' and not already staged, prefetch now
     if (phase !== 'running') {
+      const next = blockIdx + 1;
       // All blocks are live now - always prefetch
       if (!nextLiveBufRef.current) {
         prefetchLivePairs().catch(() => { /* ignore */ });
@@ -788,7 +849,7 @@ export default function MainApp() {
           actualTrials: alignedRef.current.length,
           shouldStop: i >= MAX_TRIALS,
           hitCap,
-          elapsed: Math.round(elapsed/1000) + 's'
+          elapsed: Math.round(elapsed / 1000) + 's'
         });
       }
 
@@ -807,26 +868,24 @@ export default function MainApp() {
         return;
       }
 
-      let bit, ghost, subjectRawIndex, ghostRawIndex;
+      let bit, ghost;
       if (C.USE_LIVE_STREAM) {
         const now = performance.now();
         if (isBuffering) { maybeResume(now); return; } // Don't increment i when buffering
         else { maybePause(now); if (isBuffering) { return; } } // Don't increment i when buffering starts
         // Use trial-level bit strategy: odd trials = alternating, even trials = independent
         const trialNumber = i + 1; // Convert 0-based to 1-based for odd/even logic
-        const sBitObj = livePopSubjectBit(trialNumber); const gBitObj = livePopGhostBit(trialNumber);
-        if (sBitObj === null || gBitObj === null) {
+        const sBit = livePopSubjectBit(trialNumber); const gBit = livePopGhostBit(trialNumber);
+        if (sBit === null || gBit === null) {
           console.warn('🔴 NULL BITS DETECTED - pausing:', {
             trialNumber,
-            sBitObj, gBitObj,
+            sBit, gBit,
             bufferSize: liveBufferedBits(),
             isBuffering
           });
           maybePause(now);
           return;
         } // Don't increment i when no bits available
-        const sBit = sBitObj.bit; const gBit = gBitObj.bit;
-        subjectRawIndex = sBitObj.rawIndex; ghostRawIndex = gBitObj.rawIndex;
         bit = sBit === '1' ? 1 : 0; ghost = gBit === '1' ? 1 : 0;
 
         // Debug early trials to see initial buffer bias
@@ -882,29 +941,25 @@ export default function MainApp() {
 
       bitsRef.current.push(bit);
       ghostBitsRef.current.push(ghost);
-      if (C.USE_LIVE_STREAM) {
-        subjectIndicesRef.current.push(subjectRawIndex);
-        ghostIndicesRef.current.push(ghostRawIndex);
-      }
       const align = bit === targetBit ? 1 : 0;
       const alignGhost = ghost === targetBit ? 1 : 0;
       alignedRef.current.push(align);
       hitsRef.current += align;
       ghostHitsRef.current += alignGhost;
 
-      // Trigger re-render for UI updates
-      setRenderTrigger(prev => prev + 1);
-
       // Update last trial timestamp (will be final value when loop completes)
       lastTrialTimeRef.current = now;
+
+      // Trigger re-render for UI updates
+      setRenderTrigger(prev => prev + 1);
 
       i += 1; // Only increment when we actually process a trial
     }, TICK);
 
     return () => { if (tickTimerRef.current) { clearInterval(tickTimerRef.current); tickTimerRef.current = null; } };
   }, [
-    isRunning, blockIdx, trialsPerMinute, targetBit, target,
-    isBuffering, livePopSubjectBit, livePopGhostBit, liveBufferedBits, maybePause, maybeResume, shouldInvalidate, trialsPerBlock,
+    isRunning, blockIdx, trialsPerMinute, targetBit,
+    isBuffering, livePopSubjectBit, livePopGhostBit, maybePause, maybeResume, shouldInvalidate,
   ]);
 
 
@@ -956,7 +1011,20 @@ export default function MainApp() {
         .sort((a, b) => a.idx - b.idx);
 
       // For each minute, read trials subcollection and extract bits in order
+      // Exclude blocks after long breaks (> 2 minutes = 120000ms)
+      const LONG_BREAK_THRESHOLD_MS = 120000;
+      let hasLongBreak = false;
       for (const minute of sortedMinutes) {
+        const minuteDoc = await getDoc(minute.ref);
+        const minuteData = minuteDoc.data() || {};
+
+        // Check if this block came after a long break
+        if (minuteData.timing?.pause_before_block_ms > LONG_BREAK_THRESHOLD_MS) {
+          hasLongBreak = true;
+          console.warn(`⚠️ Excluding block ${minuteData.idx} from temporal entropy (long break detected: ${Math.round(minuteData.timing.pause_before_block_ms / 1000)}s)`);
+          continue; // Skip this block
+        }
+
         const trialsSnapshot = await getDocs(collection(minute.ref, 'trials'));
 
         // Sort trials by trialIndex to maintain proper order
@@ -977,74 +1045,46 @@ export default function MainApp() {
         return;
       }
 
-      // Minimum window size for meaningful entropy calculation
-      const MIN_WINDOW_SIZE = 500;
-
-      // k=2: split into first/second half (1500/1500 for 3000 bits)
+      // k=2: split into first/second half (1350/1350 for 2700 bits)
       const half = Math.floor(n / 2);
-      if (half < MIN_WINDOW_SIZE) {
-        console.warn(`Insufficient bits for k=2 temporal entropy: ${n} bits (need ${MIN_WINDOW_SIZE * 2}+ for meaningful windows)`);
-        return;
-      }
       const entropy_k2 = [
         shannonEntropy(allSubjectBits.slice(0, half)),
         shannonEntropy(allSubjectBits.slice(half, n))
       ];
-      const ghost_entropy_k2 = [
-        shannonEntropy(allGhostBits.slice(0, half)),
-        shannonEntropy(allGhostBits.slice(half, n))
-      ];
 
-      // k=3: split into thirds (1000/1000/1000 for 3000 bits)
+      // k=3: split into thirds (900/900/900 for 2700 bits)
       const third = Math.floor(n / 3);
-      if (third < MIN_WINDOW_SIZE) {
-        console.warn(`Insufficient bits for k=3 temporal entropy: ${n} bits (need ${MIN_WINDOW_SIZE * 3}+ for meaningful windows)`);
-        return;
-      }
       const entropy_k3 = [
         shannonEntropy(allSubjectBits.slice(0, third)),
         shannonEntropy(allSubjectBits.slice(third, 2 * third)),
         shannonEntropy(allSubjectBits.slice(2 * third, n))
       ];
-      const ghost_entropy_k3 = [
-        shannonEntropy(allGhostBits.slice(0, third)),
-        shannonEntropy(allGhostBits.slice(third, 2 * third)),
-        shannonEntropy(allGhostBits.slice(2 * third, n))
-      ];
 
       console.log('📊 SESSION-LEVEL TEMPORAL ENTROPY:', {
         totalBits: n,
-        k2_windows: entropy_k2.map((e, i) => `W${i+1}: ${e?.toFixed(4) || 'null'}`),
-        k3_windows: entropy_k3.map((e, i) => `W${i+1}: ${e?.toFixed(4) || 'null'}`),
+        k2_windows: entropy_k2.map((e, i) => `W${i + 1}: ${e?.toFixed(4) || 'null'}`),
+        k3_windows: entropy_k3.map((e, i) => `W${i + 1}: ${e?.toFixed(4) || 'null'}`),
         k2_sizes: [half, n - half],
         k3_sizes: [third, third, n - 2 * third]
       });
 
       // Save to session document
       await setDoc(runRef, {
+        interrupted: hasLongBreak, // Flag if session had breaks > 2 minutes
         entropy: {
           temporal: {
             subj_bits_count: n,
             entropy_k2: entropy_k2,
             entropy_k3: entropy_k3,
-            ghost_entropy_k2: ghost_entropy_k2,
-            ghost_entropy_k3: ghost_entropy_k3,
+            excluded_blocks_due_to_breaks: hasLongBreak // Note if blocks were excluded
           }
         }
       }, { merge: true });
 
       console.log('✅ Session-level temporal entropy saved to DB', {
+        interrupted: hasLongBreak,
         bitsIncluded: n
       });
-
-      // Reset all accumulators to prevent bleed into next session
-      bitsRef.current = [];
-      ghostBitsRef.current = [];
-      subjectIndicesRef.current = [];
-      ghostIndicesRef.current = [];
-      entropyAccumRef.current = { subj: [], ghost: [] };
-      entropyWindowsRef.current = { subj: [], ghost: [] };
-      console.log('🔄 Reset all entropy accumulators for next session');
     } catch (error) {
       console.error('Error calculating session temporal entropy:', error);
     }
@@ -1077,7 +1117,6 @@ export default function MainApp() {
     // All blocks are live now - no retro tracking needed
 
     bitsRef.current = []; ghostBitsRef.current = []; alignedRef.current = [];
-    subjectIndicesRef.current = []; ghostIndicesRef.current = [];
     hitsRef.current = 0; ghostHitsRef.current = 0;
     resetLivePauseCounters();
     setRenderTrigger(0);
@@ -1157,9 +1196,9 @@ export default function MainApp() {
       <div style={{ position: 'relative' }}>
         <ConsentGate
           title="Consent to Participate"
-          studyDescription="This study investigates whether focused attention can correlate with patterns in random color generation during attention tasks. You will complete 20 blocks each 30 seconds long and brief questionnaires (approximately 10-15 minutes total)."
+          studyDescription="This study investigates whether focused attention can correlate with patterns in random color generation during attention tasks. You will complete 18 blocks and brief questionnaires (approximately 20-25 minutes total)."
           bullets={[
-            'You will focus on an assigned target color (orange or blue) while random colors are generated.',
+            'You will focus on an assigned target color (red or green) while random colors are generated.',
             'Your task is to maintain focused attention on your target color throughout each trial block.',
             'We collect data on randomly generated sequences, timing patterns, and your questionnaire responses.',
             'Participation is completely voluntary; you may exit at any time using the door button.',
@@ -1172,7 +1211,7 @@ export default function MainApp() {
             let localPreDone = false;
             try {
               localPreDone = localStorage.getItem(`pre_done_global:${C.EXPERIMENT_ID}`) === '1';
-            } catch {}
+            } catch { }
 
             console.log('Pre-questions check:', { preDone, localPreDone, checkedReturning });
             const shouldSkipPre = preDone || localPreDone;
@@ -1259,7 +1298,7 @@ export default function MainApp() {
             </div>
           </div>
 
-          <div style={{ marginTop: 8}}>
+          <div style={{ marginTop: 8 }}>
             <h3 style={{ marginTop: 0, color: '#2c3e50' }}>Instructions</h3>
             <ul style={{ lineHeight: 1.6 }}>
               <li>This experiment uses quantum random number generators for true randomness.</li>
@@ -1497,21 +1536,28 @@ export default function MainApp() {
         <div style={{ marginTop: 12 }}>
           <button
             onClick={() => startNextMinute()}
-            disabled={!redundancyReady}
+            disabled={!redundancyReady || (blockIdx + 1 >= C.BLOCKS_TOTAL && !allDataSaved)}
             style={{
               padding: '10px 16px',
               borderRadius: 8,
               border: '1px solid #999',
-              background: redundancyReady ? '#1a8f1a' : '#ccc',
-              color: redundancyReady ? '#fff' : '#444',
-              cursor: redundancyReady ? 'pointer' : 'not-allowed',
+              background: (redundancyReady && (blockIdx + 1 < C.BLOCKS_TOTAL || allDataSaved)) ? '#1a8f1a' : '#ccc',
+              color: (redundancyReady && (blockIdx + 1 < C.BLOCKS_TOTAL || allDataSaved)) ? '#fff' : '#444',
+              cursor: (redundancyReady && (blockIdx + 1 < C.BLOCKS_TOTAL || allDataSaved)) ? 'pointer' : 'not-allowed',
               transition: 'background 150ms ease'
             }}
           >
-            {!redundancyReady ? 'Complete check above…' : 'Continue'}
+            {!redundancyReady ? 'Complete check above…' :
+              (blockIdx + 1 >= C.BLOCKS_TOTAL && !allDataSaved) ? 'Saving data...' :
+                'Continue'}
           </button>
           <div style={{ fontSize: 12, opacity: 0.75, marginTop: 8 }}>
             Block {blockIdx + 1} of {C.BLOCKS_TOTAL} complete
+            {blockIdx + 1 >= C.BLOCKS_TOTAL && backgroundSaves.length > 0 && (
+              <div style={{ marginTop: 4, color: '#666' }}>
+                Saving {backgroundSaves.length} block{backgroundSaves.length > 1 ? 's' : ''} of trial data...
+              </div>
+            )}
           </div>
         </div>
 
@@ -1559,10 +1605,10 @@ export default function MainApp() {
             onFrameDelta={mappingType === "high_entropy"
               ? (alignedRef.current.length > 0 ? hitsRef.current / alignedRef.current.length : 0.5)
               : ((f) => {
-                  const m = microEntropyRef.current;
-                  m.sum += Math.max(0, Math.min(1, f));
-                  m.count += 1;
-                })
+                const m = microEntropyRef.current;
+                m.sum += Math.max(0, Math.min(1, f));
+                m.count += 1;
+              })
             }
           />
         </DataCollectionErrorBoundary>
@@ -1618,7 +1664,7 @@ export default function MainApp() {
                   />
                 )}
                 <div style={{ fontSize: 12, opacity: 0.8, marginTop: 6 }}>
-                  Trial {n}/{trialsPlanned} 
+                  Trial {n}/{trialsPlanned}
                   {/* · This minute: <strong>{Math.round(minuteVal * 100)}%</strong> */}
                 </div>
               </>
@@ -1806,7 +1852,6 @@ export default function MainApp() {
           participantId={uid}
           finalPercent={finalPct}
           cutoffOverride={C.FINALIST_MIN_PCT}
-          lowCutoffOverride={C.FINALIST_MAX_PCT}
         />
 
         <button

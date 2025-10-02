@@ -32,3 +32,13 @@ export function twoPropZ(p1, n1, p2, n2) {
   const se = Math.sqrt(p * (1 - p) * (1 / n1s + 1 / n2s)) || 1;
   return (p1 - p2) / se;
 }
+
+// Binary Shannon entropy (in bits per symbol, 0..1)
+export function shannonEntropy(bits) {
+  const n = bits.length;
+  if (n === 0) return null;
+  const ones = bits.reduce((a, b) => a + b, 0);
+  const p = ones / n;
+  if (p === 0 || p === 1) return 0;
+  return -p * Math.log2(p) - (1 - p) * Math.log2(1 - p);
+}

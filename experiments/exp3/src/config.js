@@ -12,8 +12,7 @@ config.experiments = {
     VISUAL_HZ: 5,                  // 200 ms ticks
     BLOCK_MS: 30000,               // 30 s blocks (~150 trials)
     REST_MS: 2500,                 // 2.5 s breather
-    BLOCKS_TOTAL: 18,             // 18 blocks ≈ 9 min total runtime
-    SESSIONS_PER_PARTICIPANT: 2,
+    BLOCKS_TOTAL: 20,             // 20 blocks ≈ 10 min total runtime
     USE_LIVE_STREAM: true,          // Always use live quantum stream
     LIVE_STREAM_DURATION_MS: 90_000, // how long to stream per LS minute
     NEEDLE_WINDOW: 20,
@@ -24,15 +23,8 @@ config.experiments = {
     SHOW_CONDITION_IN_HUD: false,
     SESSION_ALPHA: 0.01,
     BLOCK_HIGHLIGHT_PCT: 52, //what score gets a congrats
-    FINALIST_MIN_PCT: 55, // email capture high score gate opens at or above this percent
-
-    // High score email threshold (p-value for statistical significance)
-    // Set to 0.05 for production, 0.5 for testing
-    emailSignificanceThreshold: 0.05,
-
-    // storage
-    FIRESTORE_RUNS: 'runs',
-    FIRESTORE_TAPES: 'tapes',
+    FINALIST_MIN_PCT: 50, // 54 email capture high score gate opens at or above this percent
+    FINALIST_MAX_PCT: 49, // 46 email capture low score gate opens at or below this percent
   },
 };
 

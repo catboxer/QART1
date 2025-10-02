@@ -7,6 +7,7 @@ export default function HighScoreEmailPrompt({
   sessionId,
   participantId,
   onClose = () => { },
+  isLowScorer = false,
 }) {
   // Esc-to-close (must be before any early return so hooks run every render)
   useEffect(() => {
@@ -19,20 +20,35 @@ export default function HighScoreEmailPrompt({
   if (!hasScore) return null;
 
   const scoreStr = `${(scorePct * 100).toFixed(1)}%`;
-  const subject = encodeURIComponent(`High scorer – ${experiment}`);
+  const subject = encodeURIComponent(
+    isLowScorer ? `Low scorer (psi-missing) – ${experiment}` : `High scorer – ${experiment}`
+  );
   const body = encodeURIComponent(
-    [
-      `Hi WTQ team,`,
-      ``,
-      `I got a high score and would love to be considered for future studies (and the PSI hoodie!).`,
-      ``,
-      `Experiment: ${experiment}`,
-      `Score: ${scoreStr}`,
-      `Participant ID: ${participantId || "(not provided)"}`,
-      `Session ID: ${sessionId || "(not provided)"}`,
-      ``,
-      `Thanks!`,
-    ].join("\n")
+    isLowScorer
+      ? [
+          `Hi WTQ team,`,
+          ``,
+          `I got an unusually low score and would love to be considered for future studies as a potential psi-missing participant.`,
+          ``,
+          `Experiment: ${experiment}`,
+          `Score: ${scoreStr}`,
+          `Participant ID: ${participantId || "(not provided)"}`,
+          `Session ID: ${sessionId || "(not provided)"}`,
+          ``,
+          `Thanks!`,
+        ].join("\n")
+      : [
+          `Hi WTQ team,`,
+          ``,
+          `I got a high score and would love to be considered for future studies (and the PSI hoodie!).`,
+          ``,
+          `Experiment: ${experiment}`,
+          `Score: ${scoreStr}`,
+          `Participant ID: ${participantId || "(not provided)"}`,
+          `Session ID: ${sessionId || "(not provided)"}`,
+          ``,
+          `Thanks!`,
+        ].join("\n")
   );
   const mailto = `mailto:${emailTo}?subject=${subject}&body=${body}`;
 
@@ -71,11 +87,24 @@ Session ID: ${sessionId || "(not provided)"}
       >
         <button style={styles.close} onClick={onClose} aria-label="Close">×</button>
 
-        <h2 style={{ marginTop: 0 }}>🎉 You’re a high scorer!</h2>
-        <p>
-          You’ve clearly got the touch. Join our shortlist for future studies and
-          we’ll thank you with an organic PSI “Founding Ψ Cohort” hoodie.
-        </p>
+        {isLowScorer ? (
+          <>
+            <h2 style={{ marginTop: 0 }}>🔮 Unusually Low Score Detected</h2>
+            <p>
+              Your score is statistically significant in the opposite direction—a phenomenon known as
+              "psi-missing." This is just as interesting to researchers as high scores! Join our shortlist
+              for future studies and we'll thank you with an organic PSI "Founding Ψ Cohort" hoodie.
+            </p>
+          </>
+        ) : (
+          <>
+            <h2 style={{ marginTop: 0 }}>🎉 You're a high scorer!</h2>
+            <p>
+              You've clearly got the touch. Join our shortlist for future studies and
+              we'll thank you with an organic PSI "Founding Ψ Cohort" hoodie.
+            </p>
+          </>
+        )}
 
        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", justifyContent: "center" }}>
           <button

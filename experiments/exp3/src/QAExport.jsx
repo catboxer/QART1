@@ -658,7 +658,7 @@ function computeTrialSpectralAnalysis(sessions) {
   return spectralResults;
 }
 
-function filterSessions(sessions, mode, binauralFilter, primeFilter, mappingFilter) {
+function filterSessions(sessions, mode, binauralFilter, primeFilter, mappingFilter, sessionFilter = 'all') {
   let filtered = sessions;
 
   // Filter by completion status
@@ -666,6 +666,40 @@ function filterSessions(sessions, mode, binauralFilter, primeFilter, mappingFilt
     filtered = filtered.filter(s => s.completed);
   } else if (mode === 'nonCompleters') {
     filtered = filtered.filter(s => !s.completed);
+  }
+
+  // Filter by session count (first vs repeat sessions)
+  if (sessionFilter === 'first' || sessionFilter === 'repeat') {
+    // Group sessions by participant_id and find earliest timestamp
+    const participantSessions = {};
+    sessions.forEach(s => {
+      const pid = s.participant_id;
+      if (!pid) return; // Skip sessions without participant_id
+      if (!participantSessions[pid]) {
+        participantSessions[pid] = [];
+      }
+      participantSessions[pid].push(s);
+    });
+
+    // Sort each participant's sessions by timestamp and mark first session
+    const firstSessionIds = new Set();
+    Object.values(participantSessions).forEach(pSessions => {
+      if (pSessions.length > 0) {
+        // Sort by timestamp (earliest first)
+        pSessions.sort((a, b) => {
+          const aTime = a.timestamp?.toMillis?.() || a.timestamp || 0;
+          const bTime = b.timestamp?.toMillis?.() || b.timestamp || 0;
+          return aTime - bTime;
+        });
+        firstSessionIds.add(pSessions[0].id);
+      }
+    });
+
+    if (sessionFilter === 'first') {
+      filtered = filtered.filter(s => firstSessionIds.has(s.id));
+    } else if (sessionFilter === 'repeat') {
+      filtered = filtered.filter(s => !firstSessionIds.has(s.id) && s.participant_id);
+    }
   }
 
   // Filter by binaural beats
@@ -691,6 +725,8 @@ function filterSessions(sessions, mode, binauralFilter, primeFilter, mappingFilt
 
 // Enhanced function to fetch trial-level data from subcollections
 async function fetchTrialData(sessionId, blockIdx) {
+  // Trial data is now stored as arrays in the block document (trial_data field)
+  // No longer using subcollection - this is for backward compatibility only
   try {
     const trialsSnap = await getDocs(
       collection(db, 'experiment3_responses', sessionId, 'minutes', blockIdx.toString(), 'trials')
@@ -724,26 +760,42 @@ async function fetchAllRunsWithMinutes(includeTrials = true) {
         // Fetch trial-level data for each minute/block if requested
         if (includeTrials) {
           for (let minute of minutes) {
-            const blockIdx = minute.idx ?? 0;
-            const trials = await fetchTrialData(r.id, blockIdx);
-            minute.trials = trials;
+            // Check if trial data is in new array format (efficient)
+            if (minute.trial_data && minute.trial_data.subject_bits) {
+              const subjectBits = minute.trial_data.subject_bits;
+              const ghostBits = minute.trial_data.ghost_bits;
+              const targetBit = minute.trial_data.target_bit;
 
-            // Generate trial sequences for temporal analysis
-            if (trials.length > 0) {
-              minute.subjectSequence = trials.map(t => t.subjectOutcome ?? (t.subjectBit === t.targetBit ? 1 : 0));
-              minute.ghostSequence = trials.map(t => t.ghostOutcome ?? (t.ghostBit === t.targetBit ? 1 : 0));
-              minute.subjectBitSequence = trials.map(t => t.subjectBit ?? 0);
-              minute.ghostBitSequence = trials.map(t => t.ghostBit ?? 0);
-              minute.targetSequence = trials.map(t => t.targetBit ?? 0);
-              minute.trialTimestamps = trials.map(t => t.timestamp ?? 0);
+              // Generate sequences from arrays
+              minute.subjectBitSequence = subjectBits;
+              minute.ghostBitSequence = ghostBits;
+              minute.subjectSequence = subjectBits.map(bit => bit === targetBit ? 1 : 0);
+              minute.ghostSequence = ghostBits.map(bit => bit === targetBit ? 1 : 0);
+              minute.targetSequence = new Array(subjectBits.length).fill(targetBit);
+              minute.trialTimestamps = []; // Timestamps are block-level now
+              minute.trials = []; // Legacy format, kept for compatibility
             } else {
-              // Fallback to empty sequences if no trial data
-              minute.subjectSequence = [];
-              minute.ghostSequence = [];
-              minute.subjectBitSequence = [];
-              minute.ghostBitSequence = [];
-              minute.targetSequence = [];
-              minute.trialTimestamps = [];
+              // Fallback to old subcollection format for backward compatibility
+              const blockIdx = minute.idx ?? 0;
+              const trials = await fetchTrialData(r.id, blockIdx);
+              minute.trials = trials;
+
+              if (trials.length > 0) {
+                minute.subjectSequence = trials.map(t => t.subjectOutcome ?? (t.subjectBit === t.targetBit ? 1 : 0));
+                minute.ghostSequence = trials.map(t => t.ghostOutcome ?? (t.ghostBit === t.targetBit ? 1 : 0));
+                minute.subjectBitSequence = trials.map(t => t.subjectBit ?? 0);
+                minute.ghostBitSequence = trials.map(t => t.ghostBit ?? 0);
+                minute.targetSequence = trials.map(t => t.targetBit ?? 0);
+                minute.trialTimestamps = trials.map(t => t.timestamp ?? 0);
+              } else {
+                // No trial data available
+                minute.subjectSequence = [];
+                minute.ghostSequence = [];
+                minute.subjectBitSequence = [];
+                minute.ghostBitSequence = [];
+                minute.targetSequence = [];
+                minute.trialTimestamps = [];
+              }
             }
           }
         }
@@ -4379,6 +4431,7 @@ export default function QAExport() {
   const [binauralFilter, setBinauralFilter] = useState('all');
   const primeFilter = 'all'; // Everyone is primed now - no filter needed
   const [mappingFilter, setMappingFilter] = useState('all');
+  const [sessionFilter, setSessionFilter] = useState('all'); // all, first, repeat
   // Removed dataTypeFilter - all data is live now
   const [qaStatus, setQaStatus] = useState(null);
   const [canToggle, setCanToggle] = useState(false);
@@ -4485,9 +4538,9 @@ export default function QAExport() {
 
   const filteredSessions = useMemo(() => {
     console.log('QA Dashboard: Raw runs data:', runs.length, runs);
-    const filtered = filterSessions(runs, mode, binauralFilter, primeFilter, mappingFilter);
+    const filtered = filterSessions(runs, mode, binauralFilter, primeFilter, mappingFilter, sessionFilter);
     console.log('QA Dashboard: Filtered sessions:', filtered.length, filtered);
-    console.log('QA Dashboard: Filters:', { mode, binauralFilter, primeFilter, mappingFilter });
+    console.log('QA Dashboard: Filters:', { mode, binauralFilter, primeFilter, mappingFilter, sessionFilter });
 
     // Debug individual runs
     runs.forEach((run, index) => {
@@ -4503,7 +4556,7 @@ export default function QAExport() {
     });
 
     return filtered;
-  }, [runs, mode, binauralFilter, primeFilter, mappingFilter]);
+  }, [runs, mode, binauralFilter, primeFilter, mappingFilter, sessionFilter]);
 
   const stats = useMemo(() => {
     return computeStatistics(filteredSessions, mode, binauralFilter, primeFilter, mappingFilter);
@@ -4513,7 +4566,34 @@ export default function QAExport() {
     const total = runs.length;
     const completers = runs.filter(r => r.completed).length;
     const nonCompleters = total - completers;
-    return { total, completers, nonCompleters };
+
+    // Count first vs repeat sessions
+    const participantSessions = {};
+    runs.forEach(s => {
+      const pid = s.participant_id;
+      if (!pid) return;
+      if (!participantSessions[pid]) {
+        participantSessions[pid] = [];
+      }
+      participantSessions[pid].push(s);
+    });
+
+    const firstSessionIds = new Set();
+    Object.values(participantSessions).forEach(pSessions => {
+      if (pSessions.length > 0) {
+        pSessions.sort((a, b) => {
+          const aTime = a.timestamp?.toMillis?.() || a.timestamp || 0;
+          const bTime = b.timestamp?.toMillis?.() || b.timestamp || 0;
+          return aTime - bTime;
+        });
+        firstSessionIds.add(pSessions[0].id);
+      }
+    });
+
+    const firstSessions = runs.filter(r => firstSessionIds.has(r.id)).length;
+    const repeatSessions = runs.filter(r => !firstSessionIds.has(r.id) && r.participant_id).length;
+
+    return { total, completers, nonCompleters, firstSessions, repeatSessions };
   }, [runs]);
 
   if (loading) return <div style={{ padding: 24 }}>Loading experiment data…</div>;
@@ -4644,6 +4724,47 @@ export default function QAExport() {
           </label>
         ))}
       </div>
+
+      {/* Row 4: Session count filter */}
+      <div
+        style={{
+          display: 'flex',
+          gap: 8,
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          marginTop: 8,
+        }}
+      >
+        <span style={{ fontSize: 12, color: '#555' }}>Session type:</span>
+        {[
+          { id: 'all', label: 'All sessions' },
+          { id: 'first', label: 'First session only' },
+          { id: 'repeat', label: 'Repeat sessions only' },
+        ].map((opt) => (
+          <label
+            key={opt.id}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '4px 8px',
+              border: '1px solid #ddd',
+              borderRadius: 16,
+              background: sessionFilter === opt.id ? '#eef6ff' : '#fff',
+              cursor: 'pointer',
+            }}
+          >
+            <input
+              type="radio"
+              name="sessionType"
+              value={opt.id}
+              checked={sessionFilter === opt.id}
+              onChange={(e) => setSessionFilter(e.target.value)}
+            />
+            <span style={{ fontSize: 12 }}>{opt.label}</span>
+          </label>
+        ))}
+      </div>
     </div>
   );
 
@@ -4674,6 +4795,12 @@ export default function QAExport() {
             ? ((100 * summary.nonCompleters) / summary.total).toFixed(1)
             : '0.0'}
           %)
+        </div>
+        <div>
+          <strong>First sessions:</strong> {summary.firstSessions}
+        </div>
+        <div>
+          <strong>Repeat sessions:</strong> {summary.repeatSessions}
         </div>
         <div>
           <strong>Filtered sessions:</strong> {filteredSessions.length}
