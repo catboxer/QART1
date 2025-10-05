@@ -9,10 +9,12 @@ import {
   doc,
   getDoc,
   updateDoc,
+  addDoc,
 } from 'firebase/firestore';
 import { signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { panels } from './exp-panels';
 import jStat from 'jstat';
+import { twoSidedP } from './stats';
 
 // Statistical helper functions
 function sampleVariance(arr) {
@@ -76,13 +78,46 @@ function computeStatistics(sessions, mode = 'pooled', binauralFilter = 'all', pr
       }
 
       // Collect raw bit sequences for entropy calculation
-      if (minute.subjectBitSequence && Array.isArray(minute.subjectBitSequence)) {
-        sessionSubjectBits.push(...minute.subjectBitSequence);
-        allSubjectBits.push(...minute.subjectBitSequence);
+      // Try to use bytes first (new format), fallback to bits (old format)
+      const subjectBytes = minute.trial_data?.subject_bytes;
+      const ghostBytes = minute.trial_data?.ghost_bytes;
+
+      if (subjectBytes && Array.isArray(subjectBytes)) {
+        // Convert bytes to bits (8 bits per byte)
+        for (const byte of subjectBytes) {
+          const bits8 = byte.toString(2).padStart(8, '0');
+          for (let i = 0; i < 8; i++) {
+            const bit = parseInt(bits8[i]);
+            sessionSubjectBits.push(bit);
+            allSubjectBits.push(bit);
+          }
+        }
+      } else {
+        // Fallback to old bit format
+        const subjBits = minute.trial_data?.subject_bits || minute.subjectBitSequence;
+        if (subjBits && Array.isArray(subjBits)) {
+          sessionSubjectBits.push(...subjBits);
+          allSubjectBits.push(...subjBits);
+        }
       }
-      if (minute.ghostBitSequence && Array.isArray(minute.ghostBitSequence)) {
-        sessionGhostBits.push(...minute.ghostBitSequence);
-        allGhostBits.push(...minute.ghostBitSequence);
+
+      if (ghostBytes && Array.isArray(ghostBytes)) {
+        // Convert bytes to bits (8 bits per byte)
+        for (const byte of ghostBytes) {
+          const bits8 = byte.toString(2).padStart(8, '0');
+          for (let i = 0; i < 8; i++) {
+            const bit = parseInt(bits8[i]);
+            sessionGhostBits.push(bit);
+            allGhostBits.push(bit);
+          }
+        }
+      } else {
+        // Fallback to old bit format
+        const ghostBits = minute.trial_data?.ghost_bits || minute.ghostBitSequence;
+        if (ghostBits && Array.isArray(ghostBits)) {
+          sessionGhostBits.push(...ghostBits);
+          allGhostBits.push(...ghostBits);
+        }
       }
     });
 
@@ -135,6 +170,15 @@ function computeStatistics(sessions, mode = 'pooled', binauralFilter = 'all', pr
   const avgHitRate = totalTrials > 0 ? totalHits / totalTrials : 0;
   const avgGhostHitRate = totalTrials > 0 ? totalGhostHits / totalTrials : 0;
 
+  // Count total entropy windows across all sessions
+  let totalEntropyWindows = 0;
+  sessions.forEach(session => {
+    (session.minutes || []).forEach(minute => {
+      const subjWindows = minute.entropy?.new_windows_subj || [];
+      totalEntropyWindows += subjWindows.length;
+    });
+  });
+
   // Debug entropy calculation
   console.log('🔍 ENTROPY CALCULATION:', {
     sessionsAnalyzed: sessions.length,
@@ -185,6 +229,7 @@ function computeStatistics(sessions, mode = 'pooled', binauralFilter = 'all', pr
     avgHitRate,
     avgGhostHitRate,
     avgEntropy,
+    totalEntropyWindows,
     totalBitSequences: allSubjectBits.length > 0 ? sessions.length : 0,
     z,
     p,
@@ -224,31 +269,39 @@ function analyzeTemporalEntropy(sessions) {
 
   sessions.forEach(session => {
     const temporal = session.entropy?.temporal;
-    if (!temporal || !temporal.entropy_k2 || !temporal.entropy_k3) return;
+    if (!temporal || !temporal.entropy_k2 || !temporal.entropy_k3 || !temporal.ghost_entropy_k2 || !temporal.ghost_entropy_k3) return;
 
     const k2 = temporal.entropy_k2;
     const k3 = temporal.entropy_k3;
+    const k2_ghost = temporal.ghost_entropy_k2;
+    const k3_ghost = temporal.ghost_entropy_k3;
 
     // K=2 analysis: paired test on first vs second half
-    if (k2.length === 2 && k2[0] !== null && k2[1] !== null) {
+    if (k2.length === 2 && k2[0] !== null && k2[1] !== null && k2_ghost.length === 2 && k2_ghost[0] !== null && k2_ghost[1] !== null) {
       k2_data.push({
         sessionId: session.id,
         first_half: k2[0],
         second_half: k2[1],
         difference: k2[1] - k2[0], // Second - First
+        ghost_first_half: k2_ghost[0],
+        ghost_second_half: k2_ghost[1],
+        ghost_difference: k2_ghost[1] - k2_ghost[0],
         participant: session.participant_id,
         prime_condition: session.prime_condition,
         bits_count: temporal.subj_bits_count
       });
     }
 
-    // K=3 analysis: early, middle, late
-    if (k3.length === 3 && k3.every(v => v !== null)) {
+    // K=3 analysis: early, middle, late (including ghost data)
+    if (k3.length === 3 && k3.every(v => v !== null) && k3_ghost.length === 3 && k3_ghost.every(v => v !== null)) {
       k3_data.push({
         sessionId: session.id,
         early: k3[0],
         middle: k3[1],
         late: k3[2],
+        ghost_early: k3_ghost[0],
+        ghost_middle: k3_ghost[1],
+        ghost_late: k3_ghost[2],
         participant: session.participant_id,
         prime_condition: session.prime_condition,
         bits_count: temporal.subj_bits_count
@@ -388,6 +441,38 @@ function analyzeTemporalEntropy(sessions) {
       contrasts[item.key].significantFDR = item.p <= bh_threshold;
     });
 
+    // NEW: Differential slope analysis (subject vs ghost)
+    const subjectTrends = k3_data.map(d => {
+      // Linear contrast [-1, 0, 1] for subject
+      return -1 * d.early + 0 * d.middle + 1 * d.late;
+    });
+
+    const ghostTrends = k3_data.map(d => {
+      // Linear contrast [-1, 0, 1] for ghost
+      return -1 * d.ghost_early + 0 * d.ghost_middle + 1 * d.ghost_late;
+    });
+
+    // Paired t-test on the difference in slopes
+    const trendDifferences = subjectTrends.map((st, i) => st - ghostTrends[i]);
+    const meanDiff = trendDifferences.reduce((a, b) => a + b, 0) / n;
+    const varDiff = trendDifferences.reduce((sum, d) => sum + Math.pow(d - meanDiff, 2), 0) / (n - 1);
+    const seDiff = Math.sqrt(varDiff / n);
+    const tDiff = meanDiff / seDiff;
+    const pDiff = twoTailedTPvalue(tDiff, n - 1);
+
+    const differentialSlope = {
+      subjectMeanTrend: subjectTrends.reduce((a, b) => a + b, 0) / n,
+      ghostMeanTrend: ghostTrends.reduce((a, b) => a + b, 0) / n,
+      difference: meanDiff,
+      tStatistic: tDiff,
+      degreesOfFreedom: n - 1,
+      pValue: pDiff,
+      significant: pDiff < 0.05,
+      interpretation: meanDiff > 0
+        ? 'Subject entropy increases faster than ghost (differential thermalization)'
+        : 'Ghost entropy increases faster than subject (unexpected pattern)'
+    };
+
     k3_analysis = {
       n,
       means: { early: earlyMean, middle: middleMean, late: lateMean },
@@ -398,7 +483,8 @@ function analyzeTemporalEntropy(sessions) {
         significant: pTrend < 0.05,
         interpretation: meanTrend > 0 ? 'Entropy increases linearly over time' : 'Entropy decreases linearly over time'
       },
-      pairwiseContrasts: contrasts
+      pairwiseContrasts: contrasts,
+      differentialSlope: differentialSlope
     };
   }
 
@@ -658,8 +744,15 @@ function computeTrialSpectralAnalysis(sessions) {
   return spectralResults;
 }
 
-function filterSessions(sessions, mode, binauralFilter, primeFilter, mappingFilter, sessionFilter = 'all') {
+function filterSessions(sessions, mode, binauralFilter, primeFilter, mappingFilter, sessionFilter = 'all', sessionTypeFilter = 'all') {
   let filtered = sessions;
+
+  // Filter by session type (regular vs baseline)
+  if (sessionTypeFilter === 'regular') {
+    filtered = filtered.filter(s => !s.session_type || (s.session_type !== 'session_runner' && s.session_type !== 'baseline'));
+  } else if (sessionTypeFilter === 'baseline') {
+    filtered = filtered.filter(s => s.session_type === 'baseline' || s.session_type === 'session_runner');
+  }
 
   // Filter by completion status
   if (mode === 'completers') {
@@ -913,337 +1006,48 @@ function AnalyticsSection({ title, content }) {
   );
 }
 
-// Primary Performance Metrics Component
+// Simple Performance Summary - Just basic QA context
 function PrimaryPerformanceMetrics({ sessions, stats }) {
-  const blockLevelStats = useMemo(() => {
-    const blocks = [];
-    let totalHits = 0;
-    let totalTrials = 0;
-
-    // Group by minute index to calculate averages across subjects
-    const minuteGroups = {}; // { minuteIndex: [blocks...] }
-
-    sessions.forEach(session => {
-      (session.minutes || []).forEach(minute => {
-        const minuteIndex = minute.idx || 0;
-
-
-        // Add to overall blocks for other calculations
-        blocks.push({
-          sessionId: session.id,
-          participantId: session.participant_id,
-          blockIndex: minuteIndex,
-          minuteIndex: minuteIndex,
-          hits: minute.hits || 0,
-          trials: minute.n || 0,
-          condition: session.prime_condition || 'neutral',
-          binaural: session.post_survey?.binaural_beats,
-        });
-
-        // Group by minute for averaging
-        if (!minuteGroups[minuteIndex]) {
-          minuteGroups[minuteIndex] = [];
-        }
-        minuteGroups[minuteIndex].push({
-          hits: minute.hits || 0,
-          trials: minute.n || 0,
-          hitRate: (minute.n || 0) > 0 ? (minute.hits || 0) / (minute.n || 0) : 0,
-          condition: session.prime_condition || 'neutral',
-        });
-      });
-    });
-
-    // Calculate block-level hit rates (for other stats)
-    const blockHitRates = blocks.map(block => ({
-      ...block,
-      hitRate: block.trials > 0 ? block.hits / block.trials : 0,
-    }));
-
-
-    // Calculate average performance by minute across all subjects (both subject and ghost)
-    const averageByMinute = [];
-    const ghostAverageByMinute = [];
-
-    for (let minute = 0; minute < 18; minute++) {
-      const minuteBlocks = minuteGroups[minute] || [];
-      if (minuteBlocks.length > 0) {
-        const avgHitRate = minuteBlocks.reduce((sum, block) => sum + block.hitRate, 0) / minuteBlocks.length;
-        const totalHitsThisMinute = minuteBlocks.reduce((sum, block) => sum + block.hits, 0);
-        const totalTrialsThisMinute = minuteBlocks.reduce((sum, block) => sum + block.trials, 0);
-
-        averageByMinute.push({
-          minuteIndex: minute,
-          avgHitRate,
-          subjectCount: minuteBlocks.length,
-          totalHits: totalHitsThisMinute,
-          totalTrials: totalTrialsThisMinute,
-        });
-
-        // Calculate ghost average for this minute
-        const ghostHitRates = minuteBlocks.map(block => {
-          const ghostHits = sessions.find(s => s.minutes?.[minute])?.minutes?.[minute]?.ghost_hits || 0;
-          const ghostTrials = block.trials; // Same number of trials
-          return ghostTrials > 0 ? ghostHits / ghostTrials : 0.5;
-        });
-
-        const avgGhostHitRate = ghostHitRates.reduce((sum, rate) => sum + rate, 0) / ghostHitRates.length;
-
-        ghostAverageByMinute.push({
-          minuteIndex: minute,
-          avgHitRate: avgGhostHitRate,
-          subjectCount: minuteBlocks.length,
-        });
-      }
-    }
-
-    totalHits = blockHitRates.reduce((sum, block) => sum + block.hits, 0);
-    totalTrials = blockHitRates.reduce((sum, block) => sum + block.trials, 0);
-
-    // Condition comparisons
-    const primeBlocks = blockHitRates.filter(b => b.condition === 'prime');
-    const neutralBlocks = blockHitRates.filter(b => b.condition === 'neutral');
-
-    // Debug: log what conditions we found
-    const allConditions = [...new Set(blockHitRates.map(b => b.condition))];
-    console.log('Analytics: Found conditions:', allConditions);
-    console.log('Analytics: Prime blocks:', primeBlocks.length, 'Neutral blocks:', neutralBlocks.length);
-
-    // Debug: log the actual block data to see what's wrong
-    console.log('Analytics: First few blocks:', blockHitRates.slice(0, 3));
-    console.log('Analytics: Total hits across all blocks:', totalHits);
-    console.log('Analytics: Total trials across all blocks:', totalTrials);
-
-    // Debug: log some raw minute data
-    console.log('Analytics: Sample session minutes:', sessions[0]?.minutes?.slice(0, 2));
-
-    // Debug: log all field names in the first minute to see what we're working with
-    console.log('Analytics: Sessions with minutes data:', sessions.map(s => ({ id: s.id, minutesCount: s.minutes?.length })));
-
-    if (sessions[0]?.minutes?.[0]) {
-      console.log('Analytics: First minute field names:', Object.keys(sessions[0].minutes[0]));
-      console.log('Analytics: First minute full data:', sessions[0].minutes[0]);
-    } else {
-      console.log('Analytics: No minute data found in first session');
-      console.log('Analytics: First session structure:', sessions[0]);
-    }
-
-    const primeHitRate = primeBlocks.length > 0 ?
-      primeBlocks.reduce((sum, b) => sum + b.hits, 0) / Math.max(1, primeBlocks.reduce((sum, b) => sum + b.trials, 0)) : 0;
-    const neutralHitRate = neutralBlocks.length > 0 ?
-      neutralBlocks.reduce((sum, b) => sum + b.hits, 0) / Math.max(1, neutralBlocks.reduce((sum, b) => sum + b.trials, 0)) : 0;
-
-    // Helper functions for normal CDF
-    function cdf(z) {
-      return 0.5 * (1 + erf(z / Math.sqrt(2)));
-    }
-
-    function erf(x) {
-      // Abramowitz and Stegun approximation
-      const a1 =  0.254829592;
-      const a2 = -0.284496736;
-      const a3 =  1.421413741;
-      const a4 = -1.453152027;
-      const a5 =  1.061405429;
-      const p  =  0.3275911;
-
-      const sign = x >= 0 ? 1 : -1;
-      const absX = Math.abs(x);
-
-      const t = 1.0 / (1.0 + p * absX);
-      const y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-absX * absX);
-
-      return sign * y;
-    }
-
-    // Z-score calculation for overall performance
-    const overallHitRate = totalTrials > 0 ? totalHits / totalTrials : 0;
-    const expectedHitRate = 0.5;
-    const standardError = Math.sqrt((expectedHitRate * (1 - expectedHitRate)) / totalTrials);
-    const zScore = standardError > 0 ? (overallHitRate - expectedHitRate) / standardError : 0;
-    const pValue = 2 * (1 - cdf(Math.abs(zScore))); // Two-tailed test
-
-    return {
-      blockHitRates,
-      averageByMinute, // New: average performance by minute across subjects
-      ghostAverageByMinute, // New: ghost average performance by minute
-      totalBlocks: blocks.length,
-      primeHitRate,
-      neutralHitRate,
-      conditionDiff: primeHitRate - neutralHitRate,
-      overallHitRate,
-      zScore,
-      pValue,
-    };
-  }, [sessions]);
+  if (!stats) return null;
 
   return (
     <div>
-      <h3 style={{ marginBottom: 16, color: '#374151' }}>Block-Level Performance Analysis</h3>
+      <h3 style={{ marginBottom: 16, color: '#374151' }}>Basic Performance Summary</h3>
+      <div style={{ fontSize: 14, color: '#6b7280', marginBottom: 16 }}>
+        Simple hit rate overview for quality assurance context
+      </div>
 
-      {/* Key Metrics Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16, marginBottom: 24 }}>
+      {/* Minimal Key Metrics */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16 }}>
         <div style={{ padding: 16, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fafafa' }}>
           <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}>Overall Hit Rate</div>
           <div style={{ fontSize: 20, fontWeight: 'bold', color: '#374151' }}>
-            {(blockLevelStats.overallHitRate * 100).toFixed(2)}%
+            {(stats.avgHitRate * 100).toFixed(2)}%
+          </div>
+          <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 4 }}>
+            {stats.totalHits.toLocaleString()} / {stats.totalTrials.toLocaleString()} trials
+          </div>
+        </div>
+
+        <div style={{ padding: 16, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fafafa' }}>
+          <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}>Sessions Analyzed</div>
+          <div style={{ fontSize: 20, fontWeight: 'bold', color: '#374151' }}>
+            {sessions.length}
+          </div>
+          <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 4 }}>
+            {sessions.reduce((sum, s) => sum + (s.minutes?.length || 0), 0)} total blocks
           </div>
         </div>
 
         <div style={{ padding: 16, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fafafa' }}>
           <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}>Z-Score vs Chance</div>
-          <div style={{ fontSize: 20, fontWeight: 'bold', color: blockLevelStats.zScore > 0 ? '#059669' : '#dc2626' }}>
-            {blockLevelStats.zScore.toFixed(3)}
+          <div style={{ fontSize: 20, fontWeight: 'bold', color: stats.z > 0 ? '#059669' : '#dc2626' }}>
+            {stats.z.toFixed(3)}
+          </div>
+          <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 4 }}>
+            p = {stats.p.toFixed(4)}
           </div>
         </div>
-
-        <div style={{ padding: 16, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fafafa' }}>
-          <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}>Total Blocks Analyzed</div>
-          <div style={{ fontSize: 20, fontWeight: 'bold', color: '#374151' }}>
-            {blockLevelStats.totalBlocks}
-          </div>
-        </div>
-
-        <PBadge
-          label="Block Performance vs Chance"
-          p={blockLevelStats.pValue}
-          style={{ padding: 16 }}
-        />
-      </div>
-
-      {/* Average Performance by Minute Chart */}
-      <h4 style={{ marginBottom: 12, color: '#374151' }}>Average Performance by Minute</h4>
-      <div style={{ fontSize: 14, color: '#6b7280', marginBottom: 8 }}>
-        Average hit rate per minute across all sessions (learning/fatigue curve)
-      </div>
-      <AveragePerformanceChart
-        averageData={blockLevelStats.averageByMinute}
-        ghostData={blockLevelStats.ghostAverageByMinute}
-      />
-    </div>
-  );
-}
-
-// Average performance by minute chart (learning/fatigue curve)
-function AveragePerformanceChart({ averageData, ghostData }) {
-  if (!averageData || averageData.length === 0) {
-    return (
-      <div style={{ padding: 20, textAlign: 'center', color: '#6b7280', border: '1px solid #e5e7eb', borderRadius: 6 }}>
-        No minute-level data available
-      </div>
-    );
-  }
-
-  const chartWidth = Math.min(800, averageData.length * 40 + 100);
-  const chartHeight = 200;
-
-  return (
-    <div style={{
-      padding: 20,
-      border: '1px solid #e5e7eb',
-      borderRadius: 8,
-      background: '#fafafa',
-      overflowX: 'auto'
-    }}>
-      <svg width={chartWidth} height={chartHeight} style={{ background: 'white', borderRadius: 6 }}>
-        {/* Grid lines */}
-        {[0.4, 0.45, 0.5, 0.55, 0.6].map(rate => {
-          const y = chartHeight - 40 - ((rate - 0.4) / 0.2) * (chartHeight - 80);
-          return (
-            <g key={rate}>
-              <line x1={50} y1={y} x2={chartWidth - 20} y2={y} stroke="#e5e7eb" strokeWidth={1} />
-              <text x={45} y={y + 4} textAnchor="end" fontSize={10} fill="#6b7280">
-                {(rate * 100).toFixed(0)}%
-              </text>
-            </g>
-          );
-        })}
-
-        {/* 50% chance line */}
-        <line x1={50} y1={chartHeight - 40 - ((0.5 - 0.4) / 0.2) * (chartHeight - 80)}
-              x2={chartWidth - 20} y2={chartHeight - 40 - ((0.5 - 0.4) / 0.2) * (chartHeight - 80)}
-              stroke="#dc2626" strokeWidth={2} strokeDasharray="5,5" />
-
-        {/* Subject data line */}
-        <polyline
-          fill="none"
-          stroke="#0369a1"
-          strokeWidth={2}
-          points={averageData.map((point, index) => {
-            const x = 50 + (index / (averageData.length - 1)) * (chartWidth - 70);
-            const y = chartHeight - 40 - ((point.avgHitRate - 0.4) / 0.2) * (chartHeight - 80);
-            return `${x},${Math.max(20, Math.min(chartHeight - 40, y))}`;
-          }).join(' ')}
-        />
-
-        {/* Ghost data line */}
-        {ghostData && ghostData.length > 0 && (
-          <polyline
-            fill="none"
-            stroke="#dc2626"
-            strokeWidth={2}
-            strokeDasharray="3,3"
-            points={ghostData.map((point, index) => {
-              const x = 50 + (index / (ghostData.length - 1)) * (chartWidth - 70);
-              const y = chartHeight - 40 - ((point.avgHitRate - 0.4) / 0.2) * (chartHeight - 80);
-              return `${x},${Math.max(20, Math.min(chartHeight - 40, y))}`;
-            }).join(' ')}
-          />
-        )}
-
-        {/* Subject data points */}
-        {averageData.map((point, index) => {
-          const x = 50 + (index / (averageData.length - 1)) * (chartWidth - 70);
-          const y = chartHeight - 40 - ((point.avgHitRate - 0.4) / 0.2) * (chartHeight - 80);
-          const clampedY = Math.max(20, Math.min(chartHeight - 40, y));
-
-          return (
-            <g key={`subject-${index}`}>
-              <circle cx={x} cy={clampedY} r={3} fill="#0369a1" />
-              <text x={x} y={chartHeight - 10} textAnchor="middle" fontSize={10} fill="#6b7280">
-                {point.minuteIndex + 1}
-              </text>
-            </g>
-          );
-        })}
-
-        {/* Ghost data points */}
-        {ghostData && ghostData.length > 0 && ghostData.map((point, index) => {
-          const x = 50 + (index / (ghostData.length - 1)) * (chartWidth - 70);
-          const y = chartHeight - 40 - ((point.avgHitRate - 0.4) / 0.2) * (chartHeight - 80);
-          const clampedY = Math.max(20, Math.min(chartHeight - 40, y));
-
-          return (
-            <g key={`ghost-${index}`}>
-              <circle cx={x} cy={clampedY} r={2} fill="#dc2626" />
-            </g>
-          );
-        })}
-
-        {/* Axis labels */}
-        <text x={chartWidth / 2} y={chartHeight - 5} textAnchor="middle" fontSize={12} fill="#374151">
-          Minute
-        </text>
-        <text x={15} y={chartHeight / 2} textAnchor="middle" fontSize={12} fill="#374151" transform={`rotate(-90, 15, ${chartHeight / 2})`}>
-          Hit Rate
-        </text>
-      </svg>
-
-      <div style={{ marginTop: 12, fontSize: 12, color: '#6b7280', textAlign: 'center' }}>
-        Shows whether performance improves (learning) or declines (fatigue) over the 18-minute session
-      </div>
-
-      {/* Legend */}
-      <div style={{ marginTop: 8, display: 'flex', justifyContent: 'center', gap: 16, fontSize: 12 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <div style={{ width: 12, height: 2, backgroundColor: '#0369a1' }}></div>
-          <span style={{ color: '#374151' }}>Subject Performance</span>
-        </div>
-        {ghostData && ghostData.length > 0 && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <div style={{ width: 12, height: 2, backgroundColor: '#dc2626', borderTop: '2px dashed #dc2626' }}></div>
-            <span style={{ color: '#374151' }}>Ghost Control</span>
-          </div>
-        )}
       </div>
     </div>
   );
@@ -2268,6 +2072,8 @@ function UnifiedTemporalControlAnalysis({ sessions }) {
 // Entropy Signatures Component
 function EntropySignatures({ sessions }) {
   const entropyMetrics = useMemo(() => {
+    console.log('🔍 EntropySignatures: Processing', sessions.length, 'sessions');
+
     const entropyValues = [];
     const entropyBySession = [];
 
@@ -2280,6 +2086,18 @@ function EntropySignatures({ sessions }) {
       (session.minutes || []).forEach(minute => {
         // Extract entropy windows from both old and new structure
         const subjWindows = minute.entropy?.new_windows_subj || [];
+
+        // Debug logging
+        if (minute.entropy) {
+          console.log('📊 Entropy data found in minute:', {
+            minuteIdx: minute.idx,
+            sessionId: session.id,
+            new_windows_subj_count: subjWindows.length,
+            sample_window: subjWindows[0],
+            block_entropy_subj: minute.entropy.block_entropy_subj,
+            block_entropy_ghost: minute.entropy.block_entropy_ghost
+          });
+        }
         subjWindows.forEach(window => {
           let entropyValue, windowIndex;
           if (typeof window === 'number') {
@@ -2324,7 +2142,14 @@ function EntropySignatures({ sessions }) {
       }
     });
 
+    console.log('📊 EntropySignatures Summary:', {
+      totalEntropyValues: entropyValues.length,
+      sessionsWithEntropy: entropyBySession.length,
+      totalSessions: sessions.length
+    });
+
     if (entropyValues.length === 0) {
+      console.warn('⚠️ No entropy data found - returning message');
       return { message: 'No entropy data available for analysis' };
     }
 
@@ -2375,6 +2200,123 @@ function EntropySignatures({ sessions }) {
         }
       });
     });
+
+    // TEST 1 (H1): Mean Entropy Comparison - Subject vs Ghost (Paired t-test)
+    const sessionPairs = sessions.map(session => {
+      const subjEntropies = (session.minutes || [])
+        .map(m => m.entropy?.block_entropy_subj)
+        .filter(e => e != null && isFinite(e));
+      const ghostEntropies = (session.minutes || [])
+        .map(m => m.entropy?.block_entropy_ghost)
+        .filter(e => e != null && isFinite(e));
+
+      if (subjEntropies.length === 0 || ghostEntropies.length === 0) return null;
+
+      const subjMean = subjEntropies.reduce((a, b) => a + b, 0) / subjEntropies.length;
+      const ghostMean = ghostEntropies.reduce((a, b) => a + b, 0) / ghostEntropies.length;
+
+      return {
+        sessionId: session.id,
+        subjMean,
+        ghostMean,
+        diff: subjMean - ghostMean // Negative = subject < ghost (suppression)
+      };
+    }).filter(p => p !== null);
+
+    let h1_entropySuppressionTest = null;
+    if (sessionPairs.length > 1) {
+      const diffs = sessionPairs.map(p => p.diff);
+      const meanDiff = diffs.reduce((a, b) => a + b, 0) / diffs.length;
+      const sdDiff = Math.sqrt(
+        diffs.reduce((sum, d) => sum + Math.pow(d - meanDiff, 2), 0) / (diffs.length - 1)
+      );
+      const t = (meanDiff * Math.sqrt(diffs.length)) / sdDiff;
+      const df = diffs.length - 1;
+      const p = twoSidedP(t); // Using existing helper
+
+      h1_entropySuppressionTest = {
+        n: diffs.length,
+        meanDiff,
+        sdDiff,
+        t,
+        df,
+        p,
+        significant: p < 0.05,
+        interpretation: meanDiff < 0
+          ? 'Subject entropy < Ghost entropy (suppression detected)'
+          : 'Subject entropy ≥ Ghost entropy (no suppression)'
+      };
+    }
+
+    // TEST 2 (H2): Entropy Window Autocorrelation with Permutation Test
+    const computeEntropyWindowAutocorrelation = (entropyWindows, nPermutations = 10000) => {
+      const values = entropyWindows.map(w => w.entropy).filter(e => isFinite(e));
+      if (values.length < 2) return null;
+
+      // Lag-1 correlation
+      const lag1Corr = (arr) => {
+        const pairs = arr.slice(0, -1).map((val, i) => [val, arr[i + 1]]);
+        const n = pairs.length;
+        if (n === 0) return 0;
+
+        const meanX = pairs.reduce((s, [x]) => s + x, 0) / n;
+        const meanY = pairs.reduce((s, [, y]) => s + y, 0) / n;
+
+        let num = 0, denomX = 0, denomY = 0;
+        pairs.forEach(([x, y]) => {
+          num += (x - meanX) * (y - meanY);
+          denomX += (x - meanX) ** 2;
+          denomY += (y - meanY) ** 2;
+        });
+
+        return denomX === 0 || denomY === 0 ? 0 : num / Math.sqrt(denomX * denomY);
+      };
+
+      const observedR = lag1Corr(values);
+
+      // Permutation test
+      let countGreaterOrEqual = 0;
+      for (let i = 0; i < nPermutations; i++) {
+        const shuffled = [...values].sort(() => Math.random() - 0.5);
+        const nullR = lag1Corr(shuffled);
+        if (nullR >= observedR) countGreaterOrEqual++;
+      }
+
+      const p = countGreaterOrEqual / nPermutations;
+
+      return {
+        observedR,
+        p,
+        nPermutations,
+        windowCount: values.length,
+        significant: p < 0.05
+      };
+    };
+
+    // Compute autocorrelation per session, then aggregate
+    const h2_autocorrResults = sessions.map(session => {
+      const windows = [];
+      (session.minutes || []).forEach(minute => {
+        const subjWindows = minute.entropy?.new_windows_subj || [];
+        windows.push(...subjWindows);
+      });
+
+      if (windows.length < 2) return null;
+
+      return {
+        sessionId: session.id,
+        ...computeEntropyWindowAutocorrelation(windows)
+      };
+    }).filter(r => r !== null);
+
+    const h2_overallAutocorr = h2_autocorrResults.length > 0 ? {
+      sessions: h2_autocorrResults.length,
+      meanR: h2_autocorrResults.reduce((s, r) => s + r.observedR, 0) / h2_autocorrResults.length,
+      significantSessions: h2_autocorrResults.filter(r => r.significant).length,
+      interpretation: h2_autocorrResults.filter(r => r.significant).length > 0
+        ? 'Positive autocorrelation detected (redundancy/feedback)'
+        : 'No significant autocorrelation'
+    } : null;
 
     // Condition comparison
     const primeEntropies = entropyBySession.filter(s => s.condition === 'prime').flatMap(s => s.entropies);
@@ -2506,7 +2448,10 @@ function EntropySignatures({ sessions }) {
       neutralMean,
       conditionDiff: primeMean - neutralMean,
       entropyBySession,
-      trialLevelEntropy // NEW: Include trial-level entropy analysis
+      trialLevelEntropy, // Trial-level entropy analysis
+      h1_entropySuppressionTest, // TEST 1: Subject vs Ghost paired t-test
+      h2_autocorrResults, // TEST 2: Window autocorrelation (per session)
+      h2_overallAutocorr // TEST 2: Aggregated autocorrelation stats
     };
   }, [sessions]);
 
@@ -2551,6 +2496,73 @@ function EntropySignatures({ sessions }) {
           </div>
         </div>
       </div>
+
+      {/* H1: Entropy Suppression Test (Subject vs Ghost Paired t-test) */}
+      {entropyMetrics.h1_entropySuppressionTest && (
+        <div style={{ marginTop: 24, padding: 20, border: '2px solid #dc2626', borderRadius: 8, background: '#fef2f2' }}>
+          <h4 style={{ marginBottom: 12, color: '#dc2626', fontWeight: 'bold' }}>
+            H1: Entropy Suppression Test (Subject vs Ghost)
+          </h4>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
+            <div>
+              <div style={{ fontSize: 11, color: '#6b7280' }}>Sessions (n)</div>
+              <div style={{ fontSize: 18, fontWeight: 'bold' }}>{entropyMetrics.h1_entropySuppressionTest.n}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: '#6b7280' }}>Mean Diff (Subj - Ghost)</div>
+              <div style={{ fontSize: 18, fontWeight: 'bold' }}>
+                {entropyMetrics.h1_entropySuppressionTest.meanDiff.toFixed(6)}
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: '#6b7280' }}>t-statistic</div>
+              <div style={{ fontSize: 18, fontWeight: 'bold' }}>
+                {entropyMetrics.h1_entropySuppressionTest.t.toFixed(3)}
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: '#6b7280' }}>p-value</div>
+              <div style={{ fontSize: 18, fontWeight: 'bold', color: entropyMetrics.h1_entropySuppressionTest.significant ? '#dc2626' : '#374151' }}>
+                {entropyMetrics.h1_entropySuppressionTest.p.toFixed(4)}
+              </div>
+            </div>
+          </div>
+          <div style={{ marginTop: 12, padding: 12, background: '#fff', borderRadius: 4, fontSize: 13 }}>
+            <strong>Result:</strong> {entropyMetrics.h1_entropySuppressionTest.interpretation}
+            {entropyMetrics.h1_entropySuppressionTest.significant && ' (p < 0.05)'}
+          </div>
+        </div>
+      )}
+
+      {/* H2: Entropy Window Autocorrelation Test */}
+      {entropyMetrics.h2_overallAutocorr && (
+        <div style={{ marginTop: 24, padding: 20, border: '2px solid #2563eb', borderRadius: 8, background: '#eff6ff' }}>
+          <h4 style={{ marginBottom: 12, color: '#2563eb', fontWeight: 'bold' }}>
+            H2: Entropy Window Autocorrelation (Lag-1 with Permutation Test)
+          </h4>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
+            <div>
+              <div style={{ fontSize: 11, color: '#6b7280' }}>Sessions Analyzed</div>
+              <div style={{ fontSize: 18, fontWeight: 'bold' }}>{entropyMetrics.h2_overallAutocorr.sessions}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: '#6b7280' }}>Mean r (Lag-1)</div>
+              <div style={{ fontSize: 18, fontWeight: 'bold' }}>
+                {entropyMetrics.h2_overallAutocorr.meanR.toFixed(4)}
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: '#6b7280' }}>Significant Sessions</div>
+              <div style={{ fontSize: 18, fontWeight: 'bold', color: entropyMetrics.h2_overallAutocorr.significantSessions > 0 ? '#2563eb' : '#374151' }}>
+                {entropyMetrics.h2_overallAutocorr.significantSessions} / {entropyMetrics.h2_overallAutocorr.sessions}
+              </div>
+            </div>
+          </div>
+          <div style={{ marginTop: 12, padding: 12, background: '#fff', borderRadius: 4, fontSize: 13 }}>
+            <strong>Result:</strong> {entropyMetrics.h2_overallAutocorr.interpretation}
+          </div>
+        </div>
+      )}
 
       {/* Trial-Level Entropy Analysis */}
       {entropyMetrics.trialLevelEntropy && entropyMetrics.trialLevelEntropy.available && (
@@ -3100,6 +3112,23 @@ function ControlValidations({ sessions, mappingFilter }) {
 
       // Session-level bit pattern independence test (proper pooling to avoid multiple testing)
       const bitIndependenceTests = [];
+      const pearsonCorrelations = [];
+
+      // Helper function to calculate Pearson correlation coefficient
+      const pearsonCorrelation = (arr1, arr2) => {
+        if (arr1.length !== arr2.length || arr1.length < 2) return null;
+        const n = arr1.length;
+        const sum1 = arr1.reduce((a,b) => a+b, 0);
+        const sum2 = arr2.reduce((a,b) => a+b, 0);
+        const sum1Sq = arr1.reduce((a,b) => a + b*b, 0);
+        const sum2Sq = arr2.reduce((a,b) => a + b*b, 0);
+        const pSum = arr1.reduce((a,b,i) => a + b * arr2[i], 0);
+
+        const num = pSum - (sum1 * sum2 / n);
+        const den = Math.sqrt((sum1Sq - sum1*sum1/n) * (sum2Sq - sum2*sum2/n));
+
+        return den === 0 ? 0 : num / den;
+      };
 
       // Helper function to calculate chi-square for a contingency table
       const calculateChiSquare = (table, sampleSize) => {
@@ -3126,7 +3155,37 @@ function ControlValidations({ sessions, mappingFilter }) {
           if (mappingFilter === 'ring' && minute.mapping_type !== 'low_entropy') return;
           if (mappingFilter === 'mosaic' && minute.mapping_type !== 'high_entropy') return;
 
-          if (minute.subjectBitSequence && minute.ghostBitSequence) {
+          // Try to use byte data first (new format)
+          const subjectBytes = minute.trial_data?.subject_bytes;
+          const ghostBytes = minute.trial_data?.ghost_bytes;
+
+          if (subjectBytes && ghostBytes) {
+            console.log('✅ Using BYTE data for All Tests:', {
+              sessionId: session.id,
+              blockIdx: minute.idx,
+              numBytes: subjectBytes.length,
+              firstFewBytes: subjectBytes.slice(0, 3)
+            });
+            // Extract all 8 bits from each byte
+            subjectBytes.forEach(byte => {
+              const bits8 = byte.toString(2).padStart(8, '0');
+              for (let bitPos = 0; bitPos < 8; bitPos++) {
+                allSubjectBits.push(parseInt(bits8[bitPos]));
+              }
+            });
+            ghostBytes.forEach(byte => {
+              const bits8 = byte.toString(2).padStart(8, '0');
+              for (let bitPos = 0; bitPos < 8; bitPos++) {
+                allGhostBits.push(parseInt(bits8[bitPos]));
+              }
+            });
+          } else if (minute.subjectBitSequence && minute.ghostBitSequence) {
+            console.log('⚠️ FALLBACK to old BIT data for All Tests:', {
+              sessionId: session.id,
+              blockIdx: minute.idx,
+              numBits: minute.subjectBitSequence.length
+            });
+            // Fallback to old single-bit format
             for (let i = 0; i < minute.subjectBitSequence.length; i++) {
               const subjectBit = minute.subjectBitSequence[i];
               const ghostBit = minute.ghostBitSequence[i];
@@ -3160,6 +3219,7 @@ function ControlValidations({ sessions, mappingFilter }) {
               pValue: allResults.pValue,
               trials: allSubjectBits.length,
               significant: allResults.pValue < 0.05,
+              contingencyTable: allTable,
               binauralBeats: session.post_survey?.binaural_beats || 'Unknown',
               primeCondition: session.prime_condition || 'unknown'
             });
@@ -3174,28 +3234,80 @@ function ControlValidations({ sessions, mappingFilter }) {
         let evenSubjectBits = [];
         let evenGhostBits = [];
 
-        // Separate odd and even trials within each minute (trial numbering resets per minute)
-        // NOTE: Now reading from trials subcollection since we removed redundant bit sequences
+        // Separate trials by strategy using the trial_strategies array
         session.minutes?.forEach(minute => {
           // Filter by mapping type at the block level
           if (mappingFilter === 'ring' && minute.mapping_type !== 'low_entropy') return;
           if (mappingFilter === 'mosaic' && minute.mapping_type !== 'high_entropy') return;
 
-          if (minute.trials && Array.isArray(minute.trials)) {
-            minute.trials.forEach(trial => {
-              // Skip trials with null/undefined bits
-              if (trial.subjectBit == null || trial.ghostBit == null) return;
+          const strategies = minute.trial_data?.trial_strategies;
+          const subjectBytes = minute.trial_data?.subject_bytes;
+          const ghostBytes = minute.trial_data?.ghost_bytes;
 
-              const trialNumber = trial.trialIndex + 1; // 1-indexed trial number within this minute
+          // Fallback to old bit-based data if bytes not available
+          if (!subjectBytes || !ghostBytes) {
+            const subjectBits = minute.trial_data?.subject_bits || minute.subjectBitSequence;
+            const ghostBits = minute.trial_data?.ghost_bits || minute.ghostBitSequence;
+            if (strategies && subjectBits && ghostBits) {
+              for (let i = 0; i < strategies.length; i++) {
+                if (strategies[i] === 1) {
+                  oddSubjectBits.push(subjectBits[i]);
+                  oddGhostBits.push(ghostBits[i]);
+                } else if (strategies[i] === 0) {
+                  evenSubjectBits.push(subjectBits[i]);
+                  evenGhostBits.push(ghostBits[i]);
+                }
+              }
+            }
+            return;
+          }
 
-              if (trialNumber % 2 === 1) {
-                // Odd trial within this minute - should use alternating bits
-                oddSubjectBits.push(trial.subjectBit);
-                oddGhostBits.push(trial.ghostBit);
-              } else {
-                // Even trial within this minute - should use independent bits
-                evenSubjectBits.push(trial.subjectBit);
-                evenGhostBits.push(trial.ghostBit);
+          // New byte-based approach: extract all 8 bits from each byte
+          if (strategies && subjectBytes && ghostBytes) {
+            // First, separate trials by strategy and collect bytes
+            const oddSubjectBytes = [];
+            const oddGhostBytes = [];
+            const evenSubjectBytes = [];
+            const evenGhostBytes = [];
+
+            for (let i = 0; i < strategies.length; i++) {
+              if (strategies[i] === 1) {
+                // Odd trials (alternating)
+                oddSubjectBytes.push(subjectBytes[i]);
+                oddGhostBytes.push(ghostBytes[i]);
+              } else if (strategies[i] === 0) {
+                // Even trials
+                evenSubjectBytes.push(subjectBytes[i]);
+                evenGhostBytes.push(ghostBytes[i]);
+              }
+            }
+
+            // Now convert bytes to bits - create flat arrays
+            // For odd trials
+            oddSubjectBytes.forEach(byte => {
+              const bits8 = byte.toString(2).padStart(8, '0');
+              for (let bitPos = 0; bitPos < 8; bitPos++) {
+                oddSubjectBits.push(parseInt(bits8[bitPos]));
+              }
+            });
+            oddGhostBytes.forEach(byte => {
+              const bits8 = byte.toString(2).padStart(8, '0');
+              for (let bitPos = 0; bitPos < 8; bitPos++) {
+                oddGhostBits.push(parseInt(bits8[bitPos]));
+              }
+            });
+
+            // For even trials
+            evenSubjectBytes.forEach(byte => {
+              const bits8 = byte.toString(2).padStart(8, '0');
+              for (let bitPos = 0; bitPos < 8; bitPos++) {
+                evenSubjectBits.push(parseInt(bits8[bitPos]));
+              }
+            });
+            evenGhostBytes.forEach(byte => {
+              const bits8 = byte.toString(2).padStart(8, '0');
+              for (let bitPos = 0; bitPos < 8; bitPos++) {
+                evenGhostBits.push(parseInt(bits8[bitPos]));
               }
             });
           }
@@ -3206,6 +3318,14 @@ function ControlValidations({ sessions, mappingFilter }) {
           const oddTable = createContingencyTable(oddSubjectBits, oddGhostBits);
           const oddResults = calculateChiSquare(oddTable, oddSubjectBits.length);
 
+          console.log('📊 ODD TRIALS (Alternating):', {
+            sessionId: session.id,
+            trials: oddSubjectBits.length,
+            contingencyTable: oddTable,
+            chiSquare: oddResults.chiSquare,
+            pValue: oddResults.pValue
+          });
+
           if (oddResults) {
             bitIndependenceTests.push({
               sessionId: session.id,
@@ -3214,6 +3334,7 @@ function ControlValidations({ sessions, mappingFilter }) {
               pValue: oddResults.pValue,
               trials: oddSubjectBits.length,
               significant: oddResults.pValue < 0.05,
+              contingencyTable: oddTable,
               binauralBeats: session.post_survey?.binaural_beats || 'Unknown',
               primeCondition: session.prime_condition || 'unknown'
             });
@@ -3225,6 +3346,14 @@ function ControlValidations({ sessions, mappingFilter }) {
           const evenTable = createContingencyTable(evenSubjectBits, evenGhostBits);
           const evenResults = calculateChiSquare(evenTable, evenSubjectBits.length);
 
+          console.log('📊 EVEN TRIALS (Independent):', {
+            sessionId: session.id,
+            trials: evenSubjectBits.length,
+            contingencyTable: evenTable,
+            chiSquare: evenResults.chiSquare,
+            pValue: evenResults.pValue
+          });
+
           if (evenResults) {
             bitIndependenceTests.push({
               sessionId: session.id,
@@ -3233,8 +3362,28 @@ function ControlValidations({ sessions, mappingFilter }) {
               pValue: evenResults.pValue,
               trials: evenSubjectBits.length,
               significant: evenResults.pValue < 0.05,
+              contingencyTable: evenTable,
               binauralBeats: session.post_survey?.binaural_beats || 'Unknown',
               primeCondition: session.prime_condition || 'unknown'
+            });
+          }
+        }
+
+        // Calculate Pearson correlation for this session
+        if (allSubjectBits.length >= 50) {
+          const r = pearsonCorrelation(allSubjectBits, allGhostBits);
+          if (r !== null) {
+            pearsonCorrelations.push({
+              sessionId: session.id,
+              r: r,
+              trials: allSubjectBits.length,
+              binauralBeats: session.post_survey?.binaural_beats || 'Unknown',
+              primeCondition: session.prime_condition || 'unknown'
+            });
+            console.log('📈 PEARSON CORRELATION:', {
+              sessionId: session.id,
+              r: r.toFixed(4),
+              trials: allSubjectBits.length
             });
           }
         }
@@ -3269,6 +3418,13 @@ function ControlValidations({ sessions, mappingFilter }) {
           correlation: entropyCorrelation,
           pairs: entropyCorrelations.length
         },
+        pearsonCorrelation: pearsonCorrelations.length > 0 ? {
+          sessions: pearsonCorrelations.length,
+          avgR: pearsonCorrelations.reduce((sum, p) => sum + p.r, 0) / pearsonCorrelations.length,
+          minR: Math.min(...pearsonCorrelations.map(p => p.r)),
+          maxR: Math.max(...pearsonCorrelations.map(p => p.r)),
+          bySession: pearsonCorrelations
+        } : null,
         bitIndependence: bitIndependenceTests.length > 0 ? {
           // Overall stats for currently displayed filter
           tests: bitIndependenceTests.length,
@@ -3280,33 +3436,153 @@ function ControlValidations({ sessions, mappingFilter }) {
           byTestType: {
             all: (() => {
               const allTests = bitIndependenceTests.filter(t => t.testType === 'all');
-              return allTests.length > 0 ? {
+              if (allTests.length === 0) return null;
+
+              // Aggregate contingency tables
+              const aggregatedTable = { '00': 0, '01': 0, '10': 0, '11': 0 };
+              let totalBits = 0;
+              allTests.forEach(test => {
+                if (test.contingencyTable) {
+                  aggregatedTable['00'] += test.contingencyTable['00'];
+                  aggregatedTable['01'] += test.contingencyTable['01'];
+                  aggregatedTable['10'] += test.contingencyTable['10'];
+                  aggregatedTable['11'] += test.contingencyTable['11'];
+                  totalBits += test.trials;
+                }
+              });
+
+              // Calculate percentages and max deviation
+              const expectedPct = 25.0;
+              const actualPcts = {
+                '00': (aggregatedTable['00'] / totalBits * 100),
+                '01': (aggregatedTable['01'] / totalBits * 100),
+                '10': (aggregatedTable['10'] / totalBits * 100),
+                '11': (aggregatedTable['11'] / totalBits * 100)
+              };
+              const deviations = {
+                '00': actualPcts['00'] - expectedPct,
+                '01': actualPcts['01'] - expectedPct,
+                '10': actualPcts['10'] - expectedPct,
+                '11': actualPcts['11'] - expectedPct
+              };
+              const maxDeviation = Math.max(
+                Math.abs(deviations['00']),
+                Math.abs(deviations['01']),
+                Math.abs(deviations['10']),
+                Math.abs(deviations['11'])
+              );
+
+              return {
                 tests: allTests.length,
                 avgChiSquare: allTests.reduce((sum, test) => sum + test.chiSquare, 0) / allTests.length,
                 avgPValue: allTests.reduce((sum, test) => sum + test.pValue, 0) / allTests.length,
                 significantTests: allTests.filter(test => test.significant).length,
-                significantPct: (allTests.filter(test => test.significant).length / allTests.length * 100).toFixed(1)
-              } : null;
+                significantPct: (allTests.filter(test => test.significant).length / allTests.length * 100).toFixed(1),
+                contingencyTable: aggregatedTable,
+                actualPcts,
+                deviations,
+                maxDeviation
+              };
             })(),
             alternating: (() => {
               const altTests = bitIndependenceTests.filter(t => t.testType === 'alternating');
-              return altTests.length > 0 ? {
+              if (altTests.length === 0) return null;
+
+              // Aggregate contingency tables
+              const aggregatedTable = { '00': 0, '01': 0, '10': 0, '11': 0 };
+              let totalBits = 0;
+              altTests.forEach(test => {
+                if (test.contingencyTable) {
+                  aggregatedTable['00'] += test.contingencyTable['00'];
+                  aggregatedTable['01'] += test.contingencyTable['01'];
+                  aggregatedTable['10'] += test.contingencyTable['10'];
+                  aggregatedTable['11'] += test.contingencyTable['11'];
+                  totalBits += test.trials;
+                }
+              });
+
+              // Calculate percentages and max deviation
+              const expectedPct = 25.0;
+              const actualPcts = {
+                '00': (aggregatedTable['00'] / totalBits * 100),
+                '01': (aggregatedTable['01'] / totalBits * 100),
+                '10': (aggregatedTable['10'] / totalBits * 100),
+                '11': (aggregatedTable['11'] / totalBits * 100)
+              };
+              const deviations = {
+                '00': actualPcts['00'] - expectedPct,
+                '01': actualPcts['01'] - expectedPct,
+                '10': actualPcts['10'] - expectedPct,
+                '11': actualPcts['11'] - expectedPct
+              };
+              const maxDeviation = Math.max(
+                Math.abs(deviations['00']),
+                Math.abs(deviations['01']),
+                Math.abs(deviations['10']),
+                Math.abs(deviations['11'])
+              );
+
+              return {
                 tests: altTests.length,
                 avgChiSquare: altTests.reduce((sum, test) => sum + test.chiSquare, 0) / altTests.length,
                 avgPValue: altTests.reduce((sum, test) => sum + test.pValue, 0) / altTests.length,
                 significantTests: altTests.filter(test => test.significant).length,
-                significantPct: (altTests.filter(test => test.significant).length / altTests.length * 100).toFixed(1)
-              } : null;
+                significantPct: (altTests.filter(test => test.significant).length / altTests.length * 100).toFixed(1),
+                contingencyTable: aggregatedTable,
+                actualPcts,
+                deviations,
+                maxDeviation
+              };
             })(),
             independent: (() => {
               const indTests = bitIndependenceTests.filter(t => t.testType === 'independent');
-              return indTests.length > 0 ? {
+              if (indTests.length === 0) return null;
+
+              // Aggregate contingency tables
+              const aggregatedTable = { '00': 0, '01': 0, '10': 0, '11': 0 };
+              let totalBits = 0;
+              indTests.forEach(test => {
+                if (test.contingencyTable) {
+                  aggregatedTable['00'] += test.contingencyTable['00'];
+                  aggregatedTable['01'] += test.contingencyTable['01'];
+                  aggregatedTable['10'] += test.contingencyTable['10'];
+                  aggregatedTable['11'] += test.contingencyTable['11'];
+                  totalBits += test.trials;
+                }
+              });
+
+              // Calculate percentages and max deviation
+              const expectedPct = 25.0;
+              const actualPcts = {
+                '00': (aggregatedTable['00'] / totalBits * 100),
+                '01': (aggregatedTable['01'] / totalBits * 100),
+                '10': (aggregatedTable['10'] / totalBits * 100),
+                '11': (aggregatedTable['11'] / totalBits * 100)
+              };
+              const deviations = {
+                '00': actualPcts['00'] - expectedPct,
+                '01': actualPcts['01'] - expectedPct,
+                '10': actualPcts['10'] - expectedPct,
+                '11': actualPcts['11'] - expectedPct
+              };
+              const maxDeviation = Math.max(
+                Math.abs(deviations['00']),
+                Math.abs(deviations['01']),
+                Math.abs(deviations['10']),
+                Math.abs(deviations['11'])
+              );
+
+              return {
                 tests: indTests.length,
                 avgChiSquare: indTests.reduce((sum, test) => sum + test.chiSquare, 0) / indTests.length,
                 avgPValue: indTests.reduce((sum, test) => sum + test.pValue, 0) / indTests.length,
                 significantTests: indTests.filter(test => test.significant).length,
-                significantPct: (indTests.filter(test => test.significant).length / indTests.length * 100).toFixed(1)
-              } : null;
+                significantPct: (indTests.filter(test => test.significant).length / indTests.length * 100).toFixed(1),
+                contingencyTable: aggregatedTable,
+                actualPcts,
+                deviations,
+                maxDeviation
+              };
             })()
           },
           significantPct: (bitIndependenceTests.filter(test => test.significant).length / bitIndependenceTests.length) * 100
@@ -3495,6 +3771,58 @@ function ControlValidations({ sessions, mappingFilter }) {
             </div>
           </div>
 
+          {/* Pearson Correlation */}
+          {controlMetrics.trialLevelValidation.pearsonCorrelation && (
+            <div style={{ marginBottom: 20 }}>
+              <h5 style={{ marginBottom: 12, color: '#374151' }}>Pearson Correlation (Subject-Ghost Bits)</h5>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 16 }}>
+                <div style={{ padding: 16, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff' }}>
+                  <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}>Average r</div>
+                  <div style={{ fontSize: 18, fontWeight: 'bold', color: Math.abs(controlMetrics.trialLevelValidation.pearsonCorrelation.avgR) < 0.1 ? '#059669' : '#dc2626' }}>
+                    {controlMetrics.trialLevelValidation.pearsonCorrelation.avgR.toFixed(4)}
+                  </div>
+                  <div style={{ fontSize: 10, color: '#6b7280' }}>
+                    r ≈ 0 = Independent
+                  </div>
+                </div>
+                <div style={{ padding: 16, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff' }}>
+                  <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}>Min r</div>
+                  <div style={{ fontSize: 18, fontWeight: 'bold', color: '#374151' }}>
+                    {controlMetrics.trialLevelValidation.pearsonCorrelation.minR.toFixed(4)}
+                  </div>
+                </div>
+                <div style={{ padding: 16, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff' }}>
+                  <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}>Max r</div>
+                  <div style={{ fontSize: 18, fontWeight: 'bold', color: '#374151' }}>
+                    {controlMetrics.trialLevelValidation.pearsonCorrelation.maxR.toFixed(4)}
+                  </div>
+                </div>
+                <div style={{ padding: 16, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff' }}>
+                  <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}>Sessions</div>
+                  <div style={{ fontSize: 18, fontWeight: 'bold', color: '#374151' }}>
+                    {controlMetrics.trialLevelValidation.pearsonCorrelation.sessions}
+                  </div>
+                </div>
+              </div>
+
+              {/* Per-session details */}
+              <div style={{ marginTop: 12, fontSize: 12 }}>
+                <details>
+                  <summary style={{ cursor: 'pointer', color: '#0369a1', fontWeight: 'bold' }}>
+                    View r values per session
+                  </summary>
+                  <div style={{ marginTop: 8, padding: 12, background: '#f9fafb', borderRadius: 6 }}>
+                    {controlMetrics.trialLevelValidation.pearsonCorrelation.bySession.map(session => (
+                      <div key={session.sessionId} style={{ padding: 4, borderBottom: '1px solid #e5e7eb' }}>
+                        <span style={{ fontWeight: 'bold' }}>{session.sessionId}:</span> r = {session.r.toFixed(4)} ({session.trials} trials)
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              </div>
+            </div>
+          )}
+
           {/* Bit Independence Tests */}
           {controlMetrics.trialLevelValidation.bitIndependence && (
             <div style={{ marginBottom: 20 }}>
@@ -3550,6 +3878,11 @@ function ControlValidations({ sessions, mappingFilter }) {
                       <div style={{ fontSize: 14, fontWeight: 'bold', color: controlMetrics.trialLevelValidation.bitIndependence.byTestType.all.significantPct < 10 ? '#059669' : '#dc2626' }}>
                         {controlMetrics.trialLevelValidation.bitIndependence.byTestType.all.significantPct}% significant
                       </div>
+                      {controlMetrics.trialLevelValidation.bitIndependence.byTestType.all.maxDeviation !== undefined && (
+                        <div style={{ fontSize: 14, fontWeight: 'bold', marginTop: 4, color: controlMetrics.trialLevelValidation.bitIndependence.byTestType.all.maxDeviation >= 2.0 ? '#dc2626' : '#059669' }}>
+                          Effect size: {controlMetrics.trialLevelValidation.bitIndependence.byTestType.all.maxDeviation.toFixed(2)}%
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -3569,13 +3902,18 @@ function ControlValidations({ sessions, mappingFilter }) {
                       <div style={{ fontSize: 14, fontWeight: 'bold', color: controlMetrics.trialLevelValidation.bitIndependence.byTestType.alternating.significantPct < 10 ? '#059669' : '#dc2626' }}>
                         {controlMetrics.trialLevelValidation.bitIndependence.byTestType.alternating.significantPct}% significant
                       </div>
+                      {controlMetrics.trialLevelValidation.bitIndependence.byTestType.alternating.maxDeviation !== undefined && (
+                        <div style={{ fontSize: 14, fontWeight: 'bold', marginTop: 4, color: controlMetrics.trialLevelValidation.bitIndependence.byTestType.alternating.maxDeviation >= 2.0 ? '#dc2626' : '#059669' }}>
+                          Effect size: {controlMetrics.trialLevelValidation.bitIndependence.byTestType.alternating.maxDeviation.toFixed(2)}%
+                        </div>
+                      )}
                     </div>
                   )}
 
                   {/* Independent Tests */}
                   {controlMetrics.trialLevelValidation.bitIndependence.byTestType.independent && (
                     <div style={{ padding: 12, border: '1px solid #e5e7eb', borderRadius: 6, background: '#ecfdf5' }}>
-                      <div style={{ fontSize: 12, fontWeight: 'bold', color: '#374151', marginBottom: 8 }}>Independent Bits (Even Trials)</div>
+                      <div style={{ fontSize: 12, fontWeight: 'bold', color: '#374151', marginBottom: 8 }}>Alternating Bits (Even Trials)</div>
                       <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 4 }}>
                         Tests: {controlMetrics.trialLevelValidation.bitIndependence.byTestType.independent.tests}
                       </div>
@@ -3588,6 +3926,11 @@ function ControlValidations({ sessions, mappingFilter }) {
                       <div style={{ fontSize: 14, fontWeight: 'bold', color: controlMetrics.trialLevelValidation.bitIndependence.byTestType.independent.significantPct < 10 ? '#059669' : '#dc2626' }}>
                         {controlMetrics.trialLevelValidation.bitIndependence.byTestType.independent.significantPct}% significant
                       </div>
+                      {controlMetrics.trialLevelValidation.bitIndependence.byTestType.independent.maxDeviation !== undefined && (
+                        <div style={{ fontSize: 14, fontWeight: 'bold', marginTop: 4, color: controlMetrics.trialLevelValidation.bitIndependence.byTestType.independent.maxDeviation >= 2.0 ? '#dc2626' : '#059669' }}>
+                          Effect size: {controlMetrics.trialLevelValidation.bitIndependence.byTestType.independent.maxDeviation.toFixed(2)}%
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -4078,6 +4421,58 @@ function ExploratorySignatures({ sessions }) {
                   ))}
                 </div>
               </div>
+
+              {/* NEW: Differential Slope Analysis */}
+              {temporalEntropyAnalysis.k3_temporalProgression?.differentialSlope && (
+                <div style={{
+                  padding: 16,
+                  border: '2px solid #7c3aed',
+                  borderRadius: 8,
+                  background: temporalEntropyAnalysis.k3_temporalProgression.differentialSlope.significant
+                    ? '#faf5ff' : '#fff',
+                  marginTop: 16
+                }}>
+                  <div style={{ fontSize: 14, fontWeight: 'bold', marginBottom: 12, color: '#374151' }}>
+                    Differential Slope Test (Subject vs Ghost)
+                  </div>
+                  <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 12 }}>
+                    Tests whether subject entropy trajectory differs from ghost control
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 }}>
+                    <div>
+                      <div style={{ fontSize: 11, color: '#6b7280' }}>Subject Trend</div>
+                      <div style={{ fontSize: 16, fontWeight: 600, color: '#7c3aed' }}>
+                        {temporalEntropyAnalysis.k3_temporalProgression.differentialSlope.subjectMeanTrend.toFixed(4)}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 11, color: '#6b7280' }}>Ghost Trend</div>
+                      <div style={{ fontSize: 16, fontWeight: 600, color: '#6b7280' }}>
+                        {temporalEntropyAnalysis.k3_temporalProgression.differentialSlope.ghostMeanTrend.toFixed(4)}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 11, color: '#6b7280' }}>Difference</div>
+                      <div style={{ fontSize: 16, fontWeight: 'bold', color: '#111827' }}>
+                        {(temporalEntropyAnalysis.k3_temporalProgression.differentialSlope.difference > 0 ? '+' : '')}
+                        {temporalEntropyAnalysis.k3_temporalProgression.differentialSlope.difference.toFixed(4)}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 11, color: '#6b7280' }}>p-value</div>
+                      <div style={{ fontSize: 16, fontWeight: 'bold',
+                           color: temporalEntropyAnalysis.k3_temporalProgression.differentialSlope.significant
+                             ? '#7c3aed' : '#6b7280' }}>
+                        {temporalEntropyAnalysis.k3_temporalProgression.differentialSlope.pValue.toFixed(4)}
+                        {temporalEntropyAnalysis.k3_temporalProgression.differentialSlope.significant && ' *'}
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 13, color: '#6b7280', fontStyle: 'italic', marginTop: 12 }}>
+                    {temporalEntropyAnalysis.k3_temporalProgression.differentialSlope.interpretation}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -4432,6 +4827,7 @@ export default function QAExport() {
   const primeFilter = 'all'; // Everyone is primed now - no filter needed
   const [mappingFilter, setMappingFilter] = useState('all');
   const [sessionFilter, setSessionFilter] = useState('all'); // all, first, repeat
+  const [sessionTypeFilter, setSessionTypeFilter] = useState('all'); // all, regular, session_runner
   // Removed dataTypeFilter - all data is live now
   const [qaStatus, setQaStatus] = useState(null);
   const [canToggle, setCanToggle] = useState(false);
@@ -4538,7 +4934,7 @@ export default function QAExport() {
 
   const filteredSessions = useMemo(() => {
     console.log('QA Dashboard: Raw runs data:', runs.length, runs);
-    const filtered = filterSessions(runs, mode, binauralFilter, primeFilter, mappingFilter, sessionFilter);
+    const filtered = filterSessions(runs, mode, binauralFilter, primeFilter, mappingFilter, sessionFilter, sessionTypeFilter);
     console.log('QA Dashboard: Filtered sessions:', filtered.length, filtered);
     console.log('QA Dashboard: Filters:', { mode, binauralFilter, primeFilter, mappingFilter, sessionFilter });
 
@@ -4556,7 +4952,7 @@ export default function QAExport() {
     });
 
     return filtered;
-  }, [runs, mode, binauralFilter, primeFilter, mappingFilter, sessionFilter]);
+  }, [runs, mode, binauralFilter, primeFilter, mappingFilter, sessionFilter, sessionTypeFilter]);
 
   const stats = useMemo(() => {
     return computeStatistics(filteredSessions, mode, binauralFilter, primeFilter, mappingFilter);
@@ -4760,6 +5156,47 @@ export default function QAExport() {
               value={opt.id}
               checked={sessionFilter === opt.id}
               onChange={(e) => setSessionFilter(e.target.value)}
+            />
+            <span style={{ fontSize: 12 }}>{opt.label}</span>
+          </label>
+        ))}
+      </div>
+
+      {/* Row 5: Session source filter (Regular vs SessionRunner) */}
+      <div
+        style={{
+          display: 'flex',
+          gap: 8,
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          marginTop: 8,
+        }}
+      >
+        <span style={{ fontSize: 12, color: '#555' }}>Data source:</span>
+        {[
+          { id: 'all', label: 'All data' },
+          { id: 'regular', label: 'Regular sessions' },
+          { id: 'baseline', label: 'Baseline (Auto-mode)' },
+        ].map((opt) => (
+          <label
+            key={opt.id}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '4px 8px',
+              border: '1px solid #ddd',
+              borderRadius: 16,
+              background: sessionTypeFilter === opt.id ? '#eef6ff' : '#fff',
+              cursor: 'pointer',
+            }}
+          >
+            <input
+              type="radio"
+              name="sessionSourceType"
+              value={opt.id}
+              checked={sessionTypeFilter === opt.id}
+              onChange={(e) => setSessionTypeFilter(e.target.value)}
             />
             <span style={{ fontSize: 12 }}>{opt.label}</span>
           </label>
@@ -5059,9 +5496,9 @@ export default function QAExport() {
             Research Analytics Suite
           </h2>
 
-          {/* Primary Performance Metrics */}
+          {/* Basic Performance Summary */}
           <AnalyticsSection
-            title="Primary Performance Metrics"
+            title="Basic Performance Summary"
             content={<PrimaryPerformanceMetrics sessions={filteredSessions} stats={stats} />}
           />
 
@@ -5191,7 +5628,9 @@ export default function QAExport() {
                       {session.post_survey?.binaural_beats === 'Yes' ? '✅' : '❌'}
                     </td>
                     <td style={{ border: '1px solid #d1d5db', padding: 8 }}>
-                      {(session.minutes || []).length} live
+                      {session.session_type === 'baseline' || session.session_type === 'session_runner'
+                        ? `Baseline (${session.mode || 'auto'})`
+                        : `${(session.minutes || []).length} live`}
                     </td>
                     <td style={{ border: '1px solid #d1d5db', padding: 8 }}>
                       <details>
@@ -5213,3 +5652,4 @@ export default function QAExport() {
     </div>
   );
 }
+
