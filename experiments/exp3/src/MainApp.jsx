@@ -102,11 +102,11 @@ const WARMUP_TIMEOUT_MS = 1500;   // Max 1.5s to wait for warmup (fallback to lo
 // - Participants need consistent 5Hz visual updates to maintain focus
 // - Buffer interruptions could contaminate results by breaking concentration
 //
-const PAUSE_THRESHOLD_LT = 6;     // PAUSE when buffer < 6 bits (~1.2s of data remaining)
+const PAUSE_THRESHOLD_LT = 1;     // PAUSE when buffer < 1 byte (was 6 bits, now ~1 byte for 2 trials)
                                   // - Low enough to maximize quantum data usage
                                   // - High enough to prevent buffer starvation
 
-const RESUME_THRESHOLD_GTE = 20;  // RESUME when buffer ≥ 20 bits (~4s of data available)
+const RESUME_THRESHOLD_GTE = 3;   // RESUME when buffer ≥ 3 bytes (was 20 bits, now ~3 bytes for safe resume)
                                   // - Creates 14-bit "dead zone" (6-20) to prevent flicker
                                   // - Ensures sufficient buffer depth before resuming
                                   // - Balances quantum authenticity vs. experimental continuity
@@ -120,8 +120,8 @@ const MAX_SINGLE_PAUSE_MS = 3 * TICK_MS; // Max 600ms for any single pause event
 const fmtSec = (ms) => `${(ms / 1000).toFixed(ms % 1000 ? 1 : 0)}s`;
 const POLICY_TEXT = {
   warmup: `Warm-up until buffer ≥ ${WARMUP_BITS_START} bits (~${(WARMUP_BITS_START / C.VISUAL_HZ).toFixed(1)}s @ ${C.VISUAL_HZ}Hz)`,
-  pause: `Pause if buffer < ${PAUSE_THRESHOLD_LT} bits`,
-  resume: `Resume when buffer ≥ ${RESUME_THRESHOLD_GTE} bits`,
+  pause: `Pause if buffer < ${PAUSE_THRESHOLD_LT} bytes`,
+  resume: `Resume when buffer ≥ ${RESUME_THRESHOLD_GTE} bytes`,
   guardrails: `Invalidate if >${MAX_PAUSES} pauses, total pauses > ${fmtSec(MAX_TOTAL_PAUSE_MS)}, or any pause > ${fmtSec(MAX_SINGLE_PAUSE_MS)}`
 };
 
@@ -279,13 +279,19 @@ function CircularGauge({ value = 0.5, targetBit = 1, width = 220, label = 'Short
 
 // ===== main =====
 export default function MainApp() {
-  // ---- auth
+  // Auto-mode for baseline data collection (activated via URL hash #auto)
+  const isAutoMode = window.location.hash.includes('auto');
+  const [autoSessionCount, setAutoSessionCount] = useState(0);
+  const [autoSessionTarget, setAutoSessionTarget] = useState(C.AUTO_MODE_SESSIONS);
+
   const [userReady, setUserReady] = useState(false);
   const [uid, setUid] = useState(null);
   const {
     connect: liveConnect,
-    disconnect: liveDisconnect,popSubjectBit: livePopSubjectBit,
-    popGhostBit: livePopGhostBit,    bufferedBits: liveBufferedBits,
+    disconnect: liveDisconnect,
+    popSubjectByte: livePopSubjectByte,
+    popGhostByte: livePopGhostByte,
+    bufferedBytes: liveBufferedBytes,
     connected: liveConnected,
     lastSource: liveLastSource,
   } = useLiveStreamQueue({ durationMs: C.LIVE_STREAM_DURATION_MS });
@@ -439,6 +445,7 @@ export default function MainApp() {
           tape_meta: null, // No tapes in live-only mode
           minutes_planned: C.BLOCKS_TOTAL, // All blocks are live
           timestamp: new Date().toISOString(),
+          ...(isAutoMode && { session_type: 'baseline', mode: 'baseline' }), // Mark auto-mode sessions
         };
 
         // Add exit info if provided
@@ -486,8 +493,64 @@ export default function MainApp() {
 
   const bitsRef = useRef([]); const ghostBitsRef = useRef([]); const alignedRef = useRef([]);
   const hitsRef = useRef(0); const ghostHitsRef = useRef(0);
+  const subjectBytesRef = useRef([]); const ghostBytesRef = useRef([]); // Store full bytes (0-255) for entropy
   const subjectIndicesRef = useRef([]); const ghostIndicesRef = useRef([]); // Track raw QRNG stream indices
+  const trialStrategiesRef = useRef([]); // Track which strategy each trial used (1=alternating, 0=independent)
   const trialsPerMinute = trialsPerBlock;
+
+  // Auto-mode: Skip consent/questions, auto-restart, and auto-continue rest screens
+  useEffect(() => {
+    if (!isAutoMode) return;
+
+    if (phase === 'consent' || phase === 'pre_questions' || phase === 'prime' || phase === 'info') {
+      console.log('🤖 AUTO-MODE: Skipping', phase, '→ onboarding');
+      setPhase('onboarding');
+    } else if (phase === 'rest') {
+      const timer = setTimeout(() => {
+        console.log(`🤖 AUTO-MODE: Auto-continuing after ${C.AUTO_MODE_REST_MS / 1000}s rest`);
+        startNextMinute();
+      }, C.AUTO_MODE_REST_MS);
+      return () => clearTimeout(timer);
+    } else if (phase === 'done') {
+      // Skip post-questionnaire in auto-mode, mark completed, and go to results
+      console.log('🤖 AUTO-MODE: Skipping post-questionnaire → results');
+      if (runRef) {
+        setDoc(runRef, { completed: true }, { merge: true }).catch(e =>
+          console.warn('Auto-mode completion save error:', e)
+        );
+      }
+      setPhase('results');
+    } else if (phase === 'results' || phase === 'summary') {
+      // Skip results/summary screens in auto-mode, go to next session
+      console.log('🤖 AUTO-MODE: Skipping results/summary → next session');
+      setPhase('next');
+    } else if (phase === 'next') {
+      // Immediately transition to avoid re-triggering
+      const newCount = autoSessionCount + 1;
+
+      if (newCount < autoSessionTarget) {
+        // Reset for next session
+        console.log(`🤖 AUTO-MODE: Session ${autoSessionCount}/${autoSessionTarget} complete, starting session ${newCount}`);
+        setAutoSessionCount(newCount);
+        setPhase('preparing_next');
+      } else {
+        console.log(`🤖 AUTO-MODE: All ${autoSessionTarget} sessions complete!`);
+        setAutoSessionCount(newCount); // Update count before showing completion
+        setPhase('auto_complete');
+      }
+    } else if (phase === 'preparing_next') {
+      // Delayed reset to ensure clean state transition
+      setTimeout(() => {
+        console.log('🔄 Resetting state for next auto-mode session');
+        setRunRef(null);
+        setblockIdx(-1);
+        setTotals({ k: 0, n: 0 });
+        setLastBlock(null);
+        setIsRunning(false);
+        setPhase('consent');
+      }, 100);
+    }
+  }, [isAutoMode, phase, autoSessionCount, autoSessionTarget, startNextMinute]);
   const targetBit = target === 'BLUE' ? 1 : 0;
   // Accumulate bits across minutes until we have full windows (e.g., 1000 bits)
   const entropyAccumRef = useRef({ subj: [], ghost: [] });
@@ -542,20 +605,20 @@ export default function MainApp() {
     invalidReasonRef.current = '';
   }, []);
   const maybePause = useCallback((now) => {
-    if (!isBuffering && liveBufferedBits() < PAUSE_THRESHOLD_LT) {
+    if (!isBuffering && liveBufferedBytes() < PAUSE_THRESHOLD_LT) {
       setIsBuffering(true);
       pauseCountRef.current += 1;
       pauseStartedAtRef.current = now;
     }
-  }, [isBuffering, liveBufferedBits]);
+  }, [isBuffering, liveBufferedBytes]);
   const maybeResume = useCallback((now) => {
-    if (isBuffering && liveBufferedBits() >= RESUME_THRESHOLD_GTE) {
+    if (isBuffering && liveBufferedBytes() >= RESUME_THRESHOLD_GTE) {
       const dur = now - pauseStartedAtRef.current;
       totalPausedMsRef.current += dur;
       if (dur > longestPauseMsRef.current) longestPauseMsRef.current = dur;
       setIsBuffering(false);
     }
-  }, [isBuffering, liveBufferedBits]);
+  }, [isBuffering, liveBufferedBytes]);
   const shouldInvalidate = useCallback(() => {
     return (
       pauseCountRef.current > MAX_PAUSES ||
@@ -605,6 +668,12 @@ export default function MainApp() {
         const beforeLength = entropyAccumRef.current.subj.length;
         entropyAccumRef.current.subj.push(...bitsRef.current);
         console.log(`🔍 ENTROPY ACCUMULATOR: Block ${blockIdx}, added ${bitsRef.current.length} bits (${beforeLength} → ${entropyAccumRef.current.subj.length}), can make window: ${entropyAccumRef.current.subj.length >= ENTROPY_WINDOW_SIZE}`);
+      } else {
+        console.warn(`⚠️ Block ${blockIdx}: bitsRef.current is empty or not an array!`, {
+          isArray: Array.isArray(bitsRef.current),
+          length: bitsRef.current?.length,
+          sample: bitsRef.current?.slice(0, 5)
+        });
       }
       if (Array.isArray(ghostBitsRef.current) && ghostBitsRef.current.length) {
         const beforeLength = entropyAccumRef.current.ghost.length;
@@ -616,11 +685,18 @@ export default function MainApp() {
       newSubjWindows = extractEntropyWindowsFromAccumulator(entropyAccumRef.current.subj, ENTROPY_WINDOW_SIZE);
       newGhostWindows = extractEntropyWindowsFromAccumulator(entropyAccumRef.current.ghost, ENTROPY_WINDOW_SIZE);
 
+      console.log(`📦 Block ${blockIdx} extraction result:`, {
+        subjWindows: newSubjWindows.length,
+        ghostWindows: newGhostWindows.length,
+        subjAccumRemaining: entropyAccumRef.current.subj.length,
+        ghostAccumRemaining: entropyAccumRef.current.ghost.length
+      });
+
       if (newSubjWindows.length) {
-        console.log(`Entropy: Extracted ${newSubjWindows.length} subject windows, avg entropy: ${(newSubjWindows.reduce((a,b) => a+b, 0) / newSubjWindows.length).toFixed(4)}`);
+        console.log(`✅ Extracted ${newSubjWindows.length} subject windows, avg entropy: ${(newSubjWindows.reduce((a,b) => a+b, 0) / newSubjWindows.length).toFixed(4)}`);
       }
       if (newGhostWindows.length) {
-        console.log(`Entropy: Extracted ${newGhostWindows.length} ghost windows, avg entropy: ${(newGhostWindows.reduce((a,b) => a+b, 0) / newGhostWindows.length).toFixed(4)}`);
+        console.log(`✅ Extracted ${newGhostWindows.length} ghost windows, avg entropy: ${(newGhostWindows.reduce((a,b) => a+b, 0) / newGhostWindows.length).toFixed(4)}`);
       }
 
       // Append to running windows history
@@ -636,6 +712,40 @@ export default function MainApp() {
       console.warn('entropy-windowing failed', entropyErr);
     }
 
+    // Block-level entropy calculations (150 bits per block)
+    const blockBits = bitsRef.current.length;
+    const blockSubjEntropy = blockBits > 0 ? shannonEntropy(bitsRef.current) : null;
+    const blockGhostEntropy = ghostBitsRef.current.length > 0 ? shannonEntropy(ghostBitsRef.current) : null;
+
+    // Block-level k2 split: [first 75 bits, last 75 bits]
+    const half = Math.floor(blockBits / 2);
+    const blockK2Subj = blockBits >= 50 ? [
+      shannonEntropy(bitsRef.current.slice(0, half)),
+      shannonEntropy(bitsRef.current.slice(half))
+    ] : null;
+    const blockK2Ghost = ghostBitsRef.current.length >= 50 ? [
+      shannonEntropy(ghostBitsRef.current.slice(0, half)),
+      shannonEntropy(ghostBitsRef.current.slice(half))
+    ] : null;
+
+    // Block-level k3 split: [early 50, middle 50, late 50]
+    const third = Math.floor(blockBits / 3);
+    const blockK3Subj = blockBits >= 50 ? [
+      shannonEntropy(bitsRef.current.slice(0, third)),
+      shannonEntropy(bitsRef.current.slice(third, 2 * third)),
+      shannonEntropy(bitsRef.current.slice(2 * third))
+    ] : null;
+    const blockK3Ghost = ghostBitsRef.current.length >= 50 ? [
+      shannonEntropy(ghostBitsRef.current.slice(0, third)),
+      shannonEntropy(ghostBitsRef.current.slice(third, 2 * third)),
+      shannonEntropy(ghostBitsRef.current.slice(2 * third))
+    ] : null;
+
+    console.log(`📊 BLOCK ENTROPY: Block ${blockIdx}, Subject: ${blockSubjEntropy?.toFixed(4) || 'null'}, Ghost: ${blockGhostEntropy?.toFixed(4) || 'null'}`, {
+      k2_subj: blockK2Subj?.map(e => e.toFixed(4)),
+      k3_subj: blockK3Subj?.map(e => e.toFixed(4))
+    });
+
     // Session-level temporal entropy is calculated in calculateSessionTemporalEntropy()
     // at session end, not per-block
 
@@ -645,6 +755,8 @@ export default function MainApp() {
     const blockSummary = { k, n, z, pTwo, kg: ghostHitsRef.current, ng: n, zg, pg, kind };
     setLastBlock(blockSummary);
     setTotals((t) => ({ k: t.k + k, n: t.n + n }));
+
+    console.log(`💾 Saving block ${blockIdx} to Firestore with ${newSubjWindows.length} subject windows, ${newGhostWindows.length} ghost windows`);
 
     await setDoc(mdoc, {
       idx: blockIdx,
@@ -671,20 +783,40 @@ export default function MainApp() {
       },
       micro_entropy: microEntropyRef.current.count ? (microEntropyRef.current.sum / microEntropyRef.current.count) : null,
       entropy: {
-        window_size: ENTROPY_WINDOW_SIZE,
-        new_windows_subj: newSubjWindows.map((entropy, index) => ({
-          entropy,
-          windowIndex: entropyWindowsRef.current.subj.length + index
-        })),
-        new_windows_ghost: newGhostWindows.map((entropy, index) => ({
-          entropy,
-          windowIndex: entropyWindowsRef.current.ghost.length + index
-        })),
-        cumulative: {
-          subj_count: subjCount,
-          ghost_count: ghostCount,
-        },
-        // Session-level temporal entropy (k2/k3) saved at session end by calculateSessionTemporalEntropy()
+        // 1000-bit windows (computed across session as bits accumulate)
+        new_windows_subj: newSubjWindows.map((entropy, index) => {
+          const globalWindowIndex = entropyWindowsRef.current.subj.length + index;
+          const bitStart = globalWindowIndex * ENTROPY_WINDOW_SIZE;
+          const bitEnd = bitStart + ENTROPY_WINDOW_SIZE;
+          return {
+            entropy,
+            windowIndex: globalWindowIndex,
+            bitStart,
+            bitEnd,
+            timestamp: blockStartTimeRef.current
+          };
+        }),
+        new_windows_ghost: newGhostWindows.map((entropy, index) => {
+          const globalWindowIndex = entropyWindowsRef.current.ghost.length + index;
+          const bitStart = globalWindowIndex * ENTROPY_WINDOW_SIZE;
+          const bitEnd = bitStart + ENTROPY_WINDOW_SIZE;
+          return {
+            entropy,
+            windowIndex: globalWindowIndex,
+            bitStart,
+            bitEnd,
+            timestamp: blockStartTimeRef.current
+          };
+        }),
+
+        // Block-level entropy (150 bits per block)
+        block_entropy_subj: blockSubjEntropy,
+        block_entropy_ghost: blockGhostEntropy,
+        block_k2_subj: blockK2Subj,
+        block_k2_ghost: blockK2Ghost,
+        block_k3_subj: blockK3Subj,
+        block_k3_ghost: blockK3Ghost,
+        bits_count: blockBits,
       },
       // No redundancy tracking for live streams
       invalidated: minuteInvalidRef.current || false,
@@ -696,10 +828,13 @@ export default function MainApp() {
       } : null,
       // Store trial sequences as arrays (much more efficient than subcollection)
       trial_data: {
-        subject_bits: bitsRef.current,
-        ghost_bits: ghostBitsRef.current,
+        subject_bits: bitsRef.current, // Decision bits (0 or 1) for trial outcome
+        ghost_bits: ghostBitsRef.current, // Ghost decision bits
+        subject_bytes: subjectBytesRef.current, // Full bytes (0-255) for entropy calculation
+        ghost_bytes: ghostBytesRef.current, // Ghost full bytes
         subject_raw_indices: subjectIndicesRef.current,
         ghost_raw_indices: ghostIndicesRef.current,
+        trial_strategies: trialStrategiesRef.current, // 1=alternating, 0=independent (for chi-square test separation)
         source_label: liveLastSource || 'unknown',
         target_bit: targetBit,
         trial_count: bitsRef.current.length
@@ -717,7 +852,7 @@ export default function MainApp() {
     // Update previous block end time for next block's pause calculation
     previousBlockEndTimeRef.current = blockEndTimeRef.current;
   }, [
-    runRef, blockIdx, mappingType, targetBit, liveLastSource
+    runRef, blockIdx, mappingType, targetBit, liveLastSource, trialsPerBlock
   ]);
 
   const endMinute = useCallback(async () => {
@@ -774,8 +909,13 @@ export default function MainApp() {
 
     let i = 0;
     const start = Date.now();
-    if (tickTimerRef.current) { clearInterval(tickTimerRef.current); tickTimerRef.current = null; }
+    if (tickTimerRef.current) {
+      console.warn('⚠️ Clearing existing tick timer before starting new one!');
+      clearInterval(tickTimerRef.current);
+      tickTimerRef.current = null;
+    }
 
+    console.log(`⏱️ Starting tick timer for block ${blockIdx} with TICK=${TICK}ms`);
     tickTimerRef.current = setInterval(() => {
       const elapsed = Date.now() - start;
       const hitCap = elapsed >= (C.BLOCK_MS + 5000);
@@ -792,14 +932,12 @@ export default function MainApp() {
         });
       }
 
-      if (i >= MAX_TRIALS || hitCap) {
-        console.log('🛑 STOPPING TRIALS:', {
+      if (i >= MAX_TRIALS) {
+        console.log('✅ TRIALS COMPLETE:', {
           trialCount: i,
           MAX_TRIALS,
-          hitCap,
           elapsed,
-          actualTrials: alignedRef.current.length,
-          timerCleared: !!tickTimerRef.current
+          actualTrials: alignedRef.current.length
         });
         clearInterval(tickTimerRef.current);
         tickTimerRef.current = null;
@@ -807,38 +945,67 @@ export default function MainApp() {
         return;
       }
 
-      let bit, ghost, subjectRawIndex, ghostRawIndex;
+      if (hitCap) {
+        console.warn('⏱️ TIMEOUT - STOPPING TRIALS:', {
+          trialCount: i,
+          MAX_TRIALS,
+          elapsed,
+          actualTrials: alignedRef.current.length,
+          missedTrials: MAX_TRIALS - i
+        });
+        clearInterval(tickTimerRef.current);
+        tickTimerRef.current = null;
+        endMinuteRef.current?.();
+        return;
+      }
+
+      let bit, ghost, subjectRawIndex, ghostRawIndex, subjectByte, ghostByte;
       if (C.USE_LIVE_STREAM) {
         const now = performance.now();
         if (isBuffering) { maybeResume(now); return; } // Don't increment i when buffering
         else { maybePause(now); if (isBuffering) { return; } } // Don't increment i when buffering starts
-        // Use trial-level bit strategy: odd trials = alternating, even trials = independent
+        // Use trial-level BYTE strategy: odd trials = alternating, even trials = independent
         const trialNumber = i + 1; // Convert 0-based to 1-based for odd/even logic
-        const sBitObj = livePopSubjectBit(trialNumber); const gBitObj = livePopGhostBit(trialNumber);
-        if (sBitObj === null || gBitObj === null) {
-          console.warn('🔴 NULL BITS DETECTED - pausing:', {
+        const sByteObj = livePopSubjectByte(trialNumber); const gByteObj = livePopGhostByte(trialNumber);
+        if (sByteObj === null || gByteObj === null) {
+          console.warn('🔴 NULL BYTES DETECTED - pausing:', {
             trialNumber,
-            sBitObj, gBitObj,
-            bufferSize: liveBufferedBits(),
+            sByteObj, gByteObj,
+            bufferSize: liveBufferedBytes(),
             isBuffering
           });
           maybePause(now);
           return;
-        } // Don't increment i when no bits available
-        const sBit = sBitObj.bit; const gBit = gBitObj.bit;
-        subjectRawIndex = sBitObj.rawIndex; ghostRawIndex = gBitObj.rawIndex;
-        bit = sBit === '1' ? 1 : 0; ghost = gBit === '1' ? 1 : 0;
+        } // Don't increment i when no bytes available
+
+        // Extract byte values and indices
+        subjectByte = sByteObj.byte;
+        ghostByte = gByteObj.byte;
+        subjectRawIndex = sByteObj.rawIndex;
+        ghostRawIndex = gByteObj.rawIndex;
+
+        // Convert bytes to 8-bit binary strings for entropy storage
+        const subjectBits8 = subjectByte.toString(2).padStart(8, '0');
+        const ghostBits8 = ghostByte.toString(2).padStart(8, '0');
+
+        // Extract 1 bit for trial decision (using LSB - least significant bit)
+        const sBit = subjectBits8[7]; // LSB
+        const gBit = ghostBits8[7];   // LSB
+        bit = sBit === '1' ? 1 : 0;
+        ghost = gBit === '1' ? 1 : 0;
 
         // Debug early trials to see initial buffer bias
         if (i < 20) {
           console.log(`🔍 EARLY TRIAL ${i}:`, {
+            subjectByte, ghostByte,
+            subjectBits8, ghostBits8,
             sBit, gBit,
             sNum: bit, gNum: ghost,
             align: bit === targetBit ? 'HIT' : 'MISS',
             ghostAlign: ghost === targetBit ? 'HIT' : 'MISS',
             target: target,
             targetBit: targetBit,
-            bufferSize: liveBufferedBits()
+            bufferSize: liveBufferedBytes()
           });
         }
 
@@ -858,7 +1025,7 @@ export default function MainApp() {
             rawBits: { sBit, gBit, sNum: bit, gNum: ghost },
             recent10SubjBits: recentSubjBits,
             recent10GhostBits: recentGhostBits,
-            bufferStatus: liveBufferedBits()
+            bufferStatus: liveBufferedBytes()
           });
         }
         if (shouldInvalidate()) {
@@ -874,7 +1041,7 @@ export default function MainApp() {
 
       // Only process trial and increment counter when we have valid data
       const now = Date.now();
-
+      console.log('⏰ Tick timing:', { i, elapsed: now - start, expected: i * TICK });
       // Capture first trial timestamp
       if (i === 0) {
         firstTrialTimeRef.current = now;
@@ -883,8 +1050,14 @@ export default function MainApp() {
       bitsRef.current.push(bit);
       ghostBitsRef.current.push(ghost);
       if (C.USE_LIVE_STREAM) {
+        // Store full bytes (0-255) for entropy calculation
+        subjectBytesRef.current.push(subjectByte);
+        ghostBytesRef.current.push(ghostByte);
         subjectIndicesRef.current.push(subjectRawIndex);
         ghostIndicesRef.current.push(ghostRawIndex);
+        // Track strategy: 1=alternating (odd trials), 0=independent (even trials)
+        const trialNumber = i + 1;
+        trialStrategiesRef.current.push(trialNumber % 2 === 1 ? 1 : 0);
       }
       const align = bit === targetBit ? 1 : 0;
       const alignGhost = ghost === targetBit ? 1 : 0;
@@ -904,7 +1077,7 @@ export default function MainApp() {
     return () => { if (tickTimerRef.current) { clearInterval(tickTimerRef.current); tickTimerRef.current = null; } };
   }, [
     isRunning, blockIdx, trialsPerMinute, targetBit, target,
-    isBuffering, livePopSubjectBit, livePopGhostBit, liveBufferedBits, maybePause, maybeResume, shouldInvalidate, trialsPerBlock,
+    livePopSubjectByte, livePopGhostByte, liveBufferedBytes, maybePause, maybeResume, shouldInvalidate, trialsPerBlock,
   ]);
 
 
@@ -915,8 +1088,10 @@ export default function MainApp() {
     if (C.USE_LIVE_STREAM) {
       if (!liveConnected) { liveConnect(); }
       const t0 = Date.now();
+      // WARMUP_BITS_START was 300 bits, now divide by 8 for bytes (~38 bytes)
+      const WARMUP_BYTES_START = Math.ceil(WARMUP_BITS_START / 8);
       while (Date.now() - t0 < WARMUP_TIMEOUT_MS &&
-        liveBufferedBits() < WARMUP_BITS_START) {
+        liveBufferedBytes() < WARMUP_BYTES_START) {
         await new Promise((r) => setTimeout(r, 50));
       }
       resetLivePauseCounters();
@@ -936,7 +1111,7 @@ export default function MainApp() {
 
   }, [
     // streaming deps
-    liveConnected, liveConnect, liveBufferedBits, resetLivePauseCounters,
+    liveConnected, liveConnect, liveBufferedBytes, resetLivePauseCounters,
     // prefetch model deps
     prefetchLivePairs,
   ]);
@@ -976,6 +1151,39 @@ export default function MainApp() {
         console.warn('No subject bits found for session-level entropy calculation');
         return;
       }
+
+      // NEW: Aggregate block-level entropy trajectories for H(t) fitting
+      const allBlockEntropySubj = [];
+      const allBlockEntropyGhost = [];
+
+      // Fetch block-level entropy from each minute
+      for (const minute of sortedMinutes) {
+        const minuteDoc = await getDoc(minute.ref);
+        const minuteData = minuteDoc.data();
+
+        if (minuteData?.entropy?.block_entropy_subj !== undefined) {
+          allBlockEntropySubj.push({
+            blockIdx: minuteData.entropy.block_idx,
+            entropy: minuteData.entropy.block_entropy_subj,
+            timestamp: minuteData.entropy.block_timestamp || minuteData.timing?.block_start_time
+          });
+        }
+
+        if (minuteData?.entropy?.block_entropy_ghost !== undefined) {
+          allBlockEntropyGhost.push({
+            blockIdx: minuteData.entropy.block_idx,
+            entropy: minuteData.entropy.block_entropy_ghost,
+            timestamp: minuteData.entropy.block_timestamp || minuteData.timing?.block_start_time
+          });
+        }
+      }
+
+      console.log('📈 BLOCK-LEVEL ENTROPY TRAJECTORIES:', {
+        subjectBlocks: allBlockEntropySubj.length,
+        ghostBlocks: allBlockEntropyGhost.length,
+        sampleSubject: allBlockEntropySubj.slice(0, 5).map(b => `Block ${b.blockIdx}: ${b.entropy.toFixed(4)}`),
+        sampleGhost: allBlockEntropyGhost.slice(0, 5).map(b => `Block ${b.blockIdx}: ${b.entropy.toFixed(4)}`)
+      });
 
       // Minimum window size for meaningful entropy calculation
       const MIN_WINDOW_SIZE = 500;
@@ -1029,6 +1237,11 @@ export default function MainApp() {
             entropy_k3: entropy_k3,
             ghost_entropy_k2: ghost_entropy_k2,
             ghost_entropy_k3: ghost_entropy_k3,
+          },
+          temporal_trajectories: {
+            block_level_subj: allBlockEntropySubj,
+            block_level_ghost: allBlockEntropyGhost,
+            // This enables H_subject(t) and H_ghost(t) fitting for thermalization analysis
           }
         }
       }, { merge: true });
@@ -1040,8 +1253,11 @@ export default function MainApp() {
       // Reset all accumulators to prevent bleed into next session
       bitsRef.current = [];
       ghostBitsRef.current = [];
+      subjectBytesRef.current = [];
+      ghostBytesRef.current = [];
       subjectIndicesRef.current = [];
       ghostIndicesRef.current = [];
+      trialStrategiesRef.current = [];
       entropyAccumRef.current = { subj: [], ghost: [] };
       entropyWindowsRef.current = { subj: [], ghost: [] };
       console.log('🔄 Reset all entropy accumulators for next session');
@@ -1054,8 +1270,11 @@ export default function MainApp() {
     const redo = redoCurrentMinuteRef.current;
     const next = redo ? blockIdx : (blockIdx + 1);
 
+    console.log(`🎬 startNextMinute: blockIdx=${blockIdx}, next=${next}, BLOCKS_TOTAL=${C.BLOCKS_TOTAL}, redo=${redo}`);
+
     // If we've completed all blocks, go to post-experiment questions
     if (!redo && blockIdx + 1 >= C.BLOCKS_TOTAL) {
+      console.log(`✅ Session complete: ${blockIdx + 1} blocks finished, going to 'done' phase`);
       // Calculate and save session-level temporal entropy before ending
       await calculateSessionTemporalEntropy();
       setPhase('done');
@@ -1077,7 +1296,8 @@ export default function MainApp() {
     // All blocks are live now - no retro tracking needed
 
     bitsRef.current = []; ghostBitsRef.current = []; alignedRef.current = [];
-    subjectIndicesRef.current = []; ghostIndicesRef.current = [];
+    subjectBytesRef.current = []; ghostBytesRef.current = [];
+    subjectIndicesRef.current = []; ghostIndicesRef.current = []; trialStrategiesRef.current = [];
     hitsRef.current = 0; ghostHitsRef.current = 0;
     resetLivePauseCounters();
     setRenderTrigger(0);
@@ -1320,6 +1540,57 @@ export default function MainApp() {
   // ONBOARDING
   if (phase === 'onboarding') {
     const canContinue = !!runRef; // Live mode - no tapes needed
+
+    // Show auto-mode status if active
+    if (isAutoMode) {
+      // Auto-start when runRef is ready
+      if (canContinue && !isRunning) {
+        console.log('🤖 AUTO-MODE: Auto-starting trials for session', autoSessionCount + 1);
+        ensureRunDoc().then(() => startNextMinute());
+      }
+
+      const isComplete = autoSessionCount >= autoSessionTarget;
+
+      return (
+        <div style={{ padding: 24, maxWidth: 760 }}>
+          <h1>🤖 Auto-Mode Baseline Collection</h1>
+
+          {autoSessionCount === 0 && (
+            <div style={{ marginBottom: 20, padding: 20, background: '#f0f0f0', borderRadius: 8 }}>
+              <label style={{ display: 'block', marginBottom: 5, fontWeight: 'bold' }}>
+                Number of sessions to run:
+              </label>
+              <input
+                type="number"
+                value={autoSessionTarget}
+                onChange={(e) => setAutoSessionTarget(Math.max(1, parseInt(e.target.value) || 1))}
+                min="1"
+                max="1000"
+                style={{ padding: '8px', width: '100px', marginRight: 10 }}
+              />
+              <span style={{ fontSize: 12, color: '#666' }}>
+                (Each session = 20 blocks, ~10 min)
+              </span>
+            </div>
+          )}
+
+          <p style={{ fontSize: 18, marginTop: 20 }}>
+            Sessions: <strong>{autoSessionCount} / {autoSessionTarget}</strong>
+          </p>
+
+          {isComplete ? (
+            <p style={{ color: '#1a8f1a', fontWeight: 'bold', marginTop: 10 }}>
+              ✅ All sessions complete! Check QA dashboard.
+            </p>
+          ) : (
+            <p style={{ color: '#666', marginTop: 10 }}>
+              {canContinue ? 'Running...' : 'Starting...'}
+            </p>
+          )}
+        </div>
+      );
+    }
+
     return (
       <div style={{ padding: 24, maxWidth: 760, position: 'relative' }}>
         <h1>Assessing Randomness Suppression During Conscious Intention Tasks — Pilot Study</h1>
@@ -1443,13 +1714,13 @@ export default function MainApp() {
               background: canContinue ? '#1a8f1a' : '#ccc',
               color: canContinue ? '#fff' : '#444',
               cursor: canContinue ? 'pointer' : 'not-allowed',
-              transition: 'background 150ms ease'
+              transition: 'background 150ms ease',
+              marginRight: debugUI ? 12 : 0
             }}
           >
             Start Trials
           </button>
         </div>
-
       </div>
     );
   }
@@ -1460,7 +1731,7 @@ export default function MainApp() {
     const pctLast = lastBlock && lastBlock.n ? Math.round((100 * lastBlock.k) / lastBlock.n) : 0;
     // All blocks are live now - simplified rest phase
 
-    // We’re bypassing participant UI, but still auditing silently.
+    // We're bypassing participant UI, but still auditing silently.
 
     const redundancyReady = true;
 
@@ -1594,7 +1865,7 @@ export default function MainApp() {
                 )}
                 {isLive && C.USE_LIVE_STREAM && (
                   <span style={{ marginLeft: 6, opacity: 0.7 }}>
-                    [live src: {liveLastSource || '—'} · buf {liveBufferedBits()}]
+                    [live src: {liveLastSource || '—'} · buf {liveBufferedBytes()} bytes]
                   </span>
                 )}
               </>
@@ -1820,6 +2091,30 @@ export default function MainApp() {
     );
   }
 
+  // AUTO-MODE COMPLETION SCREEN
+  if (phase === 'auto_complete') {
+    return (
+      <div className="App" style={{ textAlign: 'center', maxWidth: 600, margin: '0 auto', padding: 24 }}>
+        <h1>🤖 Auto-Mode Complete</h1>
+        <div style={{ marginTop: 32, padding: '24px', background: '#f0fdf4', border: '2px solid #10b981', borderRadius: 8 }}>
+          <h2 style={{ color: '#059669', marginBottom: 16 }}>✓ Baseline Data Collection Complete</h2>
+          <p style={{ fontSize: 18, marginBottom: 12 }}>
+            Successfully completed {autoSessionCount} baseline session{autoSessionCount !== 1 ? 's' : ''}
+          </p>
+          <p style={{ color: '#6b7280', fontSize: 14 }}>
+            Data has been saved to the database. You can now view the results in the QA dashboard.
+          </p>
+        </div>
+
+        <div style={{ marginTop: 24, padding: '16px', background: '#fff', border: '1px solid #ddd', borderRadius: 8 }}>
+          <p style={{ fontFamily: 'monospace', fontSize: 12, color: '#6b7280' }}>
+            Auto-mode enabled via #auto URL hash
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   // FINAL SCREEN
   if (phase === 'summary') {
     return (
@@ -1839,7 +2134,7 @@ export default function MainApp() {
           <p>To keep the study fair and unbiased for future participants, we're holding back full details until data collection is complete.</p>
 
           <ul style={{ textAlign: 'left', marginTop: 16 }}>
-            <li>Try again in different moods or mindsets.</li>
+            <li>Try again in different mindsets, with and without binaural beats.</li>
             <li>Share with friends—large datasets matter here.</li>
             <li>
               We'll post a full debrief at{' '}
