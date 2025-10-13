@@ -1,7 +1,7 @@
 // App-level settings (used by App.js for the QA hash)
 export const config = {
-  CONSENT_VERSION: 'v1-2025-09-3',
-  QA_SECRET: 'WHAT_THE_QUARK_EXP_3',
+  CONSENT_VERSION: 'v1-2025-10-12',
+  QA_SECRET: 'WHAT_THE_QUARK_EXP_3AI',
   DEBRIEF_URL: 'https://whatthequark.com/debriefs/',
 };
 
@@ -23,10 +23,11 @@ config.experiments = {
     SHOW_CONDITION_IN_HUD: false,
     SESSION_ALPHA: 0.01,
     BLOCK_HIGHLIGHT_PCT: 52, //what score gets a congrats
-    FINALIST_MIN_PCT: 50, // 54 email capture high score gate opens at or above this percent
-    FINALIST_MAX_PCT: 49, // 46 email capture low score gate opens at or below this percent
-    AUTO_MODE_SESSIONS: 30, // Number of automated baseline sessions to run (access via #auto URL /exp3#auto)
-    AUTO_MODE_REST_MS: 5000, // 5 second auto-continue delay between blocks in auto-mode
+    FINALIST_MIN_PCT: 54, // 54 email capture high score gate opens at or above this percent
+    FINALIST_MAX_PCT: 53, // 46 email capture low score gate opens at or below this percent
+    AUTO_MODE_SESSIONS: 2, // Number of automated baseline sessions to run (access via #auto URL /exp3#auto)
+    AUTO_MODE_REST_MS: 1000, // 1 second auto-continue delay between blocks in auto-mode
+    AI_MODE_SESSIONS: 2, // Number of AI agent sessions to run (access via #ai URL /exp3#ai)  run this before opening url: sh experiments/exp3/run-ai.sh
   },
 };
 

@@ -114,9 +114,9 @@ export const postQuestions = [
   {
     id: 'focusLevel',
     question:
-      'How focused did you feel? (1 = not at all, 10 = extremely focused)',
+      'How focused did you feel? (0 = not at all, 10 = extremely focused)',
     type: 'slider',
-    min: 1,
+    min: 0,
     max: 10,
     leftLabel: 'Not at all',
     rightLabel: 'Extremely focused',
@@ -124,9 +124,9 @@ export const postQuestions = [
   {
     id: 'calmLevel',
     question:
-      'How calm did you feel? (1 = not at all, 10 = extremely calm)',
+      'How calm did you feel? (0 = not at all, 10 = extremely calm)',
     type: 'slider',
-    min: 1,
+    min: 0,
     max: 10,
     leftLabel: 'Not at all',
     rightLabel: 'Extremely calm',
@@ -134,9 +134,9 @@ export const postQuestions = [
   {
     id: 'confidenceLevel',
     question:
-      'How confident did you feel that you were nudging the results? (1 = not at all, 10 = extremely confident)',
+      'How confident did you feel that you were nudging the results? (0 = not at all, 10 = extremely confident)',
     type: 'slider',
-    min: 1,
+    min: 0,
     max: 10,
     leftLabel: 'Not at all',
     rightLabel: 'Extremely confident',

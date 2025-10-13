@@ -281,17 +281,19 @@ function CircularGauge({ value = 0.5, targetBit = 1, width = 220, label = 'Short
 export default function MainApp() {
   // Auto-mode for baseline data collection (activated via URL hash #auto)
   const isAutoMode = window.location.hash.includes('auto');
+  // AI-mode for AI agent sessions (activated via URL hash #ai)
+  const isAIMode = window.location.hash.includes('ai');
   const [autoSessionCount, setAutoSessionCount] = useState(0);
-  const [autoSessionTarget, setAutoSessionTarget] = useState(C.AUTO_MODE_SESSIONS);
+  const [autoSessionTarget, setAutoSessionTarget] = useState(isAIMode ? C.AI_MODE_SESSIONS : C.AUTO_MODE_SESSIONS);
 
   const [userReady, setUserReady] = useState(false);
   const [uid, setUid] = useState(null);
   const {
     connect: liveConnect,
     disconnect: liveDisconnect,
-    popSubjectByte: livePopSubjectByte,
-    popGhostByte: livePopGhostByte,
-    bufferedBytes: liveBufferedBytes,
+    popSubjectBit: livePopSubjectBit,
+    popGhostBit: livePopGhostBit,
+    bufferedBits: liveBufferedBits,
     connected: liveConnected,
     lastSource: liveLastSource,
   } = useLiveStreamQueue({ durationMs: C.LIVE_STREAM_DURATION_MS });
@@ -436,7 +438,7 @@ export default function MainApp() {
       try {
         if (!target) throw new Error('logic/order: target must be set before creating run');
         const uidNow = uid || (await requireUid());
-        const col = collection(db, 'experiment3_responses');
+        const col = collection(db, 'experiment3_ai_responses');
         const docData = {
           participant_id: uidNow,
           experimentId: C.EXPERIMENT_ID,
@@ -445,7 +447,8 @@ export default function MainApp() {
           tape_meta: null, // No tapes in live-only mode
           minutes_planned: C.BLOCKS_TOTAL, // All blocks are live
           timestamp: new Date().toISOString(),
-          ...(isAutoMode && { session_type: 'baseline', mode: 'baseline' }), // Mark auto-mode sessions
+          session_type: isAutoMode ? 'baseline' : isAIMode ? 'ai_agent' : 'human',
+          mode: isAutoMode ? 'baseline' : isAIMode ? 'ai' : 'human',
         };
 
         // Add exit info if provided
@@ -479,7 +482,7 @@ export default function MainApp() {
 
     const result = await createPromise;
     return result;
-  }, [runRef, target, uid, requireUid]);
+  }, [runRef, target, uid, requireUid, isAutoMode]);
 
   // ---- phase & per-minute state
   const [phase, setPhase] = useState('consent');
@@ -490,10 +493,10 @@ export default function MainApp() {
   const [totals, setTotals] = useState({ k: 0, n: 0 });
   // eslint-disable-next-line no-unused-vars
   const [renderTrigger, setRenderTrigger] = useState(0); // Force re-renders for ref updates
+  const [savingBlock, setSavingBlock] = useState(false); // Track when persistMinute is saving
 
   const bitsRef = useRef([]); const ghostBitsRef = useRef([]); const alignedRef = useRef([]);
   const hitsRef = useRef(0); const ghostHitsRef = useRef(0);
-  const subjectBytesRef = useRef([]); const ghostBytesRef = useRef([]); // Store full bytes (0-255) for entropy
   const subjectIndicesRef = useRef([]); const ghostIndicesRef = useRef([]); // Track raw QRNG stream indices
   const trialStrategiesRef = useRef([]); // Track which strategy each trial used (1=alternating, 0=independent)
   const trialsPerMinute = trialsPerBlock;
@@ -550,7 +553,7 @@ export default function MainApp() {
         setPhase('consent');
       }, 100);
     }
-  }, [isAutoMode, phase, autoSessionCount, autoSessionTarget, startNextMinute]);
+  }, [isAutoMode, phase, autoSessionCount, autoSessionTarget, startNextMinute, runRef]);
   const targetBit = target === 'BLUE' ? 1 : 0;
   // Accumulate bits across minutes until we have full windows (e.g., 1000 bits)
   const entropyAccumRef = useRef({ subj: [], ghost: [] });
@@ -605,20 +608,20 @@ export default function MainApp() {
     invalidReasonRef.current = '';
   }, []);
   const maybePause = useCallback((now) => {
-    if (!isBuffering && liveBufferedBytes() < PAUSE_THRESHOLD_LT) {
+    if (!isBuffering && liveBufferedBits() < PAUSE_THRESHOLD_LT) {
       setIsBuffering(true);
       pauseCountRef.current += 1;
       pauseStartedAtRef.current = now;
     }
-  }, [isBuffering, liveBufferedBytes]);
+  }, [isBuffering, liveBufferedBits]);
   const maybeResume = useCallback((now) => {
-    if (isBuffering && liveBufferedBytes() >= RESUME_THRESHOLD_GTE) {
+    if (isBuffering && liveBufferedBits() >= RESUME_THRESHOLD_GTE) {
       const dur = now - pauseStartedAtRef.current;
       totalPausedMsRef.current += dur;
       if (dur > longestPauseMsRef.current) longestPauseMsRef.current = dur;
       setIsBuffering(false);
     }
-  }, [isBuffering, liveBufferedBytes]);
+  }, [isBuffering, liveBufferedBits]);
   const shouldInvalidate = useCallback(() => {
     return (
       pauseCountRef.current > MAX_PAUSES ||
@@ -830,8 +833,6 @@ export default function MainApp() {
       trial_data: {
         subject_bits: bitsRef.current, // Decision bits (0 or 1) for trial outcome
         ghost_bits: ghostBitsRef.current, // Ghost decision bits
-        subject_bytes: subjectBytesRef.current, // Full bytes (0-255) for entropy calculation
-        ghost_bytes: ghostBytesRef.current, // Ghost full bytes
         subject_raw_indices: subjectIndicesRef.current,
         ghost_raw_indices: ghostIndicesRef.current,
         trial_strategies: trialStrategiesRef.current, // 1=alternating, 0=independent (for chi-square test separation)
@@ -852,7 +853,7 @@ export default function MainApp() {
     // Update previous block end time for next block's pause calculation
     previousBlockEndTimeRef.current = blockEndTimeRef.current;
   }, [
-    runRef, blockIdx, mappingType, targetBit, liveLastSource, trialsPerBlock
+    runRef, blockIdx, mappingType, targetBit, liveLastSource
   ]);
 
   const endMinute = useCallback(async () => {
@@ -959,53 +960,45 @@ export default function MainApp() {
         return;
       }
 
-      let bit, ghost, subjectRawIndex, ghostRawIndex, subjectByte, ghostByte;
+      let bit, ghost, subjectRawIndex, ghostRawIndex;
       if (C.USE_LIVE_STREAM) {
         const now = performance.now();
         if (isBuffering) { maybeResume(now); return; } // Don't increment i when buffering
         else { maybePause(now); if (isBuffering) { return; } } // Don't increment i when buffering starts
-        // Use trial-level BYTE strategy: odd trials = alternating, even trials = independent
+        // Use trial-level BIT strategy: odd trials = alternating, even trials = independent
         const trialNumber = i + 1; // Convert 0-based to 1-based for odd/even logic
-        const sByteObj = livePopSubjectByte(trialNumber); const gByteObj = livePopGhostByte(trialNumber);
-        if (sByteObj === null || gByteObj === null) {
-          console.warn('🔴 NULL BYTES DETECTED - pausing:', {
+        const sBitObj = livePopSubjectBit(trialNumber); const gBitObj = livePopGhostBit(trialNumber);
+        if (sBitObj === null || gBitObj === null) {
+          console.warn('🔴 NULL BITS DETECTED - pausing:', {
             trialNumber,
-            sByteObj, gByteObj,
-            bufferSize: liveBufferedBytes(),
+            sBitObj, gBitObj,
+            bufferSize: liveBufferedBits(),
             isBuffering
           });
           maybePause(now);
           return;
-        } // Don't increment i when no bytes available
+        } // Don't increment i when no bits available
 
-        // Extract byte values and indices
-        subjectByte = sByteObj.byte;
-        ghostByte = gByteObj.byte;
-        subjectRawIndex = sByteObj.rawIndex;
-        ghostRawIndex = gByteObj.rawIndex;
+        // Extract bit values and indices
+        const subjectBit = sBitObj.bit;
+        const ghostBit = gBitObj.bit;
+        subjectRawIndex = sBitObj.rawIndex;
+        ghostRawIndex = gBitObj.rawIndex;
 
-        // Convert bytes to 8-bit binary strings for entropy storage
-        const subjectBits8 = subjectByte.toString(2).padStart(8, '0');
-        const ghostBits8 = ghostByte.toString(2).padStart(8, '0');
-
-        // Extract 1 bit for trial decision (using LSB - least significant bit)
-        const sBit = subjectBits8[7]; // LSB
-        const gBit = ghostBits8[7];   // LSB
-        bit = sBit === '1' ? 1 : 0;
-        ghost = gBit === '1' ? 1 : 0;
+        // Convert bit strings to integers for display logic
+        bit = subjectBit === '1' ? 1 : 0;
+        ghost = ghostBit === '1' ? 1 : 0;
 
         // Debug early trials to see initial buffer bias
         if (i < 20) {
           console.log(`🔍 EARLY TRIAL ${i}:`, {
-            subjectByte, ghostByte,
-            subjectBits8, ghostBits8,
-            sBit, gBit,
+            subjectBit, ghostBit,
             sNum: bit, gNum: ghost,
             align: bit === targetBit ? 'HIT' : 'MISS',
             ghostAlign: ghost === targetBit ? 'HIT' : 'MISS',
             target: target,
             targetBit: targetBit,
-            bufferSize: liveBufferedBytes()
+            bufferSize: liveBufferedBits()
           });
         }
 
@@ -1022,10 +1015,10 @@ export default function MainApp() {
             ghostHitRate: (ghostHitRate * 100).toFixed(1) + '%',
             diff: ((subjHitRate - ghostHitRate) * 100).toFixed(1) + '%',
             deviation: Math.abs(subjHitRate - 0.5) + Math.abs(ghostHitRate - 0.5),
-            rawBits: { sBit, gBit, sNum: bit, gNum: ghost },
+            rawBits: { subjectBit, ghostBit, sNum: bit, gNum: ghost },
             recent10SubjBits: recentSubjBits,
             recent10GhostBits: recentGhostBits,
-            bufferStatus: liveBufferedBytes()
+            bufferStatus: liveBufferedBits()
           });
         }
         if (shouldInvalidate()) {
@@ -1050,9 +1043,7 @@ export default function MainApp() {
       bitsRef.current.push(bit);
       ghostBitsRef.current.push(ghost);
       if (C.USE_LIVE_STREAM) {
-        // Store full bytes (0-255) for entropy calculation
-        subjectBytesRef.current.push(subjectByte);
-        ghostBytesRef.current.push(ghostByte);
+        // Store QRNG stream indices
         subjectIndicesRef.current.push(subjectRawIndex);
         ghostIndicesRef.current.push(ghostRawIndex);
         // Track strategy: 1=alternating (odd trials), 0=independent (even trials)
@@ -1077,7 +1068,7 @@ export default function MainApp() {
     return () => { if (tickTimerRef.current) { clearInterval(tickTimerRef.current); tickTimerRef.current = null; } };
   }, [
     isRunning, blockIdx, trialsPerMinute, targetBit, target,
-    livePopSubjectByte, livePopGhostByte, liveBufferedBytes, maybePause, maybeResume, shouldInvalidate, trialsPerBlock,
+    livePopSubjectBit, livePopGhostBit, liveBufferedBits, maybePause, maybeResume, shouldInvalidate, trialsPerBlock, isBuffering,
   ]);
 
 
@@ -1088,10 +1079,9 @@ export default function MainApp() {
     if (C.USE_LIVE_STREAM) {
       if (!liveConnected) { liveConnect(); }
       const t0 = Date.now();
-      // WARMUP_BITS_START was 300 bits, now divide by 8 for bytes (~38 bytes)
-      const WARMUP_BYTES_START = Math.ceil(WARMUP_BITS_START / 8);
+      // Wait for WARMUP_BITS_START bits before starting
       while (Date.now() - t0 < WARMUP_TIMEOUT_MS &&
-        liveBufferedBytes() < WARMUP_BYTES_START) {
+        liveBufferedBits() < WARMUP_BITS_START) {
         await new Promise((r) => setTimeout(r, 50));
       }
       resetLivePauseCounters();
@@ -1111,7 +1101,7 @@ export default function MainApp() {
 
   }, [
     // streaming deps
-    liveConnected, liveConnect, liveBufferedBytes, resetLivePauseCounters,
+    liveConnected, liveConnect, liveBufferedBits, resetLivePauseCounters,
     // prefetch model deps
     prefetchLivePairs,
   ]);
@@ -1253,8 +1243,6 @@ export default function MainApp() {
       // Reset all accumulators to prevent bleed into next session
       bitsRef.current = [];
       ghostBitsRef.current = [];
-      subjectBytesRef.current = [];
-      ghostBytesRef.current = [];
       subjectIndicesRef.current = [];
       ghostIndicesRef.current = [];
       trialStrategiesRef.current = [];
@@ -1296,7 +1284,6 @@ export default function MainApp() {
     // All blocks are live now - no retro tracking needed
 
     bitsRef.current = []; ghostBitsRef.current = []; alignedRef.current = [];
-    subjectBytesRef.current = []; ghostBytesRef.current = [];
     subjectIndicesRef.current = []; ghostIndicesRef.current = []; trialStrategiesRef.current = [];
     hitsRef.current = 0; ghostHitsRef.current = 0;
     resetLivePauseCounters();
@@ -1371,8 +1358,14 @@ export default function MainApp() {
 
   // In MainApp.jsx, replace the ConsentGate section with:
 
-  // CONSENT
+  // CONSENT - Skip for auto/AI modes
   if (phase === 'consent') {
+    // Auto and AI modes skip consent and questions
+    if (isAutoMode || isAIMode) {
+      setPhase('prime');
+      return null;
+    }
+
     return (
       <div style={{ position: 'relative' }}>
         <ConsentGate
@@ -1403,8 +1396,14 @@ export default function MainApp() {
     );
   }
 
-  // PRE QUESTIONS (required, highlights missing in red via QuestionsForm)
+  // PRE QUESTIONS - Skip for auto/AI modes
   if (phase === 'preQ') {
+    // Auto and AI modes skip questions
+    if (isAutoMode || isAIMode) {
+      setPhase('prime');
+      return null;
+    }
+
     return (
       <div style={{ position: 'relative' }}>
         <QuestionsForm
@@ -1497,8 +1496,14 @@ export default function MainApp() {
     );
   }
 
-  // INFO SCREEN (binaural beats information)
+  // INFO SCREEN (binaural beats information) - Skip for auto/AI modes
   if (phase === 'info') {
+    // Auto and AI modes skip binaural beats info
+    if (isAutoMode || isAIMode) {
+      setPhase('onboarding');
+      return null;
+    }
+
     const binauralText = "Correlations have been found with some researchers claiming mental coherence increasing PSI through use of binaural beats.";
 
     return (
@@ -1591,9 +1596,23 @@ export default function MainApp() {
       );
     }
 
+    // Handler for target confirmation
+    const handleTargetConfirm = (selectedTarget) => {
+      if (selectedTarget === target) {
+        // Correct target - start experiment
+        if (canContinue && !isRunning) {
+          console.log('✅ Target confirmed:', target);
+          ensureRunDoc().then(() => startNextMinute());
+        }
+      } else {
+        // Wrong target - show alert
+        alert('This is not your target color. Please select the correct target shown above.');
+      }
+    };
+
     return (
       <div style={{ padding: 24, maxWidth: 760, position: 'relative' }}>
-        <h1>Assessing Randomness Suppression During Conscious Intention Tasks — Pilot Study</h1>
+        <h1>{isAIMode ? '🤖 AI Agent Mode' : 'Assessing Randomness Suppression During Conscious Intention Tasks — Pilot Study'}</h1>
         <div style={{
           textAlign: 'center',
           margin: '20px 0',
@@ -1612,115 +1631,64 @@ export default function MainApp() {
             Keep this target the entire session
           </p>
         </div>
+
+        {/* Target confirmation buttons */}
+        <div style={{ textAlign: 'center', margin: '30px 0' }}>
+          <p style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: 20 }}>
+            Confirm your target to begin:
+          </p>
+          <div style={{ display: 'flex', gap: 20, justifyContent: 'center' }}>
+            <button
+              id="target-button-orange"
+              onClick={() => handleTargetConfirm('ORANGE')}
+              disabled={!canContinue}
+              style={{
+                padding: '16px 32px',
+                fontSize: 18,
+                fontWeight: 'bold',
+                background: canContinue ? '#ff8c00' : '#ccc',
+                color: '#fff',
+                border: 'none',
+                borderRadius: 8,
+                cursor: canContinue ? 'pointer' : 'not-allowed',
+                minWidth: 200
+              }}
+            >
+              🟠 My target is ORANGE
+            </button>
+            <button
+              id="target-button-blue"
+              onClick={() => handleTargetConfirm('BLUE')}
+              disabled={!canContinue}
+              style={{
+                padding: '16px 32px',
+                fontSize: 18,
+                fontWeight: 'bold',
+                background: canContinue ? '#1e40af' : '#ccc',
+                color: '#fff',
+                border: 'none',
+                borderRadius: 8,
+                cursor: canContinue ? 'pointer' : 'not-allowed',
+                minWidth: 200
+              }}
+            >
+              🟦 My target is BLUE
+            </button>
+          </div>
+        </div>
         <div style={{ marginBottom: 20 }}>
           <h3 style={{ color: '#2c3e50', marginBottom: 15 }}>What to Expect:</h3>
           <ul>
             <li>You'll complete short blocks with breaks. Nudge the color toward your target.</li>
-            <li>The screen will display visual patterns - stay focused on your target color intention.</li>
+            <li>The screen will show HIT or MISS feedback for each trial - maintain focus on your target color intention.</li>
             <li>During breaks, you'll see your performance summary before continuing.</li>
             {debugUI && (
               <li style={{ opacity: 0.8 }}>{POLICY_TEXT.warmup}; {POLICY_TEXT.pause}; {POLICY_TEXT.resume}</li>
             )}
           </ul>
-
-          <div style={{
-            marginTop: 20,
-            padding: 15,
-            border: '2px solid #e9ecef',
-            borderRadius: 8,
-            background: '#f8f9fa'
-          }}>
-            <h4 style={{ margin: '0 0 10px 0', color: '#495057' }}>Visual Preview:</h4>
-            <p style={{ margin: '5px 0 15px 0', fontSize: 14, color: '#6c757d' }}>
-              You'll see patterns like this during the experiment:
-            </p>
-            <div style={{
-              background: '#f0f0f0',
-              borderRadius: 8,
-              padding: 20,
-              display: 'flex',
-              justifyContent: 'center',
-              alignItems: 'center',
-              minHeight: 200,
-              border: '1px dashed #ccc'
-            }}>
-              <div style={{ display: 'flex', gap: 20, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center' }}>
-                <div style={{ textAlign: 'center' }}>
-                  <img
-                    src={`${process.env.PUBLIC_URL}/ring-pattern.webp`}
-                    alt="Ring pattern example"
-                    loading="lazy"
-                    style={{
-                      maxWidth: 150,
-                      height: 'auto',
-                      borderRadius: 8,
-                      imageRendering: 'crisp-edges'
-                    }}
-                    onError={(e) => {
-                      console.log('Image failed to load:', e.target.src);
-                      e.target.style.display = 'none';
-                    }}
-                    onLoad={() => console.log('Image loaded successfully')}
-                  />
-                  <p style={{ fontSize: 12, color: '#666', marginTop: 8 }}>Ring Pattern</p>
-                </div>
-                <div style={{ textAlign: 'center' }}>
-                  <img
-                    src={`${process.env.PUBLIC_URL}/mosaic-pattern.webp`}
-                    alt="Mosaic pattern example"
-                    loading="lazy"
-                    style={{
-                      maxWidth: 150,
-                      height: 'auto',
-                      borderRadius: 8,
-                      imageRendering: 'crisp-edges'
-                    }}
-                    onError={(e) => {
-                      console.log('Mosaic image failed to load:', e.target.src);
-                      e.target.style.display = 'none';
-                    }}
-                    onLoad={() => console.log('Mosaic image loaded successfully')}
-                  />
-                  <p style={{ fontSize: 12, color: '#666', marginTop: 8 }}>Mosaic Pattern</p>
-                </div>
-              </div>
-            </div>
-            <p style={{ margin: '10px 0 5px 0', fontSize: 13, color: '#6c757d', fontStyle: 'italic' }}>
-              Focus on your intention to influence the patterns toward your target color.
-              The patterns will change continuously during the experiment.
-            </p>
-          </div>
         </div>
 
-        {/* Tape creation button removed - all blocks use live streams */}
-
-        <div style={{ marginTop: 12 }}>
-          <button
-            className="primary-btn"
-            disabled={!canContinue}
-            onClick={async () => {
-              console.log('🔍 DEBUGGING: Start Trials clicked', { runRef: !!runRef, runRefId: runRef?.id });
-              if (!runRef) {
-                console.log('🔍 DEBUGGING: No runRef, calling ensureRunDoc');
-                await ensureRunDoc();
-                console.log('🔍 DEBUGGING: After ensureRunDoc', { runRef: !!runRef, runRefId: runRef?.id });
-              }
-              startNextMinute();
-            }}
-            style={{
-              padding: '10px 16px',
-              borderRadius: 8,
-              border: '1px solid #999',
-              background: canContinue ? '#1a8f1a' : '#ccc',
-              color: canContinue ? '#fff' : '#444',
-              cursor: canContinue ? 'pointer' : 'not-allowed',
-              transition: 'background 150ms ease',
-              marginRight: debugUI ? 12 : 0
-            }}
-          >
-            Start Trials
-          </button>
-        </div>
+        {/* Start Trials button removed - target confirmation buttons now start the experiment */}
       </div>
     );
   }
@@ -1795,6 +1763,19 @@ export default function MainApp() {
     const isLive = true; // All blocks are live now
     const trialsPlanned = trialsPerBlock;
 
+    // Expose state for AI agent to read
+    if (isAIMode && typeof window !== 'undefined') {
+      window.expState = {
+        target,
+        score: alignedRef.current.length > 0 ? Math.round((hitsRef.current / alignedRef.current.length) * 100) : 0,
+        hits: hitsRef.current,
+        trials: alignedRef.current.length,
+        totalTrials: trialsPerBlock,
+        blockIdx: blockIdx + 1,
+        totalBlocks: C.BLOCKS_TOTAL
+      };
+    }
+
     return (
       <div
         style={{
@@ -1818,25 +1799,31 @@ export default function MainApp() {
           </div>
         )}
 
-        <DataCollectionErrorBoundary>
-          <MappingDisplay
-            key={`block-${blockIdx}`}
-            mapping={mappingType}
-            bit={bitsRef.current[bitsRef.current.length - 1] ?? 0}
-            targetBit={targetBit}
-            target={target}
-            segments={trialsPlanned}
-            trialOutcomes={alignedRef.current.map(align => align === 1)} // Convert 1/0 to true/false
-            onFrameDelta={mappingType === "high_entropy"
-              ? (alignedRef.current.length > 0 ? hitsRef.current / alignedRef.current.length : 0.5)
-              : ((f) => {
-                  const m = microEntropyRef.current;
-                  m.sum += Math.max(0, Math.min(1, f));
-                  m.count += 1;
-                })
-            }
-          />
-        </DataCollectionErrorBoundary>
+        <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '50vh' }}>
+          <div style={{ marginBottom: 80, fontSize: 48, color: '#666' }}>
+            Target: <strong style={{ fontSize: 64, color: target === 'BLUE' ? '#1e40af' : target === 'RED' ? '#dc2626' : target === 'GREEN' ? '#16a34a' : '#ea580c' }}>{target}</strong>
+          </div>
+
+          {alignedRef.current.length > 0 && (
+            <div style={{
+              fontSize: 120,
+              fontWeight: 'bold',
+              marginBottom: 80,
+              color: alignedRef.current[alignedRef.current.length - 1] === 1
+                ? (target === 'BLUE' ? '#1e40af' : target === 'RED' ? '#dc2626' : target === 'GREEN' ? '#16a34a' : '#ea580c')
+                : (target === 'BLUE' ? '#ea580c' : target === 'RED' ? '#16a34a' : target === 'GREEN' ? '#dc2626' : '#1e40af')
+            }}>
+              {alignedRef.current[alignedRef.current.length - 1] === 1 ? 'HIT' : 'MISS'}
+            </div>
+          )}
+
+          <div style={{ fontSize: 48 }}>
+            Score: <strong style={{ fontSize: 64 }}>{alignedRef.current.length > 0 ? Math.round((hitsRef.current / alignedRef.current.length) * 100) : 0}%</strong>
+            <div style={{ fontSize: 32, marginTop: 20, color: '#666' }}>
+              ({hitsRef.current}/{alignedRef.current.length})
+            </div>
+          </div>
+        </div>
 
         <div
           style={{
@@ -1865,7 +1852,7 @@ export default function MainApp() {
                 )}
                 {isLive && C.USE_LIVE_STREAM && (
                   <span style={{ marginLeft: 6, opacity: 0.7 }}>
-                    [live src: {liveLastSource || '—'} · buf {liveBufferedBytes()} bytes]
+                    [live src: {liveLastSource || '—'} · buf {liveBufferedBits()} bits]
                   </span>
                 )}
               </>
@@ -2007,8 +1994,14 @@ export default function MainApp() {
     );
   }
 
-  // POST QUESTIONS
+  // POST QUESTIONS - Skip for auto/AI modes
   if (phase === 'done') {
+    // Auto and AI modes skip post questions and go straight to results
+    if (isAutoMode || isAIMode) {
+      setPhase('results');
+      return null;
+    }
+
     return (
       <div style={{ position: 'relative' }}>
         <QuestionsForm

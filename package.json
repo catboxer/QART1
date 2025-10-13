@@ -14,5 +14,9 @@
   },
   "keywords": [],
   "author": "",
-  "license": "ISC"
+  "license": "ISC",
+  "dependencies": {
+    "openai": "^6.3.0",
+    "puppeteer": "^24.24.0"
+  }
 }
