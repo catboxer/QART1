@@ -508,6 +508,93 @@ export default function MainApp() {
   const [ghostTapeLoading, setGhostTapeLoading] = useState(false);
   const ghostTapeIndexRef = useRef(0); // Track current position in ghost tape
 
+  // Process trials with 3-way interleaving (subject/demon/ghost)
+  const processTrials = useCallback((subjectDemonTape) => {
+    console.log('🎲 Processing 155 trials with 3-way interleaving...');
+
+    // Clear previous block data
+    bitsRef.current = [];
+    ghostBitsRef.current = [];
+    demonBitsRef.current = [];
+    alignedRef.current = [];
+    hitsRef.current = 0;
+    ghostHitsRef.current = 0;
+    demonHitsRef.current = 0;
+
+    // Determine target bit (0 or 1)
+    const targetBit = target === 'BLUE' ? 1 : 0;
+
+    // Process 155 trials
+    for (let i = 0; i < C.TRIALS_PER_BLOCK; i++) {
+      // Subject gets even indices from subject+demon tape
+      const subjectBit = parseInt(subjectDemonTape[i * 2], 10);
+      // Demon gets odd indices from subject+demon tape (alternating)
+      const demonBit = parseInt(subjectDemonTape[i * 2 + 1], 10);
+      // Ghost gets sequential bits from pre-fetched tape
+      const ghostBit = parseInt(ghostTape[ghostTapeIndexRef.current], 10);
+      ghostTapeIndexRef.current++;
+
+      // Store bits
+      bitsRef.current.push(subjectBit);
+      demonBitsRef.current.push(demonBit);
+      ghostBitsRef.current.push(ghostBit);
+
+      // Calculate outcomes (1 = HIT, 0 = MISS)
+      const subjectOutcome = subjectBit === targetBit ? 1 : 0;
+      const demonOutcome = demonBit === targetBit ? 1 : 0;
+      const ghostOutcome = ghostBit === targetBit ? 1 : 0;
+
+      alignedRef.current.push(subjectOutcome);
+
+      // Count hits
+      if (subjectOutcome === 1) hitsRef.current++;
+      if (demonOutcome === 1) demonHitsRef.current++;
+      if (ghostOutcome === 1) ghostHitsRef.current++;
+    }
+
+    const subjectScore = (hitsRef.current / C.TRIALS_PER_BLOCK * 100).toFixed(1);
+    const demonScore = (demonHitsRef.current / C.TRIALS_PER_BLOCK * 100).toFixed(1);
+    const ghostScore = (ghostHitsRef.current / C.TRIALS_PER_BLOCK * 100).toFixed(1);
+
+    console.log('✅ Trials processed:', {
+      subject: `${subjectScore}% (${hitsRef.current}/${C.TRIALS_PER_BLOCK})`,
+      demon: `${demonScore}% (${demonHitsRef.current}/${C.TRIALS_PER_BLOCK})`,
+      ghost: `${ghostScore}% (${ghostHitsRef.current}/${C.TRIALS_PER_BLOCK})`
+    });
+
+    // Calculate stats and save block
+    const k = hitsRef.current;
+    const n = C.TRIALS_PER_BLOCK;
+    const z = zFromBinom(k, n, 0.5);
+    const pTwo = twoSidedP(z);
+
+    const blockSummary = {
+      k,
+      n,
+      z,
+      pTwo,
+      kg: ghostHitsRef.current,
+      kd: demonHitsRef.current,
+      ng: n,
+      nd: n,
+      zg: zFromBinom(ghostHitsRef.current, n, 0.5),
+      zd: zFromBinom(demonHitsRef.current, n, 0.5),
+      pg: twoSidedP(zFromBinom(ghostHitsRef.current, n, 0.5)),
+      pd: twoSidedP(zFromBinom(demonHitsRef.current, n, 0.5)),
+      kind: 'instant'
+    };
+
+    setLastBlock(blockSummary);
+    setTotals((t) => ({ k: t.k + k, n: t.n + n }));
+
+    // Increment block index
+    setblockIdx((prev) => prev + 1);
+
+    // Save to Firestore (we'll implement this next)
+    // persistMinute will need to be updated to handle the new format
+
+  }, [target, ghostTape]);
+
   // Pre-fetch ghost tape when moving past consent (during instructions/questions)
   useEffect(() => {
     if (phase === 'consent' || ghostTape || ghostTapeLoading) return; // Only fetch once
@@ -528,6 +615,31 @@ export default function MainApp() {
         });
     }
   }, [phase, ghostTape, ghostTapeLoading]);
+
+  // Fetch subject+demon tape when entering fetching phase, then process trials
+  useEffect(() => {
+    if (phase !== 'fetching') return;
+
+    console.log('🎯 Fetching subject+demon tape (' + C.BITS_PER_BLOCK + ' bits) during focused intention...');
+
+    fetchQRNGBits(C.BITS_PER_BLOCK)
+      .then(subjectDemonTape => {
+        console.log('✅ Subject+demon tape fetched:', subjectDemonTape.length, 'bits');
+
+        // Process all 155 trials instantly with 3-way interleaving
+        processTrials(subjectDemonTape);
+
+        // Move to rest phase to show results
+        setTimeout(() => {
+          setPhase('rest');
+        }, 500); // Brief delay to show completion
+      })
+      .catch(err => {
+        console.error('❌ Failed to fetch subject+demon tape:', err);
+        alert('Failed to fetch quantum data. Please try again.');
+        setPhase('rest'); // Go back to rest screen
+      });
+  }, [phase]);
 
   // Auto-mode: Skip consent/questions, auto-restart, and auto-continue rest screens
   useEffect(() => {
@@ -1722,67 +1834,143 @@ export default function MainApp() {
   }
 
   // PRIME
-  // REST (manual Continue; participant score only; RedundancyGate for retro)
+  // REST - Shows results and prepares for next block
   if (phase === 'rest') {
     const pctLast = lastBlock && lastBlock.n ? Math.round((100 * lastBlock.k) / lastBlock.n) : 0;
-    // All blocks are live now - simplified rest phase
-
-    // We're bypassing participant UI, but still auditing silently.
-
-    const redundancyReady = true;
+    const isFirstBlock = blockIdx === 0;
 
     return (
-      <div style={{ padding: 24, textAlign: 'center', position: 'relative' }}>
-        <p>Take a short breather…</p>
+      <div style={{ padding: 24, textAlign: 'center', position: 'relative', maxWidth: 600, margin: '0 auto' }}>
+        {!isFirstBlock && (
+          <>
+            <h2 style={{ marginBottom: 20 }}>Block {blockIdx} Complete</h2>
 
-        {/* Participant score (no ghost) */}
-        {lastBlock && lastBlock.n > 0 && (
-          <div
-            style={{
-              display: 'inline-block',
-              padding: '8px 12px',
-              borderRadius: 8,
-              border: '1px solid #ddd',
-              background: '#f7f7f7',
-              marginBottom: 8,
-              fontWeight: 600
-            }}
-          >
-            Last block: {pctLast}% ({lastBlock.k}/{lastBlock.n})
-          </div>
+            {/* Show last block score */}
+            {lastBlock && lastBlock.n > 0 && (
+              <div
+                style={{
+                  display: 'inline-block',
+                  padding: '16px 24px',
+                  borderRadius: 12,
+                  border: '2px solid #ddd',
+                  background: '#f9f9f9',
+                  marginBottom: 24,
+                  fontSize: 24,
+                  fontWeight: 600
+                }}
+              >
+                Your Score: {pctLast}% ({lastBlock.k}/{lastBlock.n} HITs)
+              </div>
+            )}
+
+            {/* Optional totals board */}
+            <BlockScoreboard
+              last={lastBlock || { k: hitsRef.current, n: alignedRef.current.length, z: 0, pTwo: 1, kg: 0, ng: 0, zg: 0, pg: 1, kind: 'live' }}
+              totals={totals}
+              targetSide={target}
+              hideGhost={true}
+              hideBlockType={true}
+            />
+          </>
         )}
 
-        {/* Optional totals board (ghost hidden if your component supports) */}
-        <BlockScoreboard
-          last={lastBlock || { k: hitsRef.current, n: alignedRef.current.length, z: 0, pTwo: 1, kg: 0, ng: 0, zg: 0, pg: 1, kind: 'live' }}
-          totals={totals}
-          targetSide={target}
-          hideGhost={true}
-          hideBlockType={true}
-        />
+        {/* Focus prompt for next block */}
+        <div style={{
+          marginTop: 32,
+          padding: 24,
+          background: '#f0f7ff',
+          borderRadius: 12,
+          border: '2px solid #3b82f6'
+        }}>
+          <p style={{ fontSize: 18, marginBottom: 16, fontWeight: 500 }}>
+            {isFirstBlock ? 'Ready to begin?' : 'Ready for the next block?'}
+          </p>
+          <p style={{ fontSize: 16, marginBottom: 8, color: '#555' }}>
+            We're about to fetch quantum data from the QRNG.
+          </p>
+          <p style={{ fontSize: 16, marginBottom: 20, color: '#555' }}>
+            <strong>Focus on your target color</strong> ({target === 'BLUE' ? '🟦 BLUE' : '🟠 ORANGE'}) and click when ready.
+          </p>
 
-        <div style={{ marginTop: 12 }}>
           <button
-            onClick={() => startNextMinute()}
-            disabled={!redundancyReady}
+            onClick={() => setPhase('fetching')}
             style={{
-              padding: '10px 16px',
+              padding: '16px 48px',
+              fontSize: 20,
+              fontWeight: 'bold',
               borderRadius: 8,
-              border: '1px solid #999',
-              background: redundancyReady ? '#1a8f1a' : '#ccc',
-              color: redundancyReady ? '#fff' : '#444',
-              cursor: redundancyReady ? 'pointer' : 'not-allowed',
-              transition: 'background 150ms ease'
+              border: 'none',
+              background: target === 'BLUE' ? '#1e40af' : '#ea580c',
+              color: '#fff',
+              cursor: 'pointer',
+              transition: 'transform 0.1s',
             }}
+            onMouseDown={(e) => e.currentTarget.style.transform = 'scale(0.95)'}
+            onMouseUp={(e) => e.currentTarget.style.transform = 'scale(1)'}
+            onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
           >
-            {!redundancyReady ? 'Complete check above…' : 'Continue'}
+            I'm Ready
           </button>
-          <div style={{ fontSize: 12, opacity: 0.75, marginTop: 8 }}>
-            Block {blockIdx + 1} of {C.BLOCKS_TOTAL} complete
-          </div>
         </div>
 
+        <div style={{ fontSize: 14, opacity: 0.75, marginTop: 16 }}>
+          Block {blockIdx + 1} of {C.BLOCKS_TOTAL}
+        </div>
       </div>
+    );
+  }
+
+  // FETCHING - Full-screen target color with 5Hz pulse + white spinner
+  if (phase === 'fetching') {
+    const targetColor = target === 'BLUE' ? '#1e40af' : '#ea580c';
+    const pulseKeyframes = `
+      @keyframes breathe {
+        0%, 100% { opacity: 0.7; }
+        50% { opacity: 1; }
+      }
+    `;
+
+    return (
+      <>
+        <style>{pulseKeyframes}</style>
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          background: targetColor,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          animation: 'breathe 200ms ease-in-out infinite', // 5 Hz = 200ms cycle
+        }}>
+          {/* White spinner */}
+          <div style={{
+            width: 80,
+            height: 80,
+            border: '8px solid rgba(255, 255, 255, 0.3)',
+            borderTop: '8px solid white',
+            borderRadius: '50%',
+            animation: 'spin 1s linear infinite',
+            marginBottom: 24
+          }} />
+
+          <style>{`
+            @keyframes spin {
+              0% { transform: rotate(0deg); }
+              100% { transform: rotate(360deg); }
+            }
+          `}</style>
+
+          <p style={{
+            color: 'white',
+            fontSize: 24,
+            fontWeight: 500,
+            textAlign: 'center'
+          }}>
+            Fetching quantum data...
+          </p>
+        </div>
+      </>
     );
   }
 
