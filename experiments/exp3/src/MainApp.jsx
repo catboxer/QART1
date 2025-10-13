@@ -783,11 +783,14 @@ export default function MainApp() {
     const n = alignedRef.current.length;
     const k = hitsRef.current;
     const kg = ghostHitsRef.current;
+    const kd = demonHitsRef.current;
 
     const z = zFromBinom(k, n, 0.5);
     const pTwo = twoSidedP(z);
     const zg = zFromBinom(kg, n, 0.5);
     const pg = twoSidedP(zg);
+    const zd = zFromBinom(kd, n, 0.5);
+    const pd = twoSidedP(zd);
 
     const cohRange = cumulativeRange(bitsRef.current);
     const hurst = hurstApprox(bitsRef.current);
@@ -796,6 +799,10 @@ export default function MainApp() {
     const gCohRange = cumulativeRange(ghostBitsRef.current);
     const gHurst = hurstApprox(ghostBitsRef.current);
     const gAc1 = lag1Autocorr(ghostBitsRef.current);
+
+    const dCohRange = cumulativeRange(demonBitsRef.current);
+    const dHurst = hurstApprox(demonBitsRef.current);
+    const dAc1 = lag1Autocorr(demonBitsRef.current);
 
     // All blocks are live now
     const kind = 'live';
@@ -895,7 +902,7 @@ export default function MainApp() {
 
     const mdoc = doc(runRef, 'minutes', String(blockIdx));
 
-    const blockSummary = { k, n, z, pTwo, kg: ghostHitsRef.current, ng: n, zg, pg, kind };
+    const blockSummary = { k, n, z, pTwo, kg: ghostHitsRef.current, kd: demonHitsRef.current, ng: n, nd: n, zg, zd, pg, pd, kind };
     setLastBlock(blockSummary);
     setTotals((t) => ({ k: t.k + k, n: t.n + n }));
 
@@ -908,10 +915,12 @@ export default function MainApp() {
       startedAt: serverTimestamp(),
       n, hits: k, z, pTwo,
       ghost_hits: kg, ghost_z: zg, ghost_pTwo: pg,
+      demon_hits: kd, demon_z: zd, demon_pTwo: pd,
       // No tape metadata for live streams
       coherence: { cumRange: cohRange, hurst },
       resonance: { ac1 },
       ghost_metrics: { coherence: { cumRange: gCohRange, hurst: gHurst }, resonance: { ac1: gAc1 } },
+      demon_metrics: { coherence: { cumRange: dCohRange, hurst: dHurst }, resonance: { ac1: dAc1 } },
       mapping_type: mappingType,
       // Block-level timing (replaces per-trial timestamps)
       timing: {
