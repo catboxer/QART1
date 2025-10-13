@@ -747,11 +747,13 @@ function computeTrialSpectralAnalysis(sessions) {
 function filterSessions(sessions, mode, binauralFilter, primeFilter, mappingFilter, sessionFilter = 'all', sessionTypeFilter = 'all') {
   let filtered = sessions;
 
-  // Filter by session type (regular vs baseline)
-  if (sessionTypeFilter === 'regular') {
-    filtered = filtered.filter(s => !s.session_type || (s.session_type !== 'session_runner' && s.session_type !== 'baseline'));
-  } else if (sessionTypeFilter === 'baseline') {
-    filtered = filtered.filter(s => s.session_type === 'baseline' || s.session_type === 'session_runner');
+  // Filter by session type (human, ai_agent, or baseline/auto-mode)
+  if (sessionTypeFilter === 'human') {
+    filtered = filtered.filter(s => s.session_type === 'human' || (!s.session_type && s.mode === 'human'));
+  } else if (sessionTypeFilter === 'ai') {
+    filtered = filtered.filter(s => s.session_type === 'ai_agent' || s.mode === 'ai');
+  } else if (sessionTypeFilter === 'auto') {
+    filtered = filtered.filter(s => s.session_type === 'baseline' || s.mode === 'baseline');
   }
 
   // Filter by completion status
@@ -835,8 +837,9 @@ async function fetchTrialData(sessionId, blockIdx) {
 
 async function fetchAllRunsWithMinutes(includeTrials = true) {
   try {
+    // Fetch only from experiment3_ai_responses (contains all human, baseline, and ai_agent sessions)
     const runsSnap = await getDocs(
-      query(collection(db, 'experiment3_responses'), orderBy('createdAt', 'desc'))
+      query(collection(db, 'experiment3_ai_responses'), orderBy('createdAt', 'desc'))
     );
     const runs = runsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
     const out = [];
@@ -844,7 +847,7 @@ async function fetchAllRunsWithMinutes(includeTrials = true) {
     for (const r of runs) {
       try {
         const minsSnap = await getDocs(
-          collection(db, 'experiment3_responses', r.id, 'minutes')
+          collection(db, 'experiment3_ai_responses', r.id, 'minutes')
         );
         const minutes = minsSnap.docs
           .map((d) => ({ id: d.id, ...d.data() }))
@@ -4827,7 +4830,7 @@ export default function QAExport() {
   const primeFilter = 'all'; // Everyone is primed now - no filter needed
   const [mappingFilter, setMappingFilter] = useState('all');
   const [sessionFilter, setSessionFilter] = useState('all'); // all, first, repeat
-  const [sessionTypeFilter, setSessionTypeFilter] = useState('all'); // all, regular, session_runner
+  const [sessionTypeFilter, setSessionTypeFilter] = useState('all'); // all, human, ai, auto
   // Removed dataTypeFilter - all data is live now
   const [qaStatus, setQaStatus] = useState(null);
   const [canToggle, setCanToggle] = useState(false);
@@ -5175,8 +5178,9 @@ export default function QAExport() {
         <span style={{ fontSize: 12, color: '#555' }}>Data source:</span>
         {[
           { id: 'all', label: 'All data' },
-          { id: 'regular', label: 'Regular sessions' },
-          { id: 'baseline', label: 'Baseline (Auto-mode)' },
+          { id: 'human', label: 'Human' },
+          { id: 'ai', label: 'AI Agent' },
+          { id: 'auto', label: 'Auto-mode (Baseline)' },
         ].map((opt) => (
           <label
             key={opt.id}

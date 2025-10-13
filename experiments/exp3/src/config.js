@@ -9,12 +9,13 @@ export const config = {
 config.experiments = {
   pk: {
     EXPERIMENT_ID: 'pk_live_pilot_v1',
-    VISUAL_HZ: 5,                  // 200 ms ticks
-    BLOCK_MS: 30000,               // 30 s blocks (~150 trials)
+    VISUAL_HZ: 5,                  // 200 ms ticks (no longer used in new design)
+    BLOCK_MS: 30000,               // Not used in new instant-fetch design
     REST_MS: 2500,                 // 2.5 s breather
-    BLOCKS_TOTAL: 20,             // 20 blocks ≈ 10 min total runtime
-    USE_LIVE_STREAM: true,          // Always use live quantum stream
-    LIVE_STREAM_DURATION_MS: 90_000, // how long to stream per LS minute
+    BLOCKS_TOTAL: 20,             // 20 blocks of focus → fetch → results
+    USE_LIVE_STREAM: false,        // Use on-demand tape fetching instead
+    LIVE_STREAM_DURATION_MS: 90_000, // Not used in new design
+    BITS_PER_BLOCK: 310,           // Fetch 310 bits per block (155 trials × 2 for subject+ghost interleaving)
     NEEDLE_WINDOW: 20,
     PRIME_PROB: 0.75, // 75% prime / 25% neutral
     TARGET_SIDES: ['RED', 'GREEN'],
