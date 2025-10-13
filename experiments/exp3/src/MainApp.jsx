@@ -610,8 +610,7 @@ export default function MainApp() {
         .catch(err => {
           console.error('❌ Failed to pre-fetch ghost tape:', err);
           setGhostTapeLoading(false);
-          // Show error to user
-          alert('Failed to fetch quantum data. Please refresh and try again.');
+          // Button stays disabled, user will see "Please Wait..." and can refresh if needed
         });
     }
   }, [phase, ghostTape, ghostTapeLoading]);
@@ -1847,6 +1846,7 @@ export default function MainApp() {
   if (phase === 'rest') {
     const pctLast = lastBlock && lastBlock.n ? Math.round((100 * lastBlock.k) / lastBlock.n) : 0;
     const isFirstBlock = blockIdx === 0;
+    const isGhostTapeReady = ghostTape !== null;
 
     return (
       <div style={{ padding: 24, textAlign: 'center', position: 'relative', maxWidth: 600, margin: '0 auto' }}>
@@ -1894,31 +1894,58 @@ export default function MainApp() {
           <p style={{ fontSize: 18, marginBottom: 16, fontWeight: 500 }}>
             {isFirstBlock ? 'Ready to begin?' : 'Ready for the next block?'}
           </p>
-          <p style={{ fontSize: 16, marginBottom: 8, color: '#555' }}>
-            We're about to fetch quantum data from the QRNG.
-          </p>
-          <p style={{ fontSize: 16, marginBottom: 20, color: '#555' }}>
-            <strong>Focus on your target color</strong> ({target === 'BLUE' ? '🟦 BLUE' : '🟠 ORANGE'}) and click when ready.
-          </p>
+
+          {/* Show loading state if ghost tape not ready */}
+          {!isGhostTapeReady && (
+            <div style={{ marginBottom: 20 }}>
+              <div style={{
+                display: 'inline-block',
+                width: 24,
+                height: 24,
+                border: '3px solid #ddd',
+                borderTop: '3px solid #3b82f6',
+                borderRadius: '50%',
+                animation: 'spin 1s linear infinite',
+                marginRight: 12,
+                verticalAlign: 'middle'
+              }} />
+              <span style={{ fontSize: 16, color: '#666' }}>
+                Connecting to quantum source...
+              </span>
+            </div>
+          )}
+
+          {isGhostTapeReady && (
+            <>
+              <p style={{ fontSize: 16, marginBottom: 8, color: '#555' }}>
+                We're about to fetch quantum data from the QRNG.
+              </p>
+              <p style={{ fontSize: 16, marginBottom: 20, color: '#555' }}>
+                <strong>Focus on your target color</strong> ({target === 'BLUE' ? '🟦 BLUE' : '🟠 ORANGE'}) and click when ready.
+              </p>
+            </>
+          )}
 
           <button
             onClick={() => setPhase('fetching')}
+            disabled={!isGhostTapeReady}
             style={{
               padding: '16px 48px',
               fontSize: 20,
               fontWeight: 'bold',
               borderRadius: 8,
               border: 'none',
-              background: target === 'BLUE' ? '#1e40af' : '#ea580c',
+              background: isGhostTapeReady ? (target === 'BLUE' ? '#1e40af' : '#ea580c') : '#ccc',
               color: '#fff',
-              cursor: 'pointer',
+              cursor: isGhostTapeReady ? 'pointer' : 'not-allowed',
               transition: 'transform 0.1s',
+              opacity: isGhostTapeReady ? 1 : 0.6
             }}
-            onMouseDown={(e) => e.currentTarget.style.transform = 'scale(0.95)'}
-            onMouseUp={(e) => e.currentTarget.style.transform = 'scale(1)'}
-            onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
+            onMouseDown={(e) => isGhostTapeReady && (e.currentTarget.style.transform = 'scale(0.95)')}
+            onMouseUp={(e) => isGhostTapeReady && (e.currentTarget.style.transform = 'scale(1)')}
+            onMouseLeave={(e) => isGhostTapeReady && (e.currentTarget.style.transform = 'scale(1)')}
           >
-            I'm Ready
+            {isGhostTapeReady ? "I'm Ready" : 'Please Wait...'}
           </button>
         </div>
 

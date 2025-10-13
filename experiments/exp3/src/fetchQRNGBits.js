@@ -10,25 +10,31 @@ export async function fetchQRNGBits(nBits) {
   console.log(`🎲 Fetching ${nBits} bits from QRNG...`);
 
   try {
-    // Use the live edge function for one-time fetch
-    const url = `/live?dur=10000`; // 10 second duration
+    // Calculate duration: need ~150 bits/sec, so for 3100 bits = ~21 seconds
+    // For 310 bits = ~3 seconds
+    const estimatedSeconds = Math.ceil(nBits / 150) + 5; // Add 5 second buffer
+    const duration = Math.min(estimatedSeconds * 1000, 60000); // Cap at 60 seconds
+    const url = `/live?dur=${duration}`;
+
+    console.log(`📡 SSE duration: ${duration}ms for ${nBits} bits`);
 
     return new Promise((resolve, reject) => {
       const eventSource = new EventSource(url);
       let collectedBits = '';
       let timeout;
 
-      // Set timeout for fetch (15 seconds max)
+      // Set timeout: 2x the expected duration or 60 seconds, whichever is less
+      const timeoutMs = Math.min(duration * 2, 60000);
       timeout = setTimeout(() => {
         eventSource.close();
         if (collectedBits.length >= nBits) {
           console.log(`✅ Got ${collectedBits.length} bits (timeout but sufficient)`);
           resolve(collectedBits.slice(0, nBits));
         } else {
-          console.error(`❌ Timeout: only got ${collectedBits.length}/${nBits} bits`);
+          console.error(`❌ Timeout: only got ${collectedBits.length}/${nBits} bits after ${timeoutMs}ms`);
           reject(new Error(`Timeout: only got ${collectedBits.length}/${nBits} bits`));
         }
-      }, 15000);
+      }, timeoutMs);
 
       eventSource.addEventListener('bits', (e) => {
         try {
@@ -53,8 +59,12 @@ export async function fetchQRNGBits(nBits) {
       eventSource.addEventListener('error', (err) => {
         clearTimeout(timeout);
         eventSource.close();
-        console.error('❌ EventSource error:', err);
-        reject(new Error('EventSource connection failed'));
+        console.error('❌ EventSource error:', err, {
+          readyState: eventSource.readyState,
+          collectedSoFar: collectedBits.length,
+          needed: nBits
+        });
+        reject(new Error(`EventSource connection failed (collected ${collectedBits.length}/${nBits} bits)`));
       });
 
       // Log when connection opens
