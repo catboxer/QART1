@@ -21,6 +21,7 @@ import {
   collection, doc, addDoc, setDoc, getDoc, getDocs, updateDoc, serverTimestamp,
 } from 'firebase/firestore';
 import { useLiveStreamQueue } from './useLiveStreamQueue.js';
+import { fetchQRNGBits } from './fetchQRNGBits.js';
 import { MappingDisplay } from './SelectionMappings.jsx';
 import { preQuestions, postQuestions } from './questions.js';
 import { QuestionsForm } from './Forms.jsx';
@@ -497,9 +498,36 @@ export default function MainApp() {
 
   const bitsRef = useRef([]); const ghostBitsRef = useRef([]); const alignedRef = useRef([]);
   const hitsRef = useRef(0); const ghostHitsRef = useRef(0);
+  const demonBitsRef = useRef([]); const demonHitsRef = useRef(0); // Demon control (alternating with subject)
   const subjectIndicesRef = useRef([]); const ghostIndicesRef = useRef([]); // Track raw QRNG stream indices
   const trialStrategiesRef = useRef([]); // Track which strategy each trial used (1=alternating, 0=independent)
   const trialsPerMinute = trialsPerBlock;
+
+  // Ghost tape: Pre-fetched QRNG bits (3100 bits for entire session)
+  const [ghostTape, setGhostTape] = useState(null);
+  const [ghostTapeLoading, setGhostTapeLoading] = useState(false);
+  const ghostTapeIndexRef = useRef(0); // Track current position in ghost tape
+
+  // Pre-fetch ghost tape when moving past consent (during instructions/questions)
+  useEffect(() => {
+    if (phase === 'consent' || ghostTape || ghostTapeLoading) return; // Only fetch once
+    if (phase === 'preQ' || phase === 'prime' || phase === 'info' || phase === 'onboarding') {
+      console.log('🎲 Pre-fetching ghost tape (' + C.GHOST_BITS_TOTAL + ' bits) in background...');
+      setGhostTapeLoading(true);
+      fetchQRNGBits(C.GHOST_BITS_TOTAL)
+        .then(bits => {
+          console.log('✅ Ghost tape pre-fetched successfully:', bits.length, 'bits');
+          setGhostTape(bits);
+          setGhostTapeLoading(false);
+        })
+        .catch(err => {
+          console.error('❌ Failed to pre-fetch ghost tape:', err);
+          setGhostTapeLoading(false);
+          // Show error to user
+          alert('Failed to fetch quantum data. Please refresh and try again.');
+        });
+    }
+  }, [phase, ghostTape, ghostTapeLoading]);
 
   // Auto-mode: Skip consent/questions, auto-restart, and auto-continue rest screens
   useEffect(() => {
@@ -1679,8 +1707,8 @@ export default function MainApp() {
         <div style={{ marginBottom: 20 }}>
           <h3 style={{ color: '#2c3e50', marginBottom: 15 }}>What to Expect:</h3>
           <ul>
-            <li>You'll complete short blocks with breaks. Nudge the color toward your target.</li>
-            <li>The screen will show HIT or MISS feedback for each trial - maintain focus on your target color intention.</li>
+            <li>You'll complete short blocks with breaks. Your only task is to focus on making your target color appear more often.</li>
+            <li>During each block, maintain continuous intention on your target - no feedback will be shown.</li>
             <li>During breaks, you'll see your performance summary before continuing.</li>
             {debugUI && (
               <li style={{ opacity: 0.8 }}>{POLICY_TEXT.warmup}; {POLICY_TEXT.pause}; {POLICY_TEXT.resume}</li>
@@ -1801,27 +1829,11 @@ export default function MainApp() {
 
         <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '50vh' }}>
           <div style={{ marginBottom: 80, fontSize: 48, color: '#666' }}>
-            Target: <strong style={{ fontSize: 64, color: target === 'BLUE' ? '#1e40af' : target === 'RED' ? '#dc2626' : target === 'GREEN' ? '#16a34a' : '#ea580c' }}>{target}</strong>
+            Focus on: <strong style={{ fontSize: 64, color: target === 'BLUE' ? '#1e40af' : target === 'RED' ? '#dc2626' : target === 'GREEN' ? '#16a34a' : '#ea580c' }}>{target}</strong>
           </div>
 
-          {alignedRef.current.length > 0 && (
-            <div style={{
-              fontSize: 120,
-              fontWeight: 'bold',
-              marginBottom: 80,
-              color: alignedRef.current[alignedRef.current.length - 1] === 1
-                ? (target === 'BLUE' ? '#1e40af' : target === 'RED' ? '#dc2626' : target === 'GREEN' ? '#16a34a' : '#ea580c')
-                : (target === 'BLUE' ? '#ea580c' : target === 'RED' ? '#16a34a' : target === 'GREEN' ? '#dc2626' : '#1e40af')
-            }}>
-              {alignedRef.current[alignedRef.current.length - 1] === 1 ? 'HIT' : 'MISS'}
-            </div>
-          )}
-
-          <div style={{ fontSize: 48 }}>
-            Score: <strong style={{ fontSize: 64 }}>{alignedRef.current.length > 0 ? Math.round((hitsRef.current / alignedRef.current.length) * 100) : 0}%</strong>
-            <div style={{ fontSize: 32, marginTop: 20, color: '#666' }}>
-              ({hitsRef.current}/{alignedRef.current.length})
-            </div>
+          <div style={{ fontSize: 32, color: '#999', fontStyle: 'italic' }}>
+            Maintain your intention...
           </div>
         </div>
 

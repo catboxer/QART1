@@ -73,8 +73,7 @@ Session ID: ${sessionId || "(not provided)"}
 
         <h2 style={{ marginTop: 0 }}>🎉 You’re a high scorer!</h2>
         <p>
-          You’ve clearly got the touch. Join our shortlist for future studies and
-          we’ll thank you with an organic PSI “Founding Ψ Cohort” hoodie.
+          You’ve clearly got the touch. Join our shortlist for future studies.
         </p>
 
        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", justifyContent: "center" }}>

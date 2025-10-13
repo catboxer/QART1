@@ -8,17 +8,19 @@ export const config = {
 // Experiment constants grouped under experiments.pk
 config.experiments = {
   pk: {
-    EXPERIMENT_ID: 'pk_live_pilot_v1',
-    VISUAL_HZ: 5,                  // 200 ms ticks (no longer used in new design)
+    EXPERIMENT_ID: 'pk_focus_fetch_v1',
+    VISUAL_HZ: 5,                  // 5 Hz pulse frequency for loading screen
     BLOCK_MS: 30000,               // Not used in new instant-fetch design
     REST_MS: 2500,                 // 2.5 s breather
     BLOCKS_TOTAL: 20,             // 20 blocks of focus → fetch → results
+    TRIALS_PER_BLOCK: 155,        // Number of trials per block
     USE_LIVE_STREAM: false,        // Use on-demand tape fetching instead
     LIVE_STREAM_DURATION_MS: 90_000, // Not used in new design
-    BITS_PER_BLOCK: 310,           // Fetch 310 bits per block (155 trials × 2 for subject+ghost interleaving)
+    BITS_PER_BLOCK: 310,           // Fetch 310 bits per block (155 trials × 2 for subject+demon interleaving)
+    GHOST_BITS_TOTAL: 3100,        // Pre-fetch 3100 bits for ghost (155 trials × 20 blocks)
     NEEDLE_WINDOW: 20,
     PRIME_PROB: 0.75, // 75% prime / 25% neutral
-    TARGET_SIDES: ['RED', 'GREEN'],
+    TARGET_SIDES: ['BLUE', 'ORANGE'], // Color targets for visualization (hardcoded in MainApp)
     LOW_CONTRAST_MODE: false, // default OFF (toggle available)
     SHOW_FEEDBACK_GAUGE: false, // circular gauge showing real-time performance
     SHOW_CONDITION_IN_HUD: false,
