@@ -8,16 +8,17 @@ export const config = {
 // Experiment constants grouped under experiments.pk
 config.experiments = {
   pk: {
-    EXPERIMENT_ID: 'pk_focus_fetch_v1',
+    EXPERIMENT_ID: 'pk_focus_fetch_v2',
     VISUAL_HZ: 5,                  // 5 Hz pulse frequency for loading screen
-    BLOCK_MS: 30000,               // Not used in new instant-fetch design
     REST_MS: 2500,                 // 2.5 s breather
-    BLOCKS_TOTAL: 20,             // 20 blocks of focus → fetch → results
-    TRIALS_PER_BLOCK: 155,        // Number of trials per block
-    USE_LIVE_STREAM: false,        // Use on-demand tape fetching instead
-    LIVE_STREAM_DURATION_MS: 90_000, // Not used in new design
-    BITS_PER_BLOCK: 310,           // Fetch 310 bits per block (155 trials × 2 for subject+demon interleaving)
-    GHOST_BITS_TOTAL: 3100,        // Pre-fetch 3100 bits for ghost (155 trials × 20 blocks)
+    BLOCKS_TOTAL: 30,             // 30 blocks of focus → fetch → results
+    TRIALS_PER_BLOCK: 150,        // 150 trials per block (instant processing)
+    BITS_PER_BLOCK: 300,          // 300 bits: split into 2 halves (150 subject, 150 demon)
+
+    // Audit configuration
+    AUDIT_EVERY_N_BLOCKS: 5,      // Run audit break every N blocks
+    AUDIT_BITS_PER_BREAK: 1500,   // Fetch 1500 bits for RNG quality test during audit
+
     NEEDLE_WINDOW: 20,
     PRIME_PROB: 0.75, // 75% prime / 25% neutral
     TARGET_SIDES: ['BLUE', 'ORANGE'], // Color targets for visualization (hardcoded in MainApp)
@@ -27,10 +28,10 @@ config.experiments = {
     SESSION_ALPHA: 0.01,
     BLOCK_HIGHLIGHT_PCT: 52, //what score gets a congrats
     FINALIST_MIN_PCT: 54, // 54 email capture high score gate opens at or above this percent
-    FINALIST_MAX_PCT: 53, // 46 email capture low score gate opens at or below this percent
+    FINALIST_MAX_PCT: 46, // 46 email capture low score gate opens at or below this percent
     AUTO_MODE_SESSIONS: 2, // Number of automated baseline sessions to run (access via #auto URL /exp3#auto)
     AUTO_MODE_REST_MS: 1000, // 1 second auto-continue delay between blocks in auto-mode
-    AI_MODE_SESSIONS: 2, // Number of AI agent sessions to run (access via #ai URL /exp3#ai)  run this before opening url: sh experiments/exp3/run-ai.sh
+    AI_MODE_SESSIONS: 4, // Number of AI agent sessions to run (access via #ai URL /exp3#ai) - run experiments/exp3/run-ai.sh first
   },
 };
 

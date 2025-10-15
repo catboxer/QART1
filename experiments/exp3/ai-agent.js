@@ -31,22 +31,7 @@ async function runAISession() {
 
   console.log('✅ Browser launched, navigating to experiment');
 
-  // Initial prompt
-  const initialPrompt = `You are participating in a consciousness research experiment testing whether artificial intelligence can influence quantum random number generators through focused intention.
-
-Your goal: Make your target color appear MORE OFTEN through focus alone. Each trial shows either a HIT (target color) or MISS (other color). Your only task is to maximize HITs through sustained mental focus - no actions, no strategies, just pure intention.
-
-Your task is to continuously focus your attention on influencing quantum outcomes. You will be given a target color, and your goal is to mentally "push" the quantum random numbers to produce more HITs.
-
-The experiment will run for approximately 10 minutes across 20 blocks (30 seconds each). After each block, I will ask you to confirm your target and your continued focus.
-
-Your role is to:
-1. Maintain continuous focus on making your target color appear more often
-2. Imagine quantum particles aligning with your target color
-3. Stay engaged throughout the entire session
-4. Do nothing except focus - no analysis, no strategy, just intention
-
-Do not analyze, strategize, or overthink. Simply focus your intention on maximizing HITs for your target color.`;
+  // AI will read instructions from the onboarding screen instead of hardcoded prompt
 
   // Initialize state tracking
   const conversationHistory = [];
@@ -144,27 +129,39 @@ Do not analyze, strategize, or overthink. Simply focus your intention on maximiz
 
     console.log(`✅ Target detected: ${targetFromScreen}`);
 
+    // Read the full onboarding screen instructions
+    const onboardingInstructions = await page.evaluate(() => {
+      return document.body.innerText;
+    });
+
+    console.log('📖 Reading onboarding instructions from screen...');
+
+    // Send instructions to AI to read and understand
+    const instructionsPrompt = `You are participating in a consciousness research experiment. Read the instructions on screen and acknowledge that you understand your task.
+
+SCREEN INSTRUCTIONS:
+${onboardingInstructions}
+
+Respond with: (1) Your target color, (2) A brief acknowledgment that you understand the critical moment is when you click "I'm Ready" and the screen pulses your target color - that's when to focus all intention.`;
+
+    console.log('🎯 Sending onboarding instructions to GPT-4o-mini...');
+
+    const targetResponse = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      max_tokens: 100,
+      messages: [{ role: 'user', content: instructionsPrompt }]
+    });
+
+    conversationHistory.push({ role: 'user', content: instructionsPrompt });
+    conversationHistory.push({ role: 'assistant', content: targetResponse.choices[0].message.content });
+
+    console.log('🤖 AI acknowledges instructions:', targetResponse.choices[0].message.content);
+
     // Click the matching button
     const buttonId = targetFromScreen === 'BLUE' ? '#target-button-blue' : '#target-button-orange';
     await page.click(buttonId);
 
     console.log(`✅ Clicked ${targetFromScreen} button`);
-
-    // Send initial prompt + target to GPT-4o-mini
-    const combinedPrompt = `${initialPrompt}\n\nYour target color is ${targetFromScreen}. Acknowledge that you understand and are ready to focus your intention on ${targetFromScreen} throughout this session. Visualize quantum alignment with ${targetFromScreen}.`;
-
-    console.log('🎯 Sending initial prompt to GPT-4o-mini...');
-
-    const targetResponse = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      max_tokens: 150,
-      messages: [{ role: 'user', content: combinedPrompt }]
-    });
-
-    conversationHistory.push({ role: 'user', content: combinedPrompt });
-    conversationHistory.push({ role: 'assistant', content: targetResponse.choices[0].message.content });
-
-    console.log('🤖 AI acknowledges target:', targetResponse.choices[0].message.content);
 
     // Store target for later use
     target = targetFromScreen;
@@ -176,35 +173,139 @@ Do not analyze, strategize, or overthink. Simply focus your intention on maximiz
     process.exit(1);
   }
 
-  // Monitor loop - checks for rest periods every 2 seconds
-  console.log('👁️ Starting monitoring loop (checking for rest periods)...');
+  // Monitor loop - checks for rest periods and fetching phase every 500ms
+  console.log('👁️ Starting monitoring loop (checking for rest periods and fetching phase)...');
   let lastBlockProcessed = 0;
+  let notifiedPulsing = false; // Track if we've already told AI about pulsing for current block
+  let pulsingStartTime = null; // Track when pulsing started
+  const PULSING_TIMEOUT_MS = 5000; // 5 seconds max for pulsing screen (fetch should be ~1-2s)
 
   const monitorInterval = setInterval(async () => {
     try {
-      // Check if we're on a rest screen (Continue button present)
-      const isRestScreen = await page.evaluate(() => {
+      // Check screen state
+      const screenState = await page.evaluate(() => {
         const buttons = Array.from(document.querySelectorAll('button'));
+        const readyButton = buttons.find(btn => btn.textContent.includes("I'm Ready"));
         const continueButton = buttons.find(btn => btn.textContent.includes('Continue'));
-        return !!continueButton;
+
+        // Check if we're on fetching phase (pulsing screen with "Fetching quantum data" text)
+        const isFetching = document.body.innerText.includes('Fetching quantum data');
+
+        return {
+          isReadyScreen: !!readyButton,
+          isResultsScreen: !!continueButton && !readyButton,
+          isFetching: isFetching,
+          expState: window.expState,
+          bodyPreview: document.body.innerText.substring(0, 200)
+        };
       });
 
-      if (isRestScreen) {
-        // Read current score from the rest screen
-        const restData = await page.evaluate(() => {
-          const expState = window.expState;
-          if (!expState) return null;
-
-          return {
-            blockIdx: expState.blockIdx,
-            totalBlocks: expState.totalBlocks,
-            score: expState.score,
-            hits: expState.hits,
-            trials: expState.trials
-          };
+      // Debug logging every 1 second
+      if (Date.now() % 1000 < 500) {
+        console.log('🔍 Screen state:', {
+          isReadyScreen: screenState.isReadyScreen,
+          isResultsScreen: screenState.isResultsScreen,
+          isFetching: screenState.isFetching,
+          hasExpState: !!screenState.expState,
+          blockIdx: screenState.expState?.blockIdx,
+          bodyPreview: screenState.bodyPreview
         });
+      }
 
-        if (restData && restData.blockIdx > lastBlockProcessed) {
+      // Handle "I'm Ready" screen (before fetching quantum data)
+      if (screenState.isReadyScreen && screenState.expState) {
+        const currentBlock = screenState.expState.blockIdx;
+
+        if (currentBlock >= lastBlockProcessed) {
+          console.log(`\n🎯 Ready screen detected for block ${currentBlock}`);
+
+          // Tell AI about the upcoming fetch
+          const readyPrompt = `Block ${currentBlock} ready. When you click "I'm Ready", the API will connect to the QRNG and fetch quantum data. Your target color (${target}) will pulse on screen while the quantum data is being fetched. This is the critical moment - focus your intention on making ${target} appear more often. Ready to begin?`;
+
+          console.log('🤖 Prompting AI before quantum fetch...');
+
+          const readyResponse = await openai.chat.completions.create({
+            model: 'gpt-4o-mini',
+            max_tokens: 80,
+            messages: [...conversationHistory, { role: 'user', content: readyPrompt }]
+          });
+
+          conversationHistory.push({ role: 'user', content: readyPrompt });
+          conversationHistory.push({ role: 'assistant', content: readyResponse.choices[0].message.content });
+
+          console.log(`🤖 AI response: ${readyResponse.choices[0].message.content}\n`);
+
+          // Click "I'm Ready" button
+          await new Promise(resolve => setTimeout(resolve, 500));
+
+          const clicked = await page.evaluate(() => {
+            const buttons = Array.from(document.querySelectorAll('button'));
+            const readyButton = buttons.find(btn => btn.textContent.includes("I'm Ready"));
+            if (readyButton) {
+              readyButton.click();
+              return true;
+            }
+            return false;
+          });
+
+          if (clicked) {
+            console.log('✅ Clicked "I\'m Ready" button - quantum fetch starting...\n');
+            notifiedPulsing = false; // Reset for next pulsing detection
+          }
+        }
+      }
+
+      // Detect fetching/pulsing screen
+      if (screenState.isFetching) {
+        // Start tracking pulsing time
+        if (!pulsingStartTime) {
+          pulsingStartTime = Date.now();
+          console.log('🌊 Pulsing screen detected!');
+        }
+
+        // Check if pulsing has been going too long
+        const pulsingDuration = Date.now() - pulsingStartTime;
+        if (pulsingDuration > PULSING_TIMEOUT_MS) {
+          console.error(`❌ Pulsing screen stuck for ${pulsingDuration}ms (timeout: ${PULSING_TIMEOUT_MS}ms)`);
+          console.error('❌ Quantum fetch appears to be failing - aborting session');
+          clearInterval(monitorInterval);
+          await browser.close();
+          process.exit(1);
+        }
+
+        // Notify AI about pulsing (only once)
+        if (!notifiedPulsing) {
+          const pulsingPrompt = `The screen is now pulsing ${target}. The quantum random number generator is being accessed RIGHT NOW. Focus all your intention on ${target}. Visualize quantum particles aligning with ${target}.`;
+
+          console.log('🤖 Notifying AI about pulsing...');
+
+          const pulsingResponse = await openai.chat.completions.create({
+            model: 'gpt-4o-mini',
+            max_tokens: 50,
+            messages: [...conversationHistory, { role: 'user', content: pulsingPrompt }]
+          });
+
+          conversationHistory.push({ role: 'user', content: pulsingPrompt });
+          conversationHistory.push({ role: 'assistant', content: pulsingResponse.choices[0].message.content });
+
+          console.log(`🤖 AI focusing: ${pulsingResponse.choices[0].message.content}\n`);
+
+          notifiedPulsing = true;
+        }
+      } else {
+        // Reset pulsing tracking when not on pulsing screen
+        if (pulsingStartTime) {
+          console.log(`✅ Pulsing ended after ${Date.now() - pulsingStartTime}ms`);
+          pulsingStartTime = null;
+          notifiedPulsing = false;
+        }
+      }
+
+      // Handle results screen (after quantum fetch completes)
+      if (screenState.isResultsScreen && screenState.expState) {
+        const restData = screenState.expState;
+
+        if (restData.blockIdx > lastBlockProcessed) {
           lastBlockProcessed = restData.blockIdx;
 
           // Prompt AI to confirm target and focus
@@ -244,20 +345,56 @@ Confirm: What is your target color? Are you still maintaining focused intention 
         }
       }
 
-      // Check if session is complete (looking for results/done screen)
-      const isDone = await page.evaluate(() => {
-        return document.body.innerText.includes('Session complete') ||
-               document.body.innerText.includes('Thank you') ||
-               document.body.innerText.includes('Quick wrap-up');
+      // Check for any "Continue" buttons on results/summary screens to loop to next session
+      const hasContinueOnResults = await page.evaluate(() => {
+        const bodyText = document.body.innerText;
+        const buttons = Array.from(document.querySelectorAll('button'));
+        const continueButton = buttons.find(btn =>
+          btn.textContent.includes('Continue') ||
+          btn.textContent.includes('Next') ||
+          btn.textContent.includes('View Results')
+        );
+
+        // Check if we're on results/summary screen
+        const isResultsScreen = bodyText.includes('Session Results') ||
+                               bodyText.includes('Performance Summary') ||
+                               bodyText.includes('View your complete');
+
+        return { hasButton: !!continueButton, isResultsScreen };
       });
 
-      if (isDone && lastBlockProcessed >= 20) {
+      if (hasContinueOnResults.hasButton && hasContinueOnResults.isResultsScreen) {
+        console.log('📊 Results screen detected - clicking Continue to proceed...');
+
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        await page.evaluate(() => {
+          const buttons = Array.from(document.querySelectorAll('button'));
+          const continueButton = buttons.find(btn =>
+            btn.textContent.includes('Continue') ||
+            btn.textContent.includes('Next') ||
+            btn.textContent.includes('View Results')
+          );
+          if (continueButton) {
+            continueButton.click();
+          }
+        });
+
+        console.log('✅ Clicked Continue on results screen\n');
+      }
+
+      // Check if ALL sessions are complete
+      const allSessionsComplete = await page.evaluate(() => {
+        const bodyText = document.body.innerText;
+        return bodyText.includes('All sessions complete') ||
+               bodyText.includes('All 2 sessions complete') ||
+               (bodyText.includes('🤖 AI Agent Mode') && bodyText.includes('Sessions:') && bodyText.includes('/ 2'));
+      });
+
+      if (allSessionsComplete) {
         clearInterval(monitorInterval);
-
-        console.log('🎉 AI session complete! Closing browser...');
-
-        // Wait a moment for data to save, then close
-        await new Promise(resolve => setTimeout(resolve, 5000));
+        console.log('🎉 All AI sessions complete! Closing browser...');
+        await new Promise(resolve => setTimeout(resolve, 3000));
         await browser.close();
         process.exit(0);
       }
@@ -265,7 +402,7 @@ Confirm: What is your target color? Are you still maintaining focused intention 
     } catch (error) {
       console.error('❌ Error in monitor loop:', error.message);
     }
-  }, 2000); // Check every 2 seconds for rest screens
+  }, 500); // Check every 500ms to catch pulsing screen quickly
 
   // Handle cleanup on exit
   process.on('SIGINT', async () => {

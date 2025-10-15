@@ -61,7 +61,7 @@ function computeStatistics(sessions, mode = 'pooled', binauralFilter = 'all', pr
 
       sessionHits += minute.hits || 0;
       sessionTrials += minute.n || 0;
-      sessionGhostHits += minute.ghost_hits || 0;
+      sessionGhostHits += minute.demon_hits || 0;
 
       // Debug: Check what data is actually available
       if (sessions.length === 1 && sessionStats.length === 0) { // Only log once
@@ -78,46 +78,17 @@ function computeStatistics(sessions, mode = 'pooled', binauralFilter = 'all', pr
       }
 
       // Collect raw bit sequences for entropy calculation
-      // Try to use bytes first (new format), fallback to bits (old format)
-      const subjectBytes = minute.trial_data?.subject_bytes;
-      const ghostBytes = minute.trial_data?.ghost_bytes;
+      const subjectBits = minute.trial_data?.subject_bits;
+      const demonBits = minute.trial_data?.demon_bits;
 
-      if (subjectBytes && Array.isArray(subjectBytes)) {
-        // Convert bytes to bits (8 bits per byte)
-        for (const byte of subjectBytes) {
-          const bits8 = byte.toString(2).padStart(8, '0');
-          for (let i = 0; i < 8; i++) {
-            const bit = parseInt(bits8[i]);
-            sessionSubjectBits.push(bit);
-            allSubjectBits.push(bit);
-          }
-        }
-      } else {
-        // Fallback to old bit format
-        const subjBits = minute.trial_data?.subject_bits || minute.subjectBitSequence;
-        if (subjBits && Array.isArray(subjBits)) {
-          sessionSubjectBits.push(...subjBits);
-          allSubjectBits.push(...subjBits);
-        }
+      if (subjectBits && Array.isArray(subjectBits)) {
+        sessionSubjectBits.push(...subjectBits);
+        allSubjectBits.push(...subjectBits);
       }
 
-      if (ghostBytes && Array.isArray(ghostBytes)) {
-        // Convert bytes to bits (8 bits per byte)
-        for (const byte of ghostBytes) {
-          const bits8 = byte.toString(2).padStart(8, '0');
-          for (let i = 0; i < 8; i++) {
-            const bit = parseInt(bits8[i]);
-            sessionGhostBits.push(bit);
-            allGhostBits.push(bit);
-          }
-        }
-      } else {
-        // Fallback to old bit format
-        const ghostBits = minute.trial_data?.ghost_bits || minute.ghostBitSequence;
-        if (ghostBits && Array.isArray(ghostBits)) {
-          sessionGhostBits.push(...ghostBits);
-          allGhostBits.push(...ghostBits);
-        }
+      if (demonBits && Array.isArray(demonBits)) {
+        sessionGhostBits.push(...demonBits);
+        allGhostBits.push(...demonBits);
       }
     });
 
@@ -151,31 +122,42 @@ function computeStatistics(sessions, mode = 'pooled', binauralFilter = 'all', pr
   });
 
   // Calculate proper Shannon entropy from collected raw bit sequences
-  const subjectEntropy = allSubjectBits.length > 0 ? shannonEntropy(allSubjectBits) : 0;
-  const ghostEntropy = allGhostBits.length > 0 ? shannonEntropy(allGhostBits) : 0;
-  const avgEntropy = (subjectEntropy + ghostEntropy) / 2;
+  // Calculate average block-level entropy for SUBJECT ONLY
+  let totalSubjectEntropy = 0;
+  let subjectEntropyCount = 0;
+
+  sessions.forEach(session => {
+    (session.minutes || []).forEach(minute => {
+      const blockEntropySubj = minute.entropy?.block_entropy_subj;
+
+      if (blockEntropySubj !== undefined) {
+        totalSubjectEntropy += blockEntropySubj;
+        subjectEntropyCount += 1;
+      }
+    });
+  });
+
+  const avgEntropy = subjectEntropyCount > 0 ? totalSubjectEntropy / subjectEntropyCount : 0;
 
   // Debug entropy calculation
-  if (allSubjectBits.length > 0) {
+  if (subjectEntropyCount > 0) {
     console.log('🔍 ENTROPY DEBUG:', {
-      subjectBits: allSubjectBits.length,
-      ghostBits: allGhostBits.length,
-      subjectEntropy: subjectEntropy.toFixed(4),
-      ghostEntropy: ghostEntropy.toFixed(4),
-      avgEntropy: avgEntropy.toFixed(4),
-      sampleSubjectBits: allSubjectBits.slice(0, 20).join('')
+      subjectBlocks: subjectEntropyCount,
+      avgSubjectEntropy: avgEntropy.toFixed(4),
+      note: 'Subject entropy only (focus condition)'
     });
   }
 
   const avgHitRate = totalTrials > 0 ? totalHits / totalTrials : 0;
   const avgGhostHitRate = totalTrials > 0 ? totalGhostHits / totalTrials : 0;
 
-  // Count total entropy windows across all sessions
+  // Count total entropy blocks across all sessions (each block = 150 bits)
   let totalEntropyWindows = 0;
   sessions.forEach(session => {
     (session.minutes || []).forEach(minute => {
-      const subjWindows = minute.entropy?.new_windows_subj || [];
-      totalEntropyWindows += subjWindows.length;
+      if (minute.entropy?.block_entropy_subj !== undefined) {
+        totalEntropyWindows += 1; // Each 150-bit block = 1 entropy measurement
+      }
     });
   });
 
@@ -818,23 +800,6 @@ function filterSessions(sessions, mode, binauralFilter, primeFilter, mappingFilt
   return filtered;
 }
 
-// Enhanced function to fetch trial-level data from subcollections
-async function fetchTrialData(sessionId, blockIdx) {
-  // Trial data is now stored as arrays in the block document (trial_data field)
-  // No longer using subcollection - this is for backward compatibility only
-  try {
-    const trialsSnap = await getDocs(
-      collection(db, 'experiment3_responses', sessionId, 'minutes', blockIdx.toString(), 'trials')
-    );
-    return trialsSnap.docs
-      .map((d) => ({ id: d.id, ...d.data() }))
-      .sort((a, b) => (a.trialIndex ?? 0) - (b.trialIndex ?? 0));
-  } catch (err) {
-    console.warn(`Failed to fetch trials for session ${sessionId}, block ${blockIdx}:`, err);
-    return [];
-  }
-}
-
 async function fetchAllRunsWithMinutes(includeTrials = true) {
   try {
     // Fetch only from experiment3_ai_responses (contains all human, baseline, and ai_agent sessions)
@@ -857,9 +822,10 @@ async function fetchAllRunsWithMinutes(includeTrials = true) {
         if (includeTrials) {
           for (let minute of minutes) {
             // Check if trial data is in new array format (efficient)
+            // New format only: trial_data contains subject_bits, demon_bits arrays
             if (minute.trial_data && minute.trial_data.subject_bits) {
               const subjectBits = minute.trial_data.subject_bits;
-              const ghostBits = minute.trial_data.ghost_bits;
+              const ghostBits = minute.trial_data.demon_bits;
               const targetBit = minute.trial_data.target_bit;
 
               // Generate sequences from arrays
@@ -868,38 +834,27 @@ async function fetchAllRunsWithMinutes(includeTrials = true) {
               minute.subjectSequence = subjectBits.map(bit => bit === targetBit ? 1 : 0);
               minute.ghostSequence = ghostBits.map(bit => bit === targetBit ? 1 : 0);
               minute.targetSequence = new Array(subjectBits.length).fill(targetBit);
-              minute.trialTimestamps = []; // Timestamps are block-level now
-              minute.trials = []; // Legacy format, kept for compatibility
-            } else {
-              // Fallback to old subcollection format for backward compatibility
-              const blockIdx = minute.idx ?? 0;
-              const trials = await fetchTrialData(r.id, blockIdx);
-              minute.trials = trials;
-
-              if (trials.length > 0) {
-                minute.subjectSequence = trials.map(t => t.subjectOutcome ?? (t.subjectBit === t.targetBit ? 1 : 0));
-                minute.ghostSequence = trials.map(t => t.ghostOutcome ?? (t.ghostBit === t.targetBit ? 1 : 0));
-                minute.subjectBitSequence = trials.map(t => t.subjectBit ?? 0);
-                minute.ghostBitSequence = trials.map(t => t.ghostBit ?? 0);
-                minute.targetSequence = trials.map(t => t.targetBit ?? 0);
-                minute.trialTimestamps = trials.map(t => t.timestamp ?? 0);
-              } else {
-                // No trial data available
-                minute.subjectSequence = [];
-                minute.ghostSequence = [];
-                minute.subjectBitSequence = [];
-                minute.ghostBitSequence = [];
-                minute.targetSequence = [];
-                minute.trialTimestamps = [];
-              }
+              minute.trialTimestamps = [];
+              minute.trials = [];
             }
           }
         }
 
-        out.push({ ...r, minutes });
+        // Fetch audit data
+        let audits = [];
+        try {
+          const auditsSnap = await getDocs(
+            collection(db, 'experiment3_ai_responses', r.id, 'audits')
+          );
+          audits = auditsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        } catch (err) {
+          console.warn(`Failed to fetch audits for run ${r.id}:`, err);
+        }
+
+        out.push({ ...r, minutes, audits });
       } catch (err) {
         console.warn(`Failed to fetch minutes for run ${r.id}:`, err);
-        out.push({ ...r, minutes: [] });
+        out.push({ ...r, minutes: [], audits: [] });
       }
     }
     return out;
@@ -1060,7 +1015,7 @@ function PrimaryPerformanceMetrics({ sessions, stats }) {
 // Unified Temporal & Control Analysis Component
 function UnifiedTemporalControlAnalysis({ sessions }) {
   const temporalMetrics = useMemo(() => {
-    // Block-to-block analysis for individual blocks (each minute = ~150 trials = 1 block)
+    // Block-to-block analysis for individual blocks (each minute = 150 trials = 1 block, 300 bits fetched per block)
     const blockSequences = [];
     const sessionAnalytics = [];
 
@@ -1292,13 +1247,13 @@ function UnifiedTemporalControlAnalysis({ sessions }) {
     sessions.forEach(session => {
       (session.minutes || []).forEach(minute => {
         const subjectHitRate = minute.n > 0 ? minute.hits / minute.n : 0.5;
-        const ghostHitRate = minute.n > 0 ? (minute.ghost_hits || 0) / minute.n : 0.5;
+        const demonHitRate = minute.n > 0 ? (minute.demon_hits || 0) / minute.n : 0.5;
 
         ghostBlocks.push({
           sessionId: session.id,
           blockIndex: minute.idx || 0,
-          hitRate: ghostHitRate,
-          hits: minute.ghost_hits || 0,
+          hitRate: demonHitRate,
+          hits: minute.demon_hits || 0,
           trials: minute.n || 0,
         });
 
@@ -1313,7 +1268,7 @@ function UnifiedTemporalControlAnalysis({ sessions }) {
             sessionId: session.id,
             blockIndex: minute.idx || 0,
             subjectHitRate,
-            ghostHitRate,
+            ghostHitRate: demonHitRate,
             entropy: avgEntropy,
           });
         }
@@ -1481,7 +1436,7 @@ function UnifiedTemporalControlAnalysis({ sessions }) {
           maxCorrelation: subjectGhostCrossCorr?.maxCorrelation || 0,
           maxLag: subjectGhostCrossCorr?.maxLag || 0,
           zeroLagCorrelation: subjectGhostCorrelation,
-          interpretation: Math.abs(subjectGhostCorrelation) < 0.1 ? 'Independent streams' :
+          interpretation: Math.abs(subjectGhostCorrelation) < 0.1 ? 'Independent halves (expected)' :
                          Math.abs(subjectGhostCorrelation) < 0.3 ? 'Weak correlation' : 'Strong correlation'
         },
         spectralComparison: {
@@ -1894,7 +1849,7 @@ function UnifiedTemporalControlAnalysis({ sessions }) {
         <div style={{ marginBottom: 24 }}>
           <h4 style={{ marginBottom: 12, color: '#374151' }}>Subject-Ghost Stream Independence</h4>
           <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 16 }}>
-            Low correlation confirms proper bit spacing between subject and ghost quantum streams.
+            Low correlation confirms proper randomization between subject/demon half assignments (from single 300-bit fetch per block).
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
@@ -2003,67 +1958,6 @@ function UnifiedTemporalControlAnalysis({ sessions }) {
         )}
       </div>
 
-      {/* DATA QUALITY VALIDATION SECTION */}
-      <div style={{ marginTop: 32, padding: 24, border: '2px solid #059669', borderRadius: 8, background: '#f0fdf4' }}>
-        <h3 style={{ marginBottom: 16, color: '#059669', fontWeight: 'bold' }}>Data Quality Validation</h3>
-
-        {/* Ghost Control Metrics */}
-        <div style={{ marginBottom: 24 }}>
-          <h4 style={{ marginBottom: 12, color: '#374151' }}>Ghost Control Performance</h4>
-          <div style={{ fontSize: 13, color: '#6b7280', marginBottom: 12 }}>
-            Ghost stream should remain at chance (50%) - deviations indicate systematic biases.
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 16 }}>
-            <div style={{ padding: 16, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff' }}>
-              <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}>Ghost Hit Rate</div>
-              <div style={{ fontSize: 20, fontWeight: 'bold', color: '#374151' }}>
-                {(temporalMetrics.dataQuality.overallGhostRate * 100).toFixed(2)}%
-              </div>
-              <div style={{ fontSize: 10, color: '#6b7280', marginTop: 2 }}>
-                {temporalMetrics.dataQuality.totalGhostTrials.toLocaleString()} trials
-              </div>
-            </div>
-
-            <PBadge
-              label="Ghost Deviation from 50%"
-              p={temporalMetrics.dataQuality.ghostP}
-              style={{ padding: 16 }}
-            />
-
-            <div style={{ padding: 16, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff' }}>
-              <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}>Z-Score</div>
-              <div style={{ fontSize: 20, fontWeight: 'bold', color: '#374151' }}>
-                {temporalMetrics.dataQuality.ghostZ.toFixed(3)}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Session Health Scores */}
-        <div style={{ marginBottom: 24 }}>
-          <h4 style={{ marginBottom: 12, color: '#374151' }}>Session Health Metrics</h4>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-            <div style={{ padding: 16, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff' }}>
-              <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}>Data Completion Rate</div>
-              <div style={{ fontSize: 20, fontWeight: 'bold', color: '#374151' }}>
-                {(temporalMetrics.dataQuality.dataCompletionRate * 100).toFixed(1)}%
-              </div>
-              <div style={{ fontSize: 10, color: '#6b7280', marginTop: 2 }}>
-                {temporalMetrics.dataQuality.totalMinutes} total blocks
-              </div>
-            </div>
-            <div style={{ padding: 16, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff' }}>
-              <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}>Avg Health Score</div>
-              <div style={{ fontSize: 20, fontWeight: 'bold', color: '#374151' }}>
-                {(temporalMetrics.dataQuality.avgHealthScore * 100).toFixed(1)}%
-              </div>
-              <div style={{ fontSize: 10, color: '#6b7280', marginTop: 2 }}>
-                Composite quality metric
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
 
       <div style={{ fontSize: 12, color: '#6b7280', fontStyle: 'italic', marginTop: 24 }}>
         * indicates statistical significance (p &lt; 0.05)
@@ -2081,52 +1975,74 @@ function EntropySignatures({ sessions }) {
     const entropyBySession = [];
 
     const allWindows = []; // Store all windows with temporal info
+    const subjectWindows = []; // Subject only
+    const demonWindows = []; // Demon only
+    const auditWindows = []; // Audit only
 
     sessions.forEach(session => {
       const sessionEntropy = [];
       const sessionWindows = [];
 
-      (session.minutes || []).forEach(minute => {
-        // Extract entropy windows from both old and new structure
-        const subjWindows = minute.entropy?.new_windows_subj || [];
+      (session.minutes || []).forEach((minute, blockIdx) => {
+        // Use block-level entropy (150-bit blocks)
+        const blockEntropySubj = minute.entropy?.block_entropy_subj;
+        const blockEntropyDemon = minute.entropy?.block_entropy_demon;
 
-        // Debug logging
-        if (minute.entropy) {
-          console.log('📊 Entropy data found in minute:', {
-            minuteIdx: minute.idx,
+        // Add subject entropy
+        if (blockEntropySubj !== undefined && !isNaN(blockEntropySubj)) {
+          entropyValues.push(blockEntropySubj);
+          sessionEntropy.push(blockEntropySubj);
+          const windowData = {
+            entropy: blockEntropySubj,
+            windowIndex: blockIdx,
             sessionId: session.id,
-            new_windows_subj_count: subjWindows.length,
-            sample_window: subjWindows[0],
-            block_entropy_subj: minute.entropy.block_entropy_subj,
-            block_entropy_ghost: minute.entropy.block_entropy_ghost
+            type: 'subject'
+          };
+          allWindows.push(windowData);
+          subjectWindows.push(windowData);
+          sessionWindows.push({
+            entropy: blockEntropySubj,
+            windowIndex: blockIdx
           });
         }
-        subjWindows.forEach(window => {
-          let entropyValue, windowIndex;
-          if (typeof window === 'number') {
-            // Old structure: array of numbers
-            entropyValue = window;
-            windowIndex = null; // No temporal info available
-          } else if (typeof window.entropy === 'number') {
-            // New structure: array of objects with .entropy and windowIndex
-            entropyValue = window.entropy;
-            windowIndex = window.windowIndex;
-          }
 
-          if (typeof entropyValue === 'number' && !isNaN(entropyValue)) {
-            entropyValues.push(entropyValue);
-            sessionEntropy.push(entropyValue);
-            allWindows.push({
-              entropy: entropyValue,
-              windowIndex,
-              sessionId: session.id
-            });
-            sessionWindows.push({
-              entropy: entropyValue,
-              windowIndex
-            });
-          }
-        });
+        // Add demon entropy
+        if (blockEntropyDemon !== undefined && !isNaN(blockEntropyDemon)) {
+          entropyValues.push(blockEntropyDemon);
+          sessionEntropy.push(blockEntropyDemon);
+          const windowData = {
+            entropy: blockEntropyDemon,
+            windowIndex: blockIdx,
+            sessionId: session.id,
+            type: 'demon'
+          };
+          allWindows.push(windowData);
+          demonWindows.push(windowData);
+          sessionWindows.push({
+            entropy: blockEntropyDemon,
+            windowIndex: blockIdx
+          });
+        }
+      });
+
+      // Add audit entropy
+      (session.audits || []).forEach(audit => {
+        if (audit.entropy !== undefined && !isNaN(audit.entropy)) {
+          entropyValues.push(audit.entropy);
+          sessionEntropy.push(audit.entropy);
+          const windowData = {
+            entropy: audit.entropy,
+            windowIndex: audit.blockAfter,
+            sessionId: session.id,
+            type: 'audit'
+          };
+          allWindows.push(windowData);
+          auditWindows.push(windowData);
+          sessionWindows.push({
+            entropy: audit.entropy,
+            windowIndex: audit.blockAfter
+          });
+        }
       });
 
       if (sessionEntropy.length > 0) {
@@ -2202,6 +2118,26 @@ function EntropySignatures({ sessions }) {
           lateHistogram[binIndex]++;
         }
       });
+    });
+
+    // Create separate histograms for subject, demon, and audit
+    const subjectHistogram = new Array(bins).fill(0);
+    const demonHistogram = new Array(bins).fill(0);
+    const auditHistogram = new Array(bins).fill(0);
+
+    subjectWindows.forEach(w => {
+      const binIndex = Math.min(Math.floor((w.entropy - min) / binWidth), bins - 1);
+      subjectHistogram[binIndex]++;
+    });
+
+    demonWindows.forEach(w => {
+      const binIndex = Math.min(Math.floor((w.entropy - min) / binWidth), bins - 1);
+      demonHistogram[binIndex]++;
+    });
+
+    auditWindows.forEach(w => {
+      const binIndex = Math.min(Math.floor((w.entropy - min) / binWidth), bins - 1);
+      auditHistogram[binIndex]++;
     });
 
     // TEST 1 (H1): Mean Entropy Comparison - Subject vs Ghost (Paired t-test)
@@ -2409,6 +2345,8 @@ function EntropySignatures({ sessions }) {
         allTrialEntropies.reduce((a, b) => a + b, 0) / allTrialEntropies.length : 0;
       const trialEntropyStd = allTrialEntropies.length > 0 ?
         Math.sqrt(allTrialEntropies.reduce((sum, val) => sum + Math.pow(val - trialEntropyMean, 2), 0) / allTrialEntropies.length) : 0;
+      const trialEntropyMin = allTrialEntropies.length > 0 ? Math.min(...allTrialEntropies) : 0;
+      const trialEntropyMax = allTrialEntropies.length > 0 ? Math.max(...allTrialEntropies) : 0;
 
       // Condition comparison for trial-level entropy
       const primeTrialSessions = trialEntropyBySession.filter(s => s.condition === 'prime');
@@ -2425,6 +2363,8 @@ function EntropySignatures({ sessions }) {
         totalBlocks: trialEntropyBySession.reduce((sum, s) => sum + s.blocks.length, 0),
         overallMean: trialEntropyMean,
         overallStd: trialEntropyStd,
+        overallMin: trialEntropyMin,
+        overallMax: trialEntropyMax,
         entropyPerformanceCorr: overallEntropyPerformanceCorr,
         primeConditionMean: primeTrialEntropyMean,
         neutralConditionMean: neutralTrialEntropyMean,
@@ -2445,6 +2385,12 @@ function EntropySignatures({ sessions }) {
       histogram,
       earlyHistogram,
       lateHistogram,
+      subjectHistogram,
+      demonHistogram,
+      auditHistogram,
+      subjectCount: subjectWindows.length,
+      demonCount: demonWindows.length,
+      auditCount: auditWindows.length,
       binWidth,
       binStart: min,
       primeMean,
@@ -2469,36 +2415,6 @@ function EntropySignatures({ sessions }) {
   return (
     <div>
       <h3 style={{ marginBottom: 16, color: '#374151' }}>Shannon Entropy Distribution</h3>
-
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 16, marginBottom: 24 }}>
-        <div style={{ padding: 16, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fafafa' }}>
-          <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}>Mean Entropy</div>
-          <div style={{ fontSize: 20, fontWeight: 'bold', color: '#374151' }}>
-            {entropyMetrics.mean.toFixed(4)}
-          </div>
-        </div>
-
-        <div style={{ padding: 16, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fafafa' }}>
-          <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}>Std Deviation</div>
-          <div style={{ fontSize: 20, fontWeight: 'bold', color: '#374151' }}>
-            {entropyMetrics.std.toFixed(4)}
-          </div>
-        </div>
-
-        <div style={{ padding: 16, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fafafa' }}>
-          <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}>Range</div>
-          <div style={{ fontSize: 16, fontWeight: 'bold', color: '#374151' }}>
-            {entropyMetrics.min.toFixed(3)} - {entropyMetrics.max.toFixed(3)}
-          </div>
-        </div>
-
-        <div style={{ padding: 16, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fafafa' }}>
-          <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}>Total Windows</div>
-          <div style={{ fontSize: 20, fontWeight: 'bold', color: '#374151' }}>
-            {entropyMetrics.totalWindows.toLocaleString()}
-          </div>
-        </div>
-      </div>
 
       {/* H1: Entropy Suppression Test (Subject vs Ghost Paired t-test) */}
       {entropyMetrics.h1_entropySuppressionTest && (
@@ -2591,6 +2507,12 @@ function EntropySignatures({ sessions }) {
                 </div>
               </div>
               <div style={{ padding: 16, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff' }}>
+                <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}>Range</div>
+                <div style={{ fontSize: 16, fontWeight: 'bold', color: '#374151' }}>
+                  {entropyMetrics.trialLevelEntropy.overallMin.toFixed(3)} - {entropyMetrics.trialLevelEntropy.overallMax.toFixed(3)}
+                </div>
+              </div>
+              <div style={{ padding: 16, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff' }}>
                 <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}>Entropy-Performance Correlation</div>
                 <div style={{ fontSize: 18, fontWeight: 'bold', color: Math.abs(entropyMetrics.trialLevelEntropy.entropyPerformanceCorr) > 0.1 ? '#7c3aed' : '#374151' }}>
                   r = {entropyMetrics.trialLevelEntropy.entropyPerformanceCorr.toFixed(4)}
@@ -2603,8 +2525,7 @@ function EntropySignatures({ sessions }) {
           </div>
 
           <div style={{ fontSize: 11, color: '#6b7280', fontStyle: 'italic' }}>
-            Trial-level entropy analysis uses individual quantum bit sequences from each 150-trial block.
-            Correlation with performance reveals whether quantum randomness quality affects consciousness research outcomes.
+            Entropy-Performance Correlation measures the relationship between Shannon entropy (randomness) and hit rate. A negative correlation (r &lt; 0) means higher entropy (more random) leads to lower performance, while positive correlation (r &gt; 0) means higher entropy leads to higher performance. If consciousness organizes quantum bits, we'd expect negative correlation: lower entropy (more ordered) should correlate with better performance.
           </div>
         </div>
       )}
@@ -2634,6 +2555,116 @@ function EntropySignatures({ sessions }) {
         </div>
       )}
       <EntropyHistogram metrics={entropyMetrics} />
+
+      {/* Separate histograms for Subject, Demon, and Audit */}
+      {entropyMetrics.subjectHistogram && entropyMetrics.demonHistogram && (
+        <div style={{ marginTop: 40 }}>
+          <h4 style={{ marginBottom: 16, color: '#374151' }}>Entropy by Condition</h4>
+
+          <div style={{ display: 'flex', gap: 16, marginBottom: 24, fontSize: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <div style={{ width: 16, height: 16, background: '#3b82f6', opacity: 0.8 }}></div>
+              <span>Subject (focus, n={entropyMetrics.subjectCount})</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <div style={{ width: 16, height: 16, background: '#f97316', opacity: 0.8 }}></div>
+              <span>Demon (control, n={entropyMetrics.demonCount})</span>
+            </div>
+            {entropyMetrics.auditCount > 0 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div style={{ width: 16, height: 16, background: '#10b981', opacity: 0.8 }}></div>
+                <span>Audit (baseline, n={entropyMetrics.auditCount})</span>
+              </div>
+            )}
+          </div>
+
+          <ConditionEntropyHistogram metrics={entropyMetrics} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Condition-specific histogram component (Subject vs Demon vs Audit)
+function ConditionEntropyHistogram({ metrics }) {
+  const maxCount = Math.max(
+    ...metrics.subjectHistogram,
+    ...metrics.demonHistogram,
+    ...(metrics.auditHistogram || [])
+  );
+  const chartWidth = 600;
+  const chartHeight = 200;
+  const barWidth = (chartWidth - 100) / metrics.subjectHistogram.length;
+
+  return (
+    <div style={{ marginTop: 16 }}>
+      <svg width={chartWidth} height={chartHeight} style={{ border: '1px solid #e5e7eb', borderRadius: 6, background: '#fff' }}>
+        {/* X-axis */}
+        <line x1={50} y1={160} x2={chartWidth - 10} y2={160} stroke="#374151" strokeWidth={1} />
+        {/* Y-axis */}
+        <line x1={50} y1={20} x2={50} y2={160} stroke="#374151" strokeWidth={1} />
+
+        {/* Axis labels */}
+        <text x={25} y={25} fontSize={10} fill="#6b7280" textAnchor="middle" transform="rotate(-90, 25, 25)">
+          Count
+        </text>
+        <text x={chartWidth / 2} y={190} fontSize={12} fill="#374151" textAnchor="middle">
+          Shannon Entropy
+        </text>
+
+        {/* Bars - three overlapping histograms */}
+        {metrics.subjectHistogram.map((count, i) => {
+          const x = 50 + i * barWidth;
+          const subjectHeight = maxCount > 0 ? (count / maxCount) * 140 : 0;
+          const demonHeight = maxCount > 0 ? (metrics.demonHistogram[i] / maxCount) * 140 : 0;
+          const auditHeight = maxCount > 0 && metrics.auditHistogram ? (metrics.auditHistogram[i] / maxCount) * 140 : 0;
+
+          return (
+            <g key={i}>
+              {/* Subject (blue, back layer) */}
+              <rect
+                x={x}
+                y={160 - subjectHeight}
+                width={barWidth * 0.9}
+                height={subjectHeight}
+                fill="#3b82f6"
+                opacity={0.6}
+              />
+              {/* Demon (orange, middle layer) */}
+              <rect
+                x={x}
+                y={160 - demonHeight}
+                width={barWidth * 0.9}
+                height={demonHeight}
+                fill="#f97316"
+                opacity={0.6}
+              />
+              {/* Audit (green, front layer) */}
+              {metrics.auditHistogram && auditHeight > 0 && (
+                <rect
+                  x={x}
+                  y={160 - auditHeight}
+                  width={barWidth * 0.9}
+                  height={auditHeight}
+                  fill="#10b981"
+                  opacity={0.6}
+                />
+              )}
+            </g>
+          );
+        })}
+
+        {/* X-axis tick labels */}
+        {[0, metrics.subjectHistogram.length - 1].map(i => {
+          const x = 50 + i * barWidth + barWidth / 2;
+          const entropyValue = metrics.binStart + i * metrics.binWidth;
+          return (
+            <text key={i} x={x} y={175} fontSize={10} fill="#6b7280" textAnchor="middle">
+              {entropyValue.toFixed(2)}
+            </text>
+          );
+        })}
+      </svg>
     </div>
   );
 }
@@ -2805,22 +2836,13 @@ function IndividualDifferenceTracking({ sessions }) {
         sessionTrials += minute.n || 0;
 
         // Extract entropy windows from the new structure
-        const subjWindows = minute.entropy?.new_windows_subj || [];
-        subjWindows.forEach(window => {
-          let entropyValue;
-          if (typeof window === 'number') {
-            // Old structure: array of numbers
-            entropyValue = window;
-          } else if (typeof window.entropy === 'number') {
-            // New structure: array of objects with .entropy property
-            entropyValue = window.entropy;
-          }
+        // Use block-level entropy (150-bit subject blocks)
+        const blockEntropySubj = minute.entropy?.block_entropy_subj;
 
-          if (typeof entropyValue === 'number' && !isNaN(entropyValue)) {
-            sessionEntropy += entropyValue;
-            sessionEntropyWindows++;
-          }
-        });
+        if (typeof blockEntropySubj === 'number' && !isNaN(blockEntropySubj)) {
+          sessionEntropy += blockEntropySubj;
+          sessionEntropyWindows++;
+        }
       });
 
       participant.sessions.push({
@@ -2989,13 +3011,13 @@ function ControlValidations({ sessions, mappingFilter }) {
         sessionMinutes++;
         totalMinutes++;
 
-        // Ghost (control) data
-        const ghostHits = minute.ghost_hits || 0;
-        const ghostTrials = minute.n || 0;
-        sessionGhostHits += ghostHits;
-        sessionGhostTrials += ghostTrials;
-        totalGhostHits += ghostHits;
-        totalGhostTrials += ghostTrials;
+        // Demon (control) data - randomly split half
+        const demonHits = minute.demon_hits || 0;
+        const demonTrials = minute.n || 0;
+        sessionGhostHits += demonHits;
+        sessionGhostTrials += demonTrials;
+        totalGhostHits += demonHits;
+        totalGhostTrials += demonTrials;
 
         // System (control) data if available
         const systemHits = minute.system_hits || 0;
@@ -3004,7 +3026,7 @@ function ControlValidations({ sessions, mappingFilter }) {
         totalSystemTrials += systemTrials;
 
         // Data quality checks
-        if (!minute.hits || !minute.ghost_hits || minute.n === 0) {
+        if (!minute.hits || !minute.demon_hits || minute.n === 0) {
           sessionMissingData++;
           dataMissingCount++;
         }
@@ -3159,43 +3181,12 @@ function ControlValidations({ sessions, mappingFilter }) {
           if (mappingFilter === 'mosaic' && minute.mapping_type !== 'high_entropy') return;
 
           // Try to use byte data first (new format)
-          const subjectBytes = minute.trial_data?.subject_bytes;
-          const ghostBytes = minute.trial_data?.ghost_bytes;
+          const subjectBits = minute.trial_data?.subject_bits;
+          const demonBits = minute.trial_data?.demon_bits;
 
-          if (subjectBytes && ghostBytes) {
-            console.log('✅ Using BYTE data for All Tests:', {
-              sessionId: session.id,
-              blockIdx: minute.idx,
-              numBytes: subjectBytes.length,
-              firstFewBytes: subjectBytes.slice(0, 3)
-            });
-            // Extract all 8 bits from each byte
-            subjectBytes.forEach(byte => {
-              const bits8 = byte.toString(2).padStart(8, '0');
-              for (let bitPos = 0; bitPos < 8; bitPos++) {
-                allSubjectBits.push(parseInt(bits8[bitPos]));
-              }
-            });
-            ghostBytes.forEach(byte => {
-              const bits8 = byte.toString(2).padStart(8, '0');
-              for (let bitPos = 0; bitPos < 8; bitPos++) {
-                allGhostBits.push(parseInt(bits8[bitPos]));
-              }
-            });
-          } else if (minute.subjectBitSequence && minute.ghostBitSequence) {
-            console.log('⚠️ FALLBACK to old BIT data for All Tests:', {
-              sessionId: session.id,
-              blockIdx: minute.idx,
-              numBits: minute.subjectBitSequence.length
-            });
-            // Fallback to old single-bit format
-            for (let i = 0; i < minute.subjectBitSequence.length; i++) {
-              const subjectBit = minute.subjectBitSequence[i];
-              const ghostBit = minute.ghostBitSequence[i];
-
-              allSubjectBits.push(subjectBit);
-              allGhostBits.push(ghostBit);
-            }
+          if (subjectBits && demonBits) {
+            allSubjectBits.push(...subjectBits);
+            allGhostBits.push(...demonBits);
           }
         });
 
@@ -3229,148 +3220,7 @@ function ControlValidations({ sessions, mappingFilter }) {
           }
         }
 
-        // Test 2: Odd trials (alternating bits) from this session
-        let oddSubjectBits = [];
-        let oddGhostBits = [];
-
-        // Test 3: Even trials (independent bits) from this session
-        let evenSubjectBits = [];
-        let evenGhostBits = [];
-
-        // Separate trials by strategy using the trial_strategies array
-        session.minutes?.forEach(minute => {
-          // Filter by mapping type at the block level
-          if (mappingFilter === 'ring' && minute.mapping_type !== 'low_entropy') return;
-          if (mappingFilter === 'mosaic' && minute.mapping_type !== 'high_entropy') return;
-
-          const strategies = minute.trial_data?.trial_strategies;
-          const subjectBytes = minute.trial_data?.subject_bytes;
-          const ghostBytes = minute.trial_data?.ghost_bytes;
-
-          // Fallback to old bit-based data if bytes not available
-          if (!subjectBytes || !ghostBytes) {
-            const subjectBits = minute.trial_data?.subject_bits || minute.subjectBitSequence;
-            const ghostBits = minute.trial_data?.ghost_bits || minute.ghostBitSequence;
-            if (strategies && subjectBits && ghostBits) {
-              for (let i = 0; i < strategies.length; i++) {
-                if (strategies[i] === 1) {
-                  oddSubjectBits.push(subjectBits[i]);
-                  oddGhostBits.push(ghostBits[i]);
-                } else if (strategies[i] === 0) {
-                  evenSubjectBits.push(subjectBits[i]);
-                  evenGhostBits.push(ghostBits[i]);
-                }
-              }
-            }
-            return;
-          }
-
-          // New byte-based approach: extract all 8 bits from each byte
-          if (strategies && subjectBytes && ghostBytes) {
-            // First, separate trials by strategy and collect bytes
-            const oddSubjectBytes = [];
-            const oddGhostBytes = [];
-            const evenSubjectBytes = [];
-            const evenGhostBytes = [];
-
-            for (let i = 0; i < strategies.length; i++) {
-              if (strategies[i] === 1) {
-                // Odd trials (alternating)
-                oddSubjectBytes.push(subjectBytes[i]);
-                oddGhostBytes.push(ghostBytes[i]);
-              } else if (strategies[i] === 0) {
-                // Even trials
-                evenSubjectBytes.push(subjectBytes[i]);
-                evenGhostBytes.push(ghostBytes[i]);
-              }
-            }
-
-            // Now convert bytes to bits - create flat arrays
-            // For odd trials
-            oddSubjectBytes.forEach(byte => {
-              const bits8 = byte.toString(2).padStart(8, '0');
-              for (let bitPos = 0; bitPos < 8; bitPos++) {
-                oddSubjectBits.push(parseInt(bits8[bitPos]));
-              }
-            });
-            oddGhostBytes.forEach(byte => {
-              const bits8 = byte.toString(2).padStart(8, '0');
-              for (let bitPos = 0; bitPos < 8; bitPos++) {
-                oddGhostBits.push(parseInt(bits8[bitPos]));
-              }
-            });
-
-            // For even trials
-            evenSubjectBytes.forEach(byte => {
-              const bits8 = byte.toString(2).padStart(8, '0');
-              for (let bitPos = 0; bitPos < 8; bitPos++) {
-                evenSubjectBits.push(parseInt(bits8[bitPos]));
-              }
-            });
-            evenGhostBytes.forEach(byte => {
-              const bits8 = byte.toString(2).padStart(8, '0');
-              for (let bitPos = 0; bitPos < 8; bitPos++) {
-                evenGhostBits.push(parseInt(bits8[bitPos]));
-              }
-            });
-          }
-        });
-
-        // Chi-square test for odd trials (alternating strategy)
-        if (oddSubjectBits.length >= 50) {
-          const oddTable = createContingencyTable(oddSubjectBits, oddGhostBits);
-          const oddResults = calculateChiSquare(oddTable, oddSubjectBits.length);
-
-          console.log('📊 ODD TRIALS (Alternating):', {
-            sessionId: session.id,
-            trials: oddSubjectBits.length,
-            contingencyTable: oddTable,
-            chiSquare: oddResults.chiSquare,
-            pValue: oddResults.pValue
-          });
-
-          if (oddResults) {
-            bitIndependenceTests.push({
-              sessionId: session.id,
-              testType: 'alternating',
-              chiSquare: oddResults.chiSquare,
-              pValue: oddResults.pValue,
-              trials: oddSubjectBits.length,
-              significant: oddResults.pValue < 0.05,
-              contingencyTable: oddTable,
-              binauralBeats: session.post_survey?.binaural_beats || 'Unknown',
-              primeCondition: session.prime_condition || 'unknown'
-            });
-          }
-        }
-
-        // Chi-square test for even trials (independent strategy)
-        if (evenSubjectBits.length >= 50) {
-          const evenTable = createContingencyTable(evenSubjectBits, evenGhostBits);
-          const evenResults = calculateChiSquare(evenTable, evenSubjectBits.length);
-
-          console.log('📊 EVEN TRIALS (Independent):', {
-            sessionId: session.id,
-            trials: evenSubjectBits.length,
-            contingencyTable: evenTable,
-            chiSquare: evenResults.chiSquare,
-            pValue: evenResults.pValue
-          });
-
-          if (evenResults) {
-            bitIndependenceTests.push({
-              sessionId: session.id,
-              testType: 'independent',
-              chiSquare: evenResults.chiSquare,
-              pValue: evenResults.pValue,
-              trials: evenSubjectBits.length,
-              significant: evenResults.pValue < 0.05,
-              contingencyTable: evenTable,
-              binauralBeats: session.post_survey?.binaural_beats || 'Unknown',
-              primeCondition: session.prime_condition || 'unknown'
-            });
-          }
-        }
+        // No longer testing odd/even splits - removed for simplicity
 
         // Calculate Pearson correlation for this session
         if (allSubjectBits.length >= 50) {
@@ -3391,16 +3241,43 @@ function ControlValidations({ sessions, mappingFilter }) {
           }
         }
 
-        // Debug for all sessions to trace the significance issue
-        console.log('🔍 SESSION-LEVEL CHI-SQUARE DEBUG:', {
-          sessionId: session.id,
-          allTrials: allSubjectBits.length,
-          oddTrials: oddSubjectBits.length,
-          evenTrials: evenSubjectBits.length,
-          testsCreated: {
-            all: allSubjectBits.length >= 50 ? 'yes' : 'no',
-            alternating: oddSubjectBits.length >= 50 ? 'yes' : 'no',
-            independent: evenSubjectBits.length >= 50 ? 'yes' : 'no'
+      });
+
+      // Test audit data independence (if available)
+      sessions.forEach(session => {
+        if (!session.audits || session.audits.length === 0) return;
+
+        session.audits.forEach(audit => {
+          // Audit data should have bits stored - need to split into two halves for independence test
+          if (audit.auditBits && audit.auditBits.length >= 100) {
+            const auditBitArray = audit.auditBits.split('').map(b => parseInt(b));
+
+            // Split audit bits in half (like subject/demon split)
+            const halfLen = Math.floor(auditBitArray.length / 2);
+            const firstHalf = auditBitArray.slice(0, halfLen);
+            const secondHalf = auditBitArray.slice(halfLen, halfLen * 2);
+
+            // Create contingency table for audit halves
+            const auditTable = { '00': 0, '01': 0, '10': 0, '11': 0 };
+            for (let i = 0; i < firstHalf.length; i++) {
+              const key = `${firstHalf[i]}${secondHalf[i]}`;
+              auditTable[key]++;
+            }
+
+            const auditResults = calculateChiSquare(auditTable, firstHalf.length);
+
+            if (auditResults) {
+              bitIndependenceTests.push({
+                sessionId: session.id,
+                testType: 'audit',
+                chiSquare: auditResults.chiSquare,
+                pValue: auditResults.pValue,
+                trials: firstHalf.length,
+                significant: auditResults.pValue < 0.05,
+                contingencyTable: auditTable,
+                blockAfter: audit.blockAfter
+              });
+            }
           }
         });
       });
@@ -3487,14 +3364,14 @@ function ControlValidations({ sessions, mappingFilter }) {
                 maxDeviation
               };
             })(),
-            alternating: (() => {
-              const altTests = bitIndependenceTests.filter(t => t.testType === 'alternating');
-              if (altTests.length === 0) return null;
+            audit: (() => {
+              const auditTests = bitIndependenceTests.filter(t => t.testType === 'audit');
+              if (auditTests.length === 0) return null;
 
               // Aggregate contingency tables
               const aggregatedTable = { '00': 0, '01': 0, '10': 0, '11': 0 };
               let totalBits = 0;
-              altTests.forEach(test => {
+              auditTests.forEach(test => {
                 if (test.contingencyTable) {
                   aggregatedTable['00'] += test.contingencyTable['00'];
                   aggregatedTable['01'] += test.contingencyTable['01'];
@@ -3526,61 +3403,11 @@ function ControlValidations({ sessions, mappingFilter }) {
               );
 
               return {
-                tests: altTests.length,
-                avgChiSquare: altTests.reduce((sum, test) => sum + test.chiSquare, 0) / altTests.length,
-                avgPValue: altTests.reduce((sum, test) => sum + test.pValue, 0) / altTests.length,
-                significantTests: altTests.filter(test => test.significant).length,
-                significantPct: (altTests.filter(test => test.significant).length / altTests.length * 100).toFixed(1),
-                contingencyTable: aggregatedTable,
-                actualPcts,
-                deviations,
-                maxDeviation
-              };
-            })(),
-            independent: (() => {
-              const indTests = bitIndependenceTests.filter(t => t.testType === 'independent');
-              if (indTests.length === 0) return null;
-
-              // Aggregate contingency tables
-              const aggregatedTable = { '00': 0, '01': 0, '10': 0, '11': 0 };
-              let totalBits = 0;
-              indTests.forEach(test => {
-                if (test.contingencyTable) {
-                  aggregatedTable['00'] += test.contingencyTable['00'];
-                  aggregatedTable['01'] += test.contingencyTable['01'];
-                  aggregatedTable['10'] += test.contingencyTable['10'];
-                  aggregatedTable['11'] += test.contingencyTable['11'];
-                  totalBits += test.trials;
-                }
-              });
-
-              // Calculate percentages and max deviation
-              const expectedPct = 25.0;
-              const actualPcts = {
-                '00': (aggregatedTable['00'] / totalBits * 100),
-                '01': (aggregatedTable['01'] / totalBits * 100),
-                '10': (aggregatedTable['10'] / totalBits * 100),
-                '11': (aggregatedTable['11'] / totalBits * 100)
-              };
-              const deviations = {
-                '00': actualPcts['00'] - expectedPct,
-                '01': actualPcts['01'] - expectedPct,
-                '10': actualPcts['10'] - expectedPct,
-                '11': actualPcts['11'] - expectedPct
-              };
-              const maxDeviation = Math.max(
-                Math.abs(deviations['00']),
-                Math.abs(deviations['01']),
-                Math.abs(deviations['10']),
-                Math.abs(deviations['11'])
-              );
-
-              return {
-                tests: indTests.length,
-                avgChiSquare: indTests.reduce((sum, test) => sum + test.chiSquare, 0) / indTests.length,
-                avgPValue: indTests.reduce((sum, test) => sum + test.pValue, 0) / indTests.length,
-                significantTests: indTests.filter(test => test.significant).length,
-                significantPct: (indTests.filter(test => test.significant).length / indTests.length * 100).toFixed(1),
+                tests: auditTests.length,
+                avgChiSquare: auditTests.reduce((sum, test) => sum + test.chiSquare, 0) / auditTests.length,
+                avgPValue: auditTests.reduce((sum, test) => sum + test.pValue, 0) / auditTests.length,
+                significantTests: auditTests.filter(test => test.significant).length,
+                significantPct: (auditTests.filter(test => test.significant).length / auditTests.length * 100).toFixed(1),
                 contingencyTable: aggregatedTable,
                 actualPcts,
                 deviations,
@@ -3616,7 +3443,7 @@ function ControlValidations({ sessions, mappingFilter }) {
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16, marginBottom: 24 }}>
         <div style={{ padding: 16, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fafafa' }}>
-          <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}>Ghost Hit Rate</div>
+          <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}>Demon Hit Rate</div>
           <div style={{ fontSize: 20, fontWeight: 'bold', color: '#374151' }}>
             {controlMetrics.overallGhostRate != null ? (controlMetrics.overallGhostRate * 100).toFixed(2) : 'N/A'}%
           </div>
@@ -3640,7 +3467,7 @@ function ControlValidations({ sessions, mappingFilter }) {
         </div>
 
         <PBadge
-          label="Ghost vs Chance (50%)"
+          label="Demon vs Chance (50%)"
           p={controlMetrics.ghostP}
           style={{ padding: 16 }}
         />
@@ -3652,7 +3479,7 @@ function ControlValidations({ sessions, mappingFilter }) {
           <strong>Average Critical Ratio:</strong> {controlMetrics.avgCriticalRatio.toFixed(3)}
         </div>
         <div style={{ fontSize: 12, color: '#6b7280' }}>
-          Critical ratio measures subject deviation relative to ghost deviation from chance.
+          Critical ratio measures subject deviation relative to demon deviation from chance.
           Values &gt; 1.0 suggest subject performance exceeds random variation.
         </div>
       </div>
@@ -3669,7 +3496,7 @@ function ControlValidations({ sessions, mappingFilter }) {
                 Health Score
               </th>
               <th style={{ padding: '8px 12px', textAlign: 'left', fontSize: 12, color: '#374151', borderBottom: '1px solid #e5e7eb' }}>
-                Ghost Rate
+                Demon Rate
               </th>
               <th style={{ padding: '8px 12px', textAlign: 'left', fontSize: 12, color: '#374151', borderBottom: '1px solid #e5e7eb' }}>
                 Subject Rate
@@ -3762,7 +3589,7 @@ function ControlValidations({ sessions, mappingFilter }) {
                   r = {controlMetrics.trialLevelValidation.entropyCorrelation.correlation.toFixed(4)}
                 </div>
                 <div style={{ fontSize: 10, color: '#6b7280' }}>
-                  Low correlation = Independent streams
+                  Low correlation = Independent halves
                 </div>
               </div>
               <div style={{ padding: 16, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff' }}>
@@ -3862,13 +3689,13 @@ function ControlValidations({ sessions, mappingFilter }) {
 
               {/* Test Type Breakdown */}
               <div style={{ marginTop: 16 }}>
-                <h6 style={{ marginBottom: 12, color: '#374151', fontSize: 14 }}>Breakdown by Test Type</h6>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+                <h6 style={{ marginBottom: 12, color: '#374151', fontSize: 14 }}>Breakdown by Data Source</h6>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
 
-                  {/* All Tests */}
+                  {/* Subject-Demon Tests */}
                   {controlMetrics.trialLevelValidation.bitIndependence.byTestType.all && (
-                    <div style={{ padding: 12, border: '1px solid #e5e7eb', borderRadius: 6, background: '#f9fafb' }}>
-                      <div style={{ fontSize: 12, fontWeight: 'bold', color: '#374151', marginBottom: 8 }}>All Tests Combined</div>
+                    <div style={{ padding: 12, border: '1px solid #e5e7eb', borderRadius: 6, background: '#eff6ff' }}>
+                      <div style={{ fontSize: 12, fontWeight: 'bold', color: '#374151', marginBottom: 8 }}>Subject-Demon Independence</div>
                       <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 4 }}>
                         Tests: {controlMetrics.trialLevelValidation.bitIndependence.byTestType.all.tests}
                       </div>
@@ -3889,64 +3716,47 @@ function ControlValidations({ sessions, mappingFilter }) {
                     </div>
                   )}
 
-                  {/* Alternating Tests */}
-                  {controlMetrics.trialLevelValidation.bitIndependence.byTestType.alternating && (
-                    <div style={{ padding: 12, border: '1px solid #e5e7eb', borderRadius: 6, background: '#fef3c7' }}>
-                      <div style={{ fontSize: 12, fontWeight: 'bold', color: '#374151', marginBottom: 8 }}>Alternating Bits (Odd Trials)</div>
+                  {/* Audit Tests */}
+                  {controlMetrics.trialLevelValidation.bitIndependence.byTestType.audit ? (
+                    <div style={{ padding: 12, border: '1px solid #e5e7eb', borderRadius: 6, background: '#f0fdf4' }}>
+                      <div style={{ fontSize: 12, fontWeight: 'bold', color: '#374151', marginBottom: 8 }}>Audit Baseline Independence</div>
                       <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 4 }}>
-                        Tests: {controlMetrics.trialLevelValidation.bitIndependence.byTestType.alternating.tests}
-                      </div>
-                      <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 4 }}>
-                        Avg χ²: {controlMetrics.trialLevelValidation.bitIndependence.byTestType.alternating.avgChiSquare.toFixed(3)}
+                        Tests: {controlMetrics.trialLevelValidation.bitIndependence.byTestType.audit.tests}
                       </div>
                       <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 4 }}>
-                        Avg p: {controlMetrics.trialLevelValidation.bitIndependence.byTestType.alternating.avgPValue.toFixed(4)}
+                        Avg χ²: {controlMetrics.trialLevelValidation.bitIndependence.byTestType.audit.avgChiSquare.toFixed(3)}
                       </div>
-                      <div style={{ fontSize: 14, fontWeight: 'bold', color: controlMetrics.trialLevelValidation.bitIndependence.byTestType.alternating.significantPct < 10 ? '#059669' : '#dc2626' }}>
-                        {controlMetrics.trialLevelValidation.bitIndependence.byTestType.alternating.significantPct}% significant
+                      <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 4 }}>
+                        Avg p: {controlMetrics.trialLevelValidation.bitIndependence.byTestType.audit.avgPValue.toFixed(4)}
                       </div>
-                      {controlMetrics.trialLevelValidation.bitIndependence.byTestType.alternating.maxDeviation !== undefined && (
-                        <div style={{ fontSize: 14, fontWeight: 'bold', marginTop: 4, color: controlMetrics.trialLevelValidation.bitIndependence.byTestType.alternating.maxDeviation >= 2.0 ? '#dc2626' : '#059669' }}>
-                          Effect size: {controlMetrics.trialLevelValidation.bitIndependence.byTestType.alternating.maxDeviation.toFixed(2)}%
+                      <div style={{ fontSize: 14, fontWeight: 'bold', color: controlMetrics.trialLevelValidation.bitIndependence.byTestType.audit.significantPct < 10 ? '#059669' : '#dc2626' }}>
+                        {controlMetrics.trialLevelValidation.bitIndependence.byTestType.audit.significantPct}% significant
+                      </div>
+                      {controlMetrics.trialLevelValidation.bitIndependence.byTestType.audit.maxDeviation !== undefined && (
+                        <div style={{ fontSize: 14, fontWeight: 'bold', marginTop: 4, color: controlMetrics.trialLevelValidation.bitIndependence.byTestType.audit.maxDeviation >= 2.0 ? '#dc2626' : '#059669' }}>
+                          Effect size: {controlMetrics.trialLevelValidation.bitIndependence.byTestType.audit.maxDeviation.toFixed(2)}%
                         </div>
                       )}
                     </div>
-                  )}
-
-                  {/* Independent Tests */}
-                  {controlMetrics.trialLevelValidation.bitIndependence.byTestType.independent && (
-                    <div style={{ padding: 12, border: '1px solid #e5e7eb', borderRadius: 6, background: '#ecfdf5' }}>
-                      <div style={{ fontSize: 12, fontWeight: 'bold', color: '#374151', marginBottom: 8 }}>Alternating Bits (Even Trials)</div>
-                      <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 4 }}>
-                        Tests: {controlMetrics.trialLevelValidation.bitIndependence.byTestType.independent.tests}
+                  ) : (
+                    <div style={{ padding: 12, border: '1px solid #e5e7eb', borderRadius: 6, background: '#fafafa' }}>
+                      <div style={{ fontSize: 12, fontWeight: 'bold', color: '#6b7280', marginBottom: 8 }}>Audit Baseline Independence</div>
+                      <div style={{ fontSize: 11, color: '#9ca3af', fontStyle: 'italic' }}>
+                        No audit data available yet. Audits run every 5 blocks.
                       </div>
-                      <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 4 }}>
-                        Avg χ²: {controlMetrics.trialLevelValidation.bitIndependence.byTestType.independent.avgChiSquare.toFixed(3)}
-                      </div>
-                      <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 4 }}>
-                        Avg p: {controlMetrics.trialLevelValidation.bitIndependence.byTestType.independent.avgPValue.toFixed(4)}
-                      </div>
-                      <div style={{ fontSize: 14, fontWeight: 'bold', color: controlMetrics.trialLevelValidation.bitIndependence.byTestType.independent.significantPct < 10 ? '#059669' : '#dc2626' }}>
-                        {controlMetrics.trialLevelValidation.bitIndependence.byTestType.independent.significantPct}% significant
-                      </div>
-                      {controlMetrics.trialLevelValidation.bitIndependence.byTestType.independent.maxDeviation !== undefined && (
-                        <div style={{ fontSize: 14, fontWeight: 'bold', marginTop: 4, color: controlMetrics.trialLevelValidation.bitIndependence.byTestType.independent.maxDeviation >= 2.0 ? '#dc2626' : '#059669' }}>
-                          Effect size: {controlMetrics.trialLevelValidation.bitIndependence.byTestType.independent.maxDeviation.toFixed(2)}%
-                        </div>
-                      )}
                     </div>
                   )}
 
                 </div>
                 <div style={{ fontSize: 10, color: '#6b7280', marginTop: 8, fontStyle: 'italic' }}>
-                  Alternating bits test temporal correlation (bits 1,2 then 3,4...). Independent bits test statistical independence (separate QRNG calls).
+                  Subject-Demon tests validate independence between the randomly split halves (150 subject + 150 demon). Audit tests validate independence of baseline QRNG fetches (1500 bits every 5 blocks, split in half for testing).
                 </div>
               </div>
             </div>
           )}
 
           <div style={{ fontSize: 11, color: '#6b7280', fontStyle: 'italic' }}>
-            Trial-level validation uses raw quantum trial data to test independence between subject and ghost streams.
+            Trial-level validation uses raw quantum trial data. Each block fetches 300 bits and randomly assigns first/second half to subject/demon.
             Low correlations and chi-square results near chance levels indicate proper experimental controls.
           </div>
         </div>
@@ -5404,6 +5214,46 @@ export default function QAExport() {
         )}
       </div>
 
+      {/* Experimental Design Documentation */}
+      <div style={{ marginTop: 24, padding: 20, border: '2px solid #3b82f6', borderRadius: 8, background: '#eff6ff' }}>
+        <h2 style={{ margin: '0 0 16px', color: '#1e40af' }}>Experimental Design (Updated 2025-10-14)</h2>
+
+        <div style={{ marginBottom: 16 }}>
+          <h3 style={{ fontSize: 16, fontWeight: 'bold', marginBottom: 8, color: '#374151' }}>Session Structure:</h3>
+          <ul style={{ margin: 0, paddingLeft: 20, lineHeight: 1.8 }}>
+            <li><strong>30 blocks per session</strong>, 150 trials per block = 4,500 total trials</li>
+            <li><strong>Audit breaks every 5 blocks</strong> (after blocks 5, 10, 15, 20, 25)</li>
+            <li><strong>Target randomization</strong> at each audit break</li>
+          </ul>
+        </div>
+
+        <div style={{ marginBottom: 16 }}>
+          <h3 style={{ fontSize: 16, fontWeight: 'bold', marginBottom: 8, color: '#374151' }}>QRNG Protocol (Random Half Assignment):</h3>
+          <ul style={{ margin: 0, paddingLeft: 20, lineHeight: 1.8 }}>
+            <li><strong>Single 300-bit fetch</strong> per block from Random.org QRNG</li>
+            <li><strong>Random assignment:</strong> First/second half (150 bits each) → Subject/Demon</li>
+            <li>Both conditions use bits from <strong>identical quantum source</strong>, ensuring matched baseline</li>
+            <li>Subject sees results in real-time; Demon half serves as no-focus control</li>
+          </ul>
+        </div>
+
+        <div style={{ marginBottom: 16 }}>
+          <h3 style={{ fontSize: 16, fontWeight: 'bold', marginBottom: 8, color: '#374151' }}>Session Types:</h3>
+          <ul style={{ margin: 0, paddingLeft: 20, lineHeight: 1.8 }}>
+            <li><strong>Human:</strong> Standard consciousness protocol with focused intention</li>
+            <li><strong>Auto:</strong> Automated baseline (no consciousness, immediate auto-continue)</li>
+            <li><strong>AI:</strong> GPT-4o-mini agent with persistent conversation throughout session</li>
+          </ul>
+        </div>
+
+        <div style={{ padding: 12, background: '#fef3c7', borderRadius: 6, border: '1px solid #f59e0b' }}>
+          <strong style={{ color: '#92400e' }}>⚠ Design Note:</strong>
+          <p style={{ margin: '8px 0 0', fontSize: 14, color: '#78350f', lineHeight: 1.6 }}>
+            All data uses the random half assignment protocol. Subject and Demon (control) conditions receive bits from the same 300-bit QRNG fetch, with random assignment of first/second half (150 bits each), ensuring perfectly matched quantum sources for fair comparison.
+          </p>
+        </div>
+      </div>
+
       {/* Statistics section */}
       {stats && (
         <div style={{ marginTop: 24 }}>
@@ -5576,13 +5426,10 @@ export default function QAExport() {
                   Status
                 </th>
                 <th style={{ border: '1px solid #d1d5db', padding: 8, textAlign: 'left' }}>
-                  Minutes
+                  Blocks
                 </th>
                 <th style={{ border: '1px solid #d1d5db', padding: 8, textAlign: 'left' }}>
                   Hit Rate
-                </th>
-                <th style={{ border: '1px solid #d1d5db', padding: 8, textAlign: 'left' }}>
-                  Prime
                 </th>
                 <th style={{ border: '1px solid #d1d5db', padding: 8, textAlign: 'left' }}>
                   Binaural
@@ -5591,7 +5438,7 @@ export default function QAExport() {
                   Data Type
                 </th>
                 <th style={{ border: '1px solid #d1d5db', padding: 8, textAlign: 'left' }}>
-                  Actions
+                  Source
                 </th>
               </tr>
             </thead>
@@ -5626,9 +5473,6 @@ export default function QAExport() {
                       }
                     </td>
                     <td style={{ border: '1px solid #d1d5db', padding: 8 }}>
-                      {session.prime_condition || '—'}
-                    </td>
-                    <td style={{ border: '1px solid #d1d5db', padding: 8 }}>
                       {session.post_survey?.binaural_beats === 'Yes' ? '✅' : '❌'}
                     </td>
                     <td style={{ border: '1px solid #d1d5db', padding: 8 }}>
@@ -5637,14 +5481,9 @@ export default function QAExport() {
                         : `${(session.minutes || []).length} live`}
                     </td>
                     <td style={{ border: '1px solid #d1d5db', padding: 8 }}>
-                      <details>
-                        <summary style={{ cursor: 'pointer', fontSize: 12 }}>
-                          Details
-                        </summary>
-                        <div style={{ marginTop: 8, padding: 8, background: '#f9f9f9', maxWidth: '400px' }}>
-                          {Panel && <Panel run={session} />}
-                        </div>
-                      </details>
+                      {session.session_type === 'ai_agent' ? '🤖 AI' :
+                       session.session_type === 'baseline' || session.session_type === 'session_runner' ? '⚙️ Auto' :
+                       '👤 Human'}
                     </td>
                   </tr>
                 );

@@ -25,7 +25,7 @@ export default function ConsentGate({
   };
 
   // Default study description if none provided
-  const defaultDescription = "This study evaluates whether focused attention can influence random symbol selection patterns. You will complete multiple short trials and brief questionnaires at the beginning and end (approximately 15–20 minutes).";
+  const defaultDescription = "This study evaluates whether focused attention can influence random symbol selection patterns. You will complete multiple short trials and brief questionnaires at the beginning and end (approximately 5 minutes).";
 
   return (
     <div className="App" style={{ textAlign: 'left' }}>

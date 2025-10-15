@@ -34,11 +34,11 @@ function validateConfig() {
   const errors = [];
 
   if (!C.VISUAL_HZ || C.VISUAL_HZ <= 0) errors.push('VISUAL_HZ must be positive');
-  if (!C.BLOCK_MS || C.BLOCK_MS <= 0) errors.push('BLOCK_MS must be positive');
   if (!C.BLOCKS_TOTAL || C.BLOCKS_TOTAL <= 0) errors.push('BLOCKS_TOTAL must be positive');
+  if (!C.TRIALS_PER_BLOCK || C.TRIALS_PER_BLOCK <= 0) errors.push('TRIALS_PER_BLOCK must be positive');
+  if (!C.BITS_PER_BLOCK || C.BITS_PER_BLOCK <= 0) errors.push('BITS_PER_BLOCK must be positive');
   if (C.PRIME_PROB < 0 || C.PRIME_PROB > 1) errors.push('PRIME_PROB must be between 0 and 1');
   if (!Array.isArray(C.TARGET_SIDES) || C.TARGET_SIDES.length === 0) errors.push('TARGET_SIDES must be non-empty array');
-  // RETRO_TAPE_BITS validation removed - live streams only
 
   if (errors.length > 0) {
     throw new Error(`Configuration validation failed: ${errors.join(', ')}`);
@@ -496,175 +496,289 @@ export default function MainApp() {
   const [renderTrigger, setRenderTrigger] = useState(0); // Force re-renders for ref updates
   const [savingBlock, setSavingBlock] = useState(false); // Track when persistMinute is saving
 
-  const bitsRef = useRef([]); const ghostBitsRef = useRef([]); const alignedRef = useRef([]);
-  const hitsRef = useRef(0); const ghostHitsRef = useRef(0);
-  const demonBitsRef = useRef([]); const demonHitsRef = useRef(0); // Demon control (alternating with subject)
-  const subjectIndicesRef = useRef([]); const ghostIndicesRef = useRef([]); // Track raw QRNG stream indices
-  const trialStrategiesRef = useRef([]); // Track which strategy each trial used (1=alternating, 0=independent)
+  const bitsRef = useRef([]);
+  const demonBitsRef = useRef([]);
+  const alignedRef = useRef([]);
+  const hitsRef = useRef(0);
+  const demonHitsRef = useRef(0);
   const trialsPerMinute = trialsPerBlock;
 
-  // Ghost tape: Pre-fetched QRNG bits (3100 bits for entire session)
-  const [ghostTape, setGhostTape] = useState(null);
-  const [ghostTapeLoading, setGhostTapeLoading] = useState(false);
-  const ghostTapeIndexRef = useRef(0); // Track current position in ghost tape
+  // Process trials with randomized half assignment (subject/demon)
+  const processTrials = useCallback((quantumBits) => {
+    console.log('🎲 Processing 150 trials with randomized half assignment...');
 
-  // Process trials with 3-way interleaving (subject/demon/ghost)
-  const processTrials = useCallback((subjectDemonTape) => {
-    console.log('🎲 Processing 155 trials with 3-way interleaving...');
+    if (quantumBits.length !== 300) {
+      throw new Error(`Expected 300 bits, got ${quantumBits.length}`);
+    }
 
     // Clear previous block data
     bitsRef.current = [];
-    ghostBitsRef.current = [];
     demonBitsRef.current = [];
     alignedRef.current = [];
     hitsRef.current = 0;
-    ghostHitsRef.current = 0;
     demonHitsRef.current = 0;
 
-    // Determine target bit (0 or 1)
     const targetBit = target === 'BLUE' ? 1 : 0;
 
-    // Process 155 trials
-    for (let i = 0; i < C.TRIALS_PER_BLOCK; i++) {
-      // Subject gets even indices from subject+demon tape
-      const subjectBit = parseInt(subjectDemonTape[i * 2], 10);
-      // Demon gets odd indices from subject+demon tape (alternating)
-      const demonBit = parseInt(subjectDemonTape[i * 2 + 1], 10);
-      // Ghost gets sequential bits from pre-fetched tape
-      const ghostBit = parseInt(ghostTape[ghostTapeIndexRef.current], 10);
-      ghostTapeIndexRef.current++;
+    // Split into two halves
+    const halfA = quantumBits.slice(0, 150);
+    const halfB = quantumBits.slice(150, 300);
 
-      // Store bits
-      bitsRef.current.push(subjectBit);
-      demonBitsRef.current.push(demonBit);
-      ghostBitsRef.current.push(ghostBit);
+    // Randomly assign which half goes to subject vs demon
+    const subjectGetsFirstHalf = Math.random() < 0.5;
+    const subjectBits = subjectGetsFirstHalf ? halfA : halfB;
+    const demonBits = subjectGetsFirstHalf ? halfB : halfA;
 
-      // Calculate outcomes (1 = HIT, 0 = MISS)
-      const subjectOutcome = subjectBit === targetBit ? 1 : 0;
-      const demonOutcome = demonBit === targetBit ? 1 : 0;
-      const ghostOutcome = ghostBit === targetBit ? 1 : 0;
+    console.log(`🎲 Assignment: Subject gets ${subjectGetsFirstHalf ? 'first' : 'second'} half, Demon gets ${subjectGetsFirstHalf ? 'second' : 'first'} half`);
 
-      alignedRef.current.push(subjectOutcome);
-
-      // Count hits
-      if (subjectOutcome === 1) hitsRef.current++;
-      if (demonOutcome === 1) demonHitsRef.current++;
-      if (ghostOutcome === 1) ghostHitsRef.current++;
+    // Process subject bits
+    for (let i = 0; i < 150; i++) {
+      const bit = parseInt(subjectBits[i], 10);
+      bitsRef.current.push(bit);
+      alignedRef.current.push(bit === targetBit ? 1 : 0);
+      if (bit === targetBit) hitsRef.current++;
     }
 
-    const subjectScore = (hitsRef.current / C.TRIALS_PER_BLOCK * 100).toFixed(1);
-    const demonScore = (demonHitsRef.current / C.TRIALS_PER_BLOCK * 100).toFixed(1);
-    const ghostScore = (ghostHitsRef.current / C.TRIALS_PER_BLOCK * 100).toFixed(1);
+    // Process demon bits
+    for (let i = 0; i < 150; i++) {
+      const bit = parseInt(demonBits[i], 10);
+      demonBitsRef.current.push(bit);
+      if (bit === targetBit) demonHitsRef.current++;
+    }
+
+    const subjectScore = (hitsRef.current / 150 * 100).toFixed(1);
+    const demonScore = (demonHitsRef.current / 150 * 100).toFixed(1);
 
     console.log('✅ Trials processed:', {
-      subject: `${subjectScore}% (${hitsRef.current}/${C.TRIALS_PER_BLOCK})`,
-      demon: `${demonScore}% (${demonHitsRef.current}/${C.TRIALS_PER_BLOCK})`,
-      ghost: `${ghostScore}% (${ghostHitsRef.current}/${C.TRIALS_PER_BLOCK})`
+      subject: `${subjectScore}% (${hitsRef.current}/150)`,
+      demon: `${demonScore}% (${demonHitsRef.current}/150)`
     });
 
-    // Calculate stats and save block
+    // Calculate stats
     const k = hitsRef.current;
-    const n = C.TRIALS_PER_BLOCK;
+    const kd = demonHitsRef.current;
+    const n = 150;
     const z = zFromBinom(k, n, 0.5);
+    const zd = zFromBinom(kd, n, 0.5);
     const pTwo = twoSidedP(z);
+    const pd = twoSidedP(zd);
 
     const blockSummary = {
-      k,
-      n,
-      z,
-      pTwo,
-      kg: ghostHitsRef.current,
-      kd: demonHitsRef.current,
-      ng: n,
-      nd: n,
-      zg: zFromBinom(ghostHitsRef.current, n, 0.5),
-      zd: zFromBinom(demonHitsRef.current, n, 0.5),
-      pg: twoSidedP(zFromBinom(ghostHitsRef.current, n, 0.5)),
-      pd: twoSidedP(zFromBinom(demonHitsRef.current, n, 0.5)),
+      k, n, z, pTwo,
+      kd, nd: n, zd, pd,
       kind: 'instant'
     };
 
     setLastBlock(blockSummary);
-    setTotals((t) => ({ k: t.k + k, n: t.n + n }));
+    setTotals(t => ({ k: t.k + k, n: t.n + n }));
 
     // Increment block index
-    setblockIdx((prev) => prev + 1);
+    setblockIdx(prev => prev + 1);
 
-    // Save to Firestore (we'll implement this next)
-    // persistMinute will need to be updated to handle the new format
+    // Note: persistMinute will be called after this via a useEffect watching blockIdx
 
-  }, [target, ghostTape]);
+  }, [target]);
 
-  // Pre-fetch ghost tape when moving past consent (during instructions/questions)
-  useEffect(() => {
-    if (phase === 'consent' || ghostTape || ghostTapeLoading) return; // Only fetch once
-    if (phase === 'preQ' || phase === 'prime' || phase === 'info' || phase === 'onboarding') {
-      console.log('🎲 Pre-fetching ghost tape (' + C.GHOST_BITS_TOTAL + ' bits) in background...');
-      setGhostTapeLoading(true);
-      fetchQRNGBits(C.GHOST_BITS_TOTAL)
-        .then(bits => {
-          console.log('✅ Ghost tape pre-fetched successfully:', bits.length, 'bits');
-          setGhostTape(bits);
-          setGhostTapeLoading(false);
-        })
-        .catch(err => {
-          console.error('❌ Failed to pre-fetch ghost tape:', err);
-          setGhostTapeLoading(false);
-          // Button stays disabled, user will see "Please Wait..." and can refresh if needed
-        });
-    }
-  }, [phase, ghostTape, ghostTapeLoading]);
 
   // Fetch subject+demon tape when entering fetching phase, then process trials
+  const [needsPersist, setNeedsPersist] = useState(false);
+
   useEffect(() => {
     if (phase !== 'fetching') return;
+    // Guard: Don't fetch if we've already completed all blocks
+    if (blockIdx >= C.BLOCKS_TOTAL) {
+      console.log(`⚠️ Blocked fetch: blockIdx ${blockIdx} >= BLOCKS_TOTAL 
+  ${C.BLOCKS_TOTAL}`);
+      setPhase('done');
+      return;
+    }
 
-    console.log('🎯 Fetching subject+demon tape (' + C.BITS_PER_BLOCK + ' bits) during focused intention...');
+    let isCancelled = false;
 
-    fetchQRNGBits(C.BITS_PER_BLOCK)
-      .then(subjectDemonTape => {
-        console.log('✅ Subject+demon tape fetched:', subjectDemonTape.length, 'bits');
+    (async () => {
+      try {
+        console.log('🎯 Fetching 300 bits during focused intention...');
 
-        // Process all 155 trials instantly with 3-way interleaving
-        processTrials(subjectDemonTape);
+        // Fetch 300 bits
+        const quantumBits = await fetchQRNGBits(C.BITS_PER_BLOCK);
 
-        // Move to rest phase to show results
-        setTimeout(() => {
+        if (isCancelled) return;
+
+        console.log('✅ Bits fetched:', quantumBits.length);
+
+        // Process all trials instantly (this increments blockIdx from blockIdx to blockIdx+1)
+        processTrials(quantumBits);
+
+        // Flag that we need to persist data
+        setNeedsPersist(true);
+
+        // Check if we just completed the final block
+        // Note: blockIdx in closure is the OLD value (before processTrials incremented it)
+        // So if blockIdx was 29, processTrials incremented it to 30, and we're done
+        const justCompletedBlockIdx = blockIdx;
+        const nextBlockIdx = justCompletedBlockIdx + 1;
+        console.log(`📊 Block ${justCompletedBlockIdx} complete. Next blockIdx: ${nextBlockIdx}, BLOCKS_TOTAL: ${C.BLOCKS_TOTAL}`);
+
+        // Check if session complete (we just finished block BLOCKS_TOTAL-1, which is the last block)
+        if (nextBlockIdx >= C.BLOCKS_TOTAL) {
+          console.log('✅ Session complete! Moving to done phase...');
+          setPhase('done');
+          // Calculate entropy in background
+          calculateSessionTemporalEntropy().catch(err =>
+            console.error('Failed to calculate final entropy:', err)
+          );
+          return;
+        }
+
+        // Always show score screen after processing
+        setPhase('score');
+
+      } catch (error) {
+        console.error('❌ Failed to fetch bits:', error);
+        if (!isCancelled) {
+          alert('Failed to fetch quantum data. Please try again.');
           setPhase('rest');
-        }, 500); // Brief delay to show completion
-      })
-      .catch(err => {
-        console.error('❌ Failed to fetch subject+demon tape:', err);
-        alert('Failed to fetch quantum data. Please try again.');
-        setPhase('rest'); // Go back to rest screen
-      });
-  }, [phase]);
+        }
+      }
+    })();
 
-  // Auto-mode: Skip consent/questions, auto-restart, and auto-continue rest screens
+    return () => {
+      isCancelled = true;
+    };
+  }, [phase, blockIdx, processTrials]);
+
+  // Audit phase: Fetch audit bits in background and randomize target
   useEffect(() => {
-    if (!isAutoMode) return;
+    if (phase !== 'audit') return;
+
+    let isCancelled = false;
+
+    (async () => {
+      try {
+        console.log(`🔬 Fetching ${C.AUDIT_BITS_PER_BREAK} audit bits (no focus)...`);
+
+        // Fetch audit bits (no validation needed during fetch, we'll validate after)
+        const auditBits = await fetchQRNGBits(C.AUDIT_BITS_PER_BREAK, 3, false);
+
+        if (isCancelled) return;
+
+        // Calculate validation stats
+        const ones = auditBits.split('').filter(b => b === '1').length;
+        const proportion = ones / C.AUDIT_BITS_PER_BREAK;
+
+        // Run validation tests
+        const n = auditBits.length;
+        const expectedOnes = n / 2;
+        const stdDev = Math.sqrt(n * 0.5 * 0.5);
+        const zScore = Math.abs((ones - expectedOnes) / stdDev);
+        const proportionPass = zScore < 3;
+
+        let runs = 1;
+        for (let i = 1; i < n; i++) {
+          if (auditBits[i] !== auditBits[i-1]) runs++;
+        }
+        const expectedRuns = (2 * ones * (n - ones)) / n + 1;
+        const runsStdDev = Math.sqrt((2 * ones * (n - ones) * (2 * ones * (n - ones) - n)) / (n * n * (n - 1)));
+        const runsZ = Math.abs((runs - expectedRuns) / runsStdDev);
+        const runsPass = runsZ < 3;
+
+        let maxRun = 1, currentRun = 1;
+        for (let i = 1; i < n; i++) {
+          if (auditBits[i] === auditBits[i-1]) {
+            currentRun++;
+            maxRun = Math.max(maxRun, currentRun);
+          } else {
+            currentRun = 1;
+          }
+        }
+        const expectedMaxRun = Math.log2(n);
+        const maxRunPass = maxRun < expectedMaxRun * 3;
+
+        const isRandom = proportionPass && runsPass && maxRunPass;
+
+        const validationStats = {
+          length: n,
+          ones,
+          onesRatio: (ones / n).toFixed(4),
+          zScore: zScore.toFixed(3),
+          proportionPass,
+          runs,
+          expectedRuns: expectedRuns.toFixed(1),
+          runsZ: runsZ.toFixed(3),
+          runsPass,
+          maxRun,
+          expectedMaxRun: expectedMaxRun.toFixed(1),
+          maxRunPass
+        };
+
+        console.log('✅ Audit complete:', { proportion: proportion.toFixed(4), isRandom, stats: validationStats });
+
+        // Calculate audit entropy
+        const auditBitArray = auditBits.split('').map(b => parseInt(b));
+        const auditEntropy = shannonEntropy(auditBitArray);
+
+        // Save audit to Firebase
+        if (runRef) {
+          const auditDoc = doc(runRef, 'audits', `after_block_${blockIdx}`);
+          await setDoc(auditDoc, {
+            blockAfter: blockIdx,
+            totalBits: C.AUDIT_BITS_PER_BREAK,
+            auditBits: auditBits, // Store the actual bit string for QA analysis
+            ones,
+            proportion,
+            entropy: auditEntropy,
+            isRandom,
+            validation: validationStats,
+            timestamp: Date.now()
+          });
+          console.log(`💾 Audit saved to Firebase (entropy: ${auditEntropy.toFixed(4)})`);
+        }
+
+        // Randomize target for next set of blocks
+        const randomByte = crypto.getRandomValues(new Uint8Array(1))[0];
+        const randomBit = randomByte & 1;
+        const newTarget = randomBit ? 'BLUE' : 'ORANGE';
+
+        console.log(`🎯 Target randomized: ${target} → ${newTarget}`);
+        setTarget(newTarget);
+
+      } catch (error) {
+        console.error('❌ Audit failed:', error);
+        // Don't block progression on audit failure
+      }
+    })();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [phase, blockIdx, runRef, target]);
+
+  // Auto-mode and AI-mode: Skip consent/questions, auto-restart, and auto-continue rest screens
+  useEffect(() => {
+    if (!isAutoMode && !isAIMode) return;
 
     if (phase === 'consent' || phase === 'pre_questions' || phase === 'prime' || phase === 'info') {
-      console.log('🤖 AUTO-MODE: Skipping', phase, '→ onboarding');
+      console.log(`🤖 ${isAIMode ? 'AI-MODE' : 'AUTO-MODE'}: Skipping`, phase, '→ onboarding');
       setPhase('onboarding');
-    } else if (phase === 'rest') {
+    } else if (phase === 'rest' && isAutoMode) {
+      // Only auto-continue rest screens in auto-mode, not AI-mode (AI clicks manually)
       const timer = setTimeout(() => {
         console.log(`🤖 AUTO-MODE: Auto-continuing after ${C.AUTO_MODE_REST_MS / 1000}s rest`);
-        startNextMinute();
+        setPhase('fetching'); // Go to fetching phase instead of old startNextMinute
       }, C.AUTO_MODE_REST_MS);
       return () => clearTimeout(timer);
     } else if (phase === 'done') {
-      // Skip post-questionnaire in auto-mode, mark completed, and go to results
-      console.log('🤖 AUTO-MODE: Skipping post-questionnaire → results');
+      // Skip post-questionnaire in auto/AI mode, mark completed, and go to results
+      console.log(`🤖 ${isAIMode ? 'AI-MODE' : 'AUTO-MODE'}: Skipping post-questionnaire → results`);
       if (runRef) {
         setDoc(runRef, { completed: true }, { merge: true }).catch(e =>
-          console.warn('Auto-mode completion save error:', e)
+          console.warn('Auto/AI-mode completion save error:', e)
         );
       }
       setPhase('results');
     } else if (phase === 'results' || phase === 'summary') {
-      // Skip results/summary screens in auto-mode, go to next session
-      console.log('🤖 AUTO-MODE: Skipping results/summary → next session');
+      // Skip results/summary screens in auto/AI mode, go to next session
+      console.log(`🤖 ${isAIMode ? 'AI-MODE' : 'AUTO-MODE'}: Skipping results/summary → next session`);
       setPhase('next');
     } else if (phase === 'next') {
       // Immediately transition to avoid re-triggering
@@ -672,18 +786,18 @@ export default function MainApp() {
 
       if (newCount < autoSessionTarget) {
         // Reset for next session
-        console.log(`🤖 AUTO-MODE: Session ${autoSessionCount}/${autoSessionTarget} complete, starting session ${newCount}`);
+        console.log(`🤖 ${isAIMode ? 'AI-MODE' : 'AUTO-MODE'}: Session ${autoSessionCount}/${autoSessionTarget} complete, starting session ${newCount}`);
         setAutoSessionCount(newCount);
         setPhase('preparing_next');
       } else {
-        console.log(`🤖 AUTO-MODE: All ${autoSessionTarget} sessions complete!`);
+        console.log(`🤖 ${isAIMode ? 'AI-MODE' : 'AUTO-MODE'}: All ${autoSessionTarget} sessions complete!`);
         setAutoSessionCount(newCount); // Update count before showing completion
-        setPhase('auto_complete');
+        setPhase(isAIMode ? 'ai_complete' : 'auto_complete');
       }
     } else if (phase === 'preparing_next') {
       // Delayed reset to ensure clean state transition
       setTimeout(() => {
-        console.log('🔄 Resetting state for next auto-mode session');
+        console.log(`🔄 Resetting state for next ${isAIMode ? 'AI' : 'auto'}-mode session`);
         setRunRef(null);
         setblockIdx(-1);
         setTotals({ k: 0, n: 0 });
@@ -692,7 +806,7 @@ export default function MainApp() {
         setPhase('consent');
       }, 100);
     }
-  }, [isAutoMode, phase, autoSessionCount, autoSessionTarget, startNextMinute, runRef]);
+  }, [isAutoMode, isAIMode, phase, autoSessionCount, autoSessionTarget, startNextMinute, runRef]);
   const targetBit = target === 'BLUE' ? 1 : 0;
   // Accumulate bits across minutes until we have full windows (e.g., 1000 bits)
   const entropyAccumRef = useRef({ subj: [], ghost: [] });
@@ -706,19 +820,13 @@ export default function MainApp() {
   // S-Selection mapping & micro-entropy
   const [mappingType, setMappingType] = useState('low_entropy');
   const microEntropyRef = useRef({ sum: 0, count: 0 });
+  // Mapping selection removed - no longer needed without running phase
   useEffect(() => {
-    if (phase === 'running') {
+    // Disabled - was for selecting visual mapping during running phase
+    if (false && phase === 'running') {
       const randomByte = crypto.getRandomValues(new Uint8Array(1))[0];
       const randomBit = randomByte & 1;
       const pick = randomBit ? 'low_entropy' : 'high_entropy';
-      console.log('🎲 MAPPING SELECTION:', {
-        blockIdx,
-        randomByte,
-        randomBit,
-        mapping: pick,
-        isRing: pick === 'low_entropy',
-        isMosaic: pick === 'high_entropy'
-      });
       setMappingType(pick);
       microEntropyRef.current = { sum: 0, count: 0 };
     }
@@ -779,230 +887,101 @@ export default function MainApp() {
   const persistMinute = useCallback(async () => {
     if (!runRef) return;
 
-    const n = alignedRef.current.length;
+    const n = 150;
     const k = hitsRef.current;
-    const kg = ghostHitsRef.current;
     const kd = demonHitsRef.current;
 
     const z = zFromBinom(k, n, 0.5);
     const pTwo = twoSidedP(z);
-    const zg = zFromBinom(kg, n, 0.5);
-    const pg = twoSidedP(zg);
     const zd = zFromBinom(kd, n, 0.5);
     const pd = twoSidedP(zd);
 
+    // Subject metrics
     const cohRange = cumulativeRange(bitsRef.current);
     const hurst = hurstApprox(bitsRef.current);
     const ac1 = lag1Autocorr(bitsRef.current);
 
-    const gCohRange = cumulativeRange(ghostBitsRef.current);
-    const gHurst = hurstApprox(ghostBitsRef.current);
-    const gAc1 = lag1Autocorr(ghostBitsRef.current);
-
+    // Demon metrics
     const dCohRange = cumulativeRange(demonBitsRef.current);
     const dHurst = hurstApprox(demonBitsRef.current);
     const dAc1 = lag1Autocorr(demonBitsRef.current);
 
-    // All blocks are live now
-    const kind = 'live';
-    // ---- Entropy windowing (accumulate & compute 1000-bit windows) ----
-    let newSubjWindows = [];
-    let newGhostWindows = [];
-    let subjCount = 0;
-    let ghostCount = 0;
+    // Block-level entropy (150 bits per block)
+    const blockSubjEntropy = bitsRef.current.length > 0 ? shannonEntropy(bitsRef.current) : null;
+    const blockDemonEntropy = demonBitsRef.current.length > 0 ? shannonEntropy(demonBitsRef.current) : null;
 
-    try {
-      // Append this minute's bits to accumulators
-      if (Array.isArray(bitsRef.current) && bitsRef.current.length) {
-        const beforeLength = entropyAccumRef.current.subj.length;
-        entropyAccumRef.current.subj.push(...bitsRef.current);
-        console.log(`🔍 ENTROPY ACCUMULATOR: Block ${blockIdx}, added ${bitsRef.current.length} bits (${beforeLength} → ${entropyAccumRef.current.subj.length}), can make window: ${entropyAccumRef.current.subj.length >= ENTROPY_WINDOW_SIZE}`);
-      } else {
-        console.warn(`⚠️ Block ${blockIdx}: bitsRef.current is empty or not an array!`, {
-          isArray: Array.isArray(bitsRef.current),
-          length: bitsRef.current?.length,
-          sample: bitsRef.current?.slice(0, 5)
-        });
-      }
-      if (Array.isArray(ghostBitsRef.current) && ghostBitsRef.current.length) {
-        const beforeLength = entropyAccumRef.current.ghost.length;
-        entropyAccumRef.current.ghost.push(...ghostBitsRef.current);
-        console.log(`Entropy: Added ${ghostBitsRef.current.length} ghost bits (accumulator: ${beforeLength} → ${entropyAccumRef.current.ghost.length})`);
-      }
-
-      // Extract any completed windows
-      newSubjWindows = extractEntropyWindowsFromAccumulator(entropyAccumRef.current.subj, ENTROPY_WINDOW_SIZE);
-      newGhostWindows = extractEntropyWindowsFromAccumulator(entropyAccumRef.current.ghost, ENTROPY_WINDOW_SIZE);
-
-      console.log(`📦 Block ${blockIdx} extraction result:`, {
-        subjWindows: newSubjWindows.length,
-        ghostWindows: newGhostWindows.length,
-        subjAccumRemaining: entropyAccumRef.current.subj.length,
-        ghostAccumRemaining: entropyAccumRef.current.ghost.length
-      });
-
-      if (newSubjWindows.length) {
-        console.log(`✅ Extracted ${newSubjWindows.length} subject windows, avg entropy: ${(newSubjWindows.reduce((a,b) => a+b, 0) / newSubjWindows.length).toFixed(4)}`);
-      }
-      if (newGhostWindows.length) {
-        console.log(`✅ Extracted ${newGhostWindows.length} ghost windows, avg entropy: ${(newGhostWindows.reduce((a,b) => a+b, 0) / newGhostWindows.length).toFixed(4)}`);
-      }
-
-      // Append to running windows history
-      if (newSubjWindows.length) entropyWindowsRef.current.subj.push(...newSubjWindows);
-      if (newGhostWindows.length) entropyWindowsRef.current.ghost.push(...newGhostWindows);
-
-      subjCount = entropyWindowsRef.current.subj.length;
-      ghostCount = entropyWindowsRef.current.ghost.length;
-
-      console.log(`Entropy: Total windows - Subject: ${subjCount}, Ghost: ${ghostCount}`);
-
-    } catch (entropyErr) {
-      console.warn('entropy-windowing failed', entropyErr);
-    }
-
-    // Block-level entropy calculations (150 bits per block)
-    const blockBits = bitsRef.current.length;
-    const blockSubjEntropy = blockBits > 0 ? shannonEntropy(bitsRef.current) : null;
-    const blockGhostEntropy = ghostBitsRef.current.length > 0 ? shannonEntropy(ghostBitsRef.current) : null;
-
-    // Block-level k2 split: [first 75 bits, last 75 bits]
-    const half = Math.floor(blockBits / 2);
-    const blockK2Subj = blockBits >= 50 ? [
+    // Block-level k2 split
+    const half = Math.floor(150 / 2);
+    const blockK2Subj = [
       shannonEntropy(bitsRef.current.slice(0, half)),
       shannonEntropy(bitsRef.current.slice(half))
-    ] : null;
-    const blockK2Ghost = ghostBitsRef.current.length >= 50 ? [
-      shannonEntropy(ghostBitsRef.current.slice(0, half)),
-      shannonEntropy(ghostBitsRef.current.slice(half))
-    ] : null;
+    ];
+    const blockK2Demon = [
+      shannonEntropy(demonBitsRef.current.slice(0, half)),
+      shannonEntropy(demonBitsRef.current.slice(half))
+    ];
 
-    // Block-level k3 split: [early 50, middle 50, late 50]
-    const third = Math.floor(blockBits / 3);
-    const blockK3Subj = blockBits >= 50 ? [
+    // Block-level k3 split
+    const third = Math.floor(150 / 3);
+    const blockK3Subj = [
       shannonEntropy(bitsRef.current.slice(0, third)),
       shannonEntropy(bitsRef.current.slice(third, 2 * third)),
       shannonEntropy(bitsRef.current.slice(2 * third))
-    ] : null;
-    const blockK3Ghost = ghostBitsRef.current.length >= 50 ? [
-      shannonEntropy(ghostBitsRef.current.slice(0, third)),
-      shannonEntropy(ghostBitsRef.current.slice(third, 2 * third)),
-      shannonEntropy(ghostBitsRef.current.slice(2 * third))
-    ] : null;
+    ];
+    const blockK3Demon = [
+      shannonEntropy(demonBitsRef.current.slice(0, third)),
+      shannonEntropy(demonBitsRef.current.slice(third, 2 * third)),
+      shannonEntropy(demonBitsRef.current.slice(2 * third))
+    ];
 
-    console.log(`📊 BLOCK ENTROPY: Block ${blockIdx}, Subject: ${blockSubjEntropy?.toFixed(4) || 'null'}, Ghost: ${blockGhostEntropy?.toFixed(4) || 'null'}`, {
-      k2_subj: blockK2Subj?.map(e => e.toFixed(4)),
-      k3_subj: blockK3Subj?.map(e => e.toFixed(4))
-    });
-
-    // Session-level temporal entropy is calculated in calculateSessionTemporalEntropy()
-    // at session end, not per-block
-
+    console.log(`📊 BLOCK ENTROPY: Block ${blockIdx}, Subject: ${blockSubjEntropy?.toFixed(4)}, Demon: ${blockDemonEntropy?.toFixed(4)}`);
 
     const mdoc = doc(runRef, 'minutes', String(blockIdx));
 
-    const blockSummary = { k, n, z, pTwo, kg: ghostHitsRef.current, kd: demonHitsRef.current, ng: n, nd: n, zg, zd, pg, pd, kind };
-    setLastBlock(blockSummary);
-    setTotals((t) => ({ k: t.k + k, n: t.n + n }));
+    console.log(`💾 Saving block ${blockIdx} to Firestore`);
 
-    console.log(`💾 Saving block ${blockIdx} to Firestore with ${newSubjWindows.length} subject windows, ${newGhostWindows.length} ghost windows`);
+    const targetBit = target === 'BLUE' ? 1 : 0;
 
     await setDoc(mdoc, {
       idx: blockIdx,
-      kind,
-      ended_by: 'timer',
+      kind: 'instant',
+      ended_by: 'instant_process',
       startedAt: serverTimestamp(),
+
+      // Subject data
       n, hits: k, z, pTwo,
-      ghost_hits: kg, ghost_z: zg, ghost_pTwo: pg,
-      demon_hits: kd, demon_z: zd, demon_pTwo: pd,
-      // No tape metadata for live streams
       coherence: { cumRange: cohRange, hurst },
       resonance: { ac1 },
-      ghost_metrics: { coherence: { cumRange: gCohRange, hurst: gHurst }, resonance: { ac1: gAc1 } },
-      demon_metrics: { coherence: { cumRange: dCohRange, hurst: dHurst }, resonance: { ac1: dAc1 } },
-      mapping_type: mappingType,
-      // Block-level timing (replaces per-trial timestamps)
-      timing: {
-        block_start_time: blockStartTimeRef.current,
-        block_end_time: blockEndTimeRef.current,
-        block_duration_ms: blockEndTimeRef.current - blockStartTimeRef.current,
-        pause_before_block_ms: previousBlockEndTimeRef.current > 0
-          ? blockStartTimeRef.current - previousBlockEndTimeRef.current
-          : 0,
-        first_trial_time: firstTrialTimeRef.current,
-        last_trial_time: lastTrialTimeRef.current,
-      },
-      micro_entropy: microEntropyRef.current.count ? (microEntropyRef.current.sum / microEntropyRef.current.count) : null,
-      entropy: {
-        // 1000-bit windows (computed across session as bits accumulate)
-        new_windows_subj: newSubjWindows.map((entropy, index) => {
-          const globalWindowIndex = entropyWindowsRef.current.subj.length + index;
-          const bitStart = globalWindowIndex * ENTROPY_WINDOW_SIZE;
-          const bitEnd = bitStart + ENTROPY_WINDOW_SIZE;
-          return {
-            entropy,
-            windowIndex: globalWindowIndex,
-            bitStart,
-            bitEnd,
-            timestamp: blockStartTimeRef.current
-          };
-        }),
-        new_windows_ghost: newGhostWindows.map((entropy, index) => {
-          const globalWindowIndex = entropyWindowsRef.current.ghost.length + index;
-          const bitStart = globalWindowIndex * ENTROPY_WINDOW_SIZE;
-          const bitEnd = bitStart + ENTROPY_WINDOW_SIZE;
-          return {
-            entropy,
-            windowIndex: globalWindowIndex,
-            bitStart,
-            bitEnd,
-            timestamp: blockStartTimeRef.current
-          };
-        }),
 
-        // Block-level entropy (150 bits per block)
-        block_entropy_subj: blockSubjEntropy,
-        block_entropy_ghost: blockGhostEntropy,
-        block_k2_subj: blockK2Subj,
-        block_k2_ghost: blockK2Ghost,
-        block_k3_subj: blockK3Subj,
-        block_k3_ghost: blockK3Ghost,
-        bits_count: blockBits,
+      // Demon data
+      demon_hits: kd, demon_z: zd, demon_pTwo: pd,
+      demon_metrics: {
+        coherence: { cumRange: dCohRange, hurst: dHurst },
+        resonance: { ac1: dAc1 }
       },
-      // No redundancy tracking for live streams
-      invalidated: minuteInvalidRef.current || false,
-      invalid_reason: minuteInvalidRef.current ? invalidReasonRef.current : null,
-      live_buffer: kind === 'live' ? {
-        pauseCount: pauseCountRef.current,
-        totalPausedMs: Math.round(totalPausedMsRef.current),
-        longestSinglePauseMs: Math.round(longestPauseMsRef.current),
-      } : null,
-      // Store trial sequences as arrays (much more efficient than subcollection)
+
+      // Entropy
+      entropy: {
+        block_entropy_subj: blockSubjEntropy,
+        block_entropy_demon: blockDemonEntropy,
+        block_k2_subj: blockK2Subj,
+        block_k2_demon: blockK2Demon,
+        block_k3_subj: blockK3Subj,
+        block_k3_demon: blockK3Demon,
+        bits_count: 150
+      },
+
+      // Store bit sequences
       trial_data: {
-        subject_bits: bitsRef.current, // Decision bits (0 or 1) for trial outcome
-        ghost_bits: ghostBitsRef.current, // Ghost decision bits
-        subject_raw_indices: subjectIndicesRef.current,
-        ghost_raw_indices: ghostIndicesRef.current,
-        trial_strategies: trialStrategiesRef.current, // 1=alternating, 0=independent (for chi-square test separation)
-        source_label: liveLastSource || 'unknown',
+        subject_bits: bitsRef.current,
+        demon_bits: demonBitsRef.current,
         target_bit: targetBit,
-        trial_count: bitsRef.current.length
-        // Outcomes can be calculated: subject_bits[i] === target_bit ? 1 : 0
+        trial_count: 150
       }
     }, { merge: true });
 
-    console.log('💾 Saved block data with trial arrays:', {
-      blockIdx,
-      totalTrials: bitsRef.current.length,
-      subjectBits: bitsRef.current.length,
-      ghostBits: ghostBitsRef.current.length
-    });
-
-    // Update previous block end time for next block's pause calculation
-    previousBlockEndTimeRef.current = blockEndTimeRef.current;
-  }, [
-    runRef, blockIdx, mappingType, targetBit, liveLastSource
-  ]);
+    console.log('💾 Saved block data:', { blockIdx, subjectHits: k, demonHits: kd });
+  }, [runRef, blockIdx, target]);
 
   const endMinute = useCallback(async () => {
     // Always disconnect live stream since all blocks are live
@@ -1035,6 +1014,22 @@ export default function MainApp() {
   useEffect(() => {
     endMinuteRef.current = endMinute;
   }, [endMinute]);
+
+  // Save block data after processing (must be after persistMinute is defined)
+  useEffect(() => {
+    if (!needsPersist || !runRef) return;
+
+    console.log('💾 Saving block data to Firestore...');
+    persistMinute()
+      .then(() => {
+        console.log('✅ Block data saved');
+        setNeedsPersist(false);
+      })
+      .catch(err => {
+        console.error('❌ Failed to save block data:', err);
+        setNeedsPersist(false);
+      });
+  }, [needsPersist, runRef, persistMinute]);
 
   // minute tick loop
   useEffect(() => {
@@ -1150,25 +1145,8 @@ export default function MainApp() {
           });
         }
 
-        // Debug ghost vs subject correlation every 25 trials (more frequent)
-        if (i % 25 === 0 && i > 0) {
-          const subjHitRate = hitsRef.current / alignedRef.current.length;
-          const ghostHitRate = ghostHitsRef.current / alignedRef.current.length;
-          const recentSubjBits = bitsRef.current.slice(-10);
-          const recentGhostBits = ghostBitsRef.current.slice(-10);
-
-          console.log('👻 GHOST vs SUBJECT:', {
-            trial: i,
-            subjHitRate: (subjHitRate * 100).toFixed(1) + '%',
-            ghostHitRate: (ghostHitRate * 100).toFixed(1) + '%',
-            diff: ((subjHitRate - ghostHitRate) * 100).toFixed(1) + '%',
-            deviation: Math.abs(subjHitRate - 0.5) + Math.abs(ghostHitRate - 0.5),
-            rawBits: { subjectBit, ghostBit, sNum: bit, gNum: ghost },
-            recent10SubjBits: recentSubjBits,
-            recent10GhostBits: recentGhostBits,
-            bufferStatus: liveBufferedBits()
-          });
-        }
+        // Ghost tracking disabled - no longer used
+        // (Commented out to remove ghost references)
         if (shouldInvalidate()) {
           minuteInvalidRef.current = true; invalidReasonRef.current = 'invalidated-buffer';
           redoCurrentMinuteRef.current = true;
@@ -1189,20 +1167,10 @@ export default function MainApp() {
       }
 
       bitsRef.current.push(bit);
-      ghostBitsRef.current.push(ghost);
-      if (C.USE_LIVE_STREAM) {
-        // Store QRNG stream indices
-        subjectIndicesRef.current.push(subjectRawIndex);
-        ghostIndicesRef.current.push(ghostRawIndex);
-        // Track strategy: 1=alternating (odd trials), 0=independent (even trials)
-        const trialNumber = i + 1;
-        trialStrategiesRef.current.push(trialNumber % 2 === 1 ? 1 : 0);
-      }
+      // Ghost tracking removed - no longer used
       const align = bit === targetBit ? 1 : 0;
-      const alignGhost = ghost === targetBit ? 1 : 0;
       alignedRef.current.push(align);
       hitsRef.current += align;
-      ghostHitsRef.current += alignGhost;
 
       // Trigger re-render for UI updates
       setRenderTrigger(prev => prev + 1);
@@ -1390,13 +1358,9 @@ export default function MainApp() {
 
       // Reset all accumulators to prevent bleed into next session
       bitsRef.current = [];
-      ghostBitsRef.current = [];
-      subjectIndicesRef.current = [];
-      ghostIndicesRef.current = [];
-      trialStrategiesRef.current = [];
-      entropyAccumRef.current = { subj: [], ghost: [] };
-      entropyWindowsRef.current = { subj: [], ghost: [] };
-      console.log('🔄 Reset all entropy accumulators for next session');
+      demonBitsRef.current = [];
+      alignedRef.current = [];
+      console.log('🔄 Reset all accumulators for next session');
     } catch (error) {
       console.error('Error calculating session temporal entropy:', error);
     }
@@ -1431,9 +1395,8 @@ export default function MainApp() {
 
     // All blocks are live now - no retro tracking needed
 
-    bitsRef.current = []; ghostBitsRef.current = []; alignedRef.current = [];
-    subjectIndicesRef.current = []; ghostIndicesRef.current = []; trialStrategiesRef.current = [];
-    hitsRef.current = 0; ghostHitsRef.current = 0;
+    bitsRef.current = []; alignedRef.current = [];
+    hitsRef.current = 0;
     resetLivePauseCounters();
     setRenderTrigger(0);
 
@@ -1518,11 +1481,12 @@ export default function MainApp() {
       <div style={{ position: 'relative' }}>
         <ConsentGate
           title="Consent to Participate"
-          studyDescription="This study investigates whether focused attention can correlate with patterns in random color generation during attention tasks. You will complete 20 blocks each 30 seconds long and brief questionnaires (approximately 10-15 minutes total)."
+          studyDescription="This study investigates whether focused attention can correlate with patterns in random color generation during attention tasks. You will complete 30 blocks each 5 seconds long and brief questionnaires (approximately 3 minutes total)."
           bullets={[
-            'You will focus on an assigned target color (orange or blue) while random colors are generated.',
-            'Your task is to maintain focused attention on your target color throughout each trial block.',
-            'We collect data on randomly generated sequences, timing patterns, and your questionnaire responses.',
+            'You will focus on an assigned target color (orange or blue) and attempt to influence quantum random outcomes through focused intention.',
+            'Your task is to concentrate your attention on your target color during the moment quantum data is fetched from a quantum random number generator.',
+            'Each block begins when you click "I\'m Ready" - this triggers quantum data retrieval while your target color pulses on screen.',
+            'We collect data on quantum random sequences, your performance metrics, timing patterns, and your questionnaire responses.',
             'Participation is completely voluntary; you may exit at any time using the door button.',
             'All data is stored anonymously and securely for research purposes.',
             'Data will be retained indefinitely to enable scientific replication and analysis.',
@@ -1699,7 +1663,7 @@ export default function MainApp() {
       // Auto-start when runRef is ready
       if (canContinue && !isRunning) {
         console.log('🤖 AUTO-MODE: Auto-starting trials for session', autoSessionCount + 1);
-        ensureRunDoc().then(() => startNextMinute());
+        ensureRunDoc().then(() => setPhase('rest')); // Go to rest, then auto-mode will trigger fetching
       }
 
       const isComplete = autoSessionCount >= autoSessionTarget;
@@ -1746,11 +1710,21 @@ export default function MainApp() {
 
     // Handler for target confirmation
     const handleTargetConfirm = (selectedTarget) => {
+      console.log('🎯 handleTargetConfirm called:', { selectedTarget, target, canContinue, isRunning, runRef: !!runRef });
+
       if (selectedTarget === target) {
-        // Correct target - start experiment
+        // Correct target - go to rest phase for first block
         if (canContinue && !isRunning) {
-          console.log('✅ Target confirmed:', target);
-          ensureRunDoc().then(() => startNextMinute());
+          console.log('✅ Target confirmed, calling ensureRunDoc...');
+          ensureRunDoc().then(() => {
+            console.log('✅ ensureRunDoc complete, transitioning to rest phase');
+            setblockIdx(0); // Start at block 0
+            setPhase('rest'); // Go to rest screen (will show "Ready to begin?")
+          }).catch(err => {
+            console.error('❌ ensureRunDoc failed:', err);
+          });
+        } else {
+          console.warn('⚠️ Cannot continue:', { canContinue, isRunning });
         }
       } else {
         // Wrong target - show alert
@@ -1761,191 +1735,200 @@ export default function MainApp() {
     return (
       <div style={{ padding: 24, maxWidth: 760, position: 'relative' }}>
         <h1>{isAIMode ? '🤖 AI Agent Mode' : 'Assessing Randomness Suppression During Conscious Intention Tasks — Pilot Study'}</h1>
-        <div style={{
-          textAlign: 'center',
-          margin: '20px 0',
-          padding: '20px',
-          border: '3px solid #ddd',
-          borderRadius: '12px',
-          background: '#f9f9f9'
-        }}>
-          <p style={{ fontSize: '24px', fontWeight: 'bold', margin: '0 0 10px 0' }}>
-            Your Target:
-          </p>
-          <div style={{ fontSize: '48px', fontWeight: 'bold', margin: '10px 0' }}>
-            {target === 'BLUE' ? '🟦 BLUE' : '🟠 ORANGE'}
-          </div>
-          <p style={{ fontSize: '18px', margin: '10px 0 0 0', color: '#666' }}>
-            Keep this target the entire session
-          </p>
-        </div>
 
-        {/* Target confirmation buttons */}
-        <div style={{ textAlign: 'center', margin: '30px 0' }}>
-          <p style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: 20 }}>
-            Confirm your target to begin:
-          </p>
-          <div style={{ display: 'flex', gap: 20, justifyContent: 'center' }}>
-            <button
-              id="target-button-orange"
-              onClick={() => handleTargetConfirm('ORANGE')}
-              disabled={!canContinue}
-              style={{
-                padding: '16px 32px',
-                fontSize: 18,
-                fontWeight: 'bold',
-                background: canContinue ? '#ff8c00' : '#ccc',
-                color: '#fff',
-                border: 'none',
-                borderRadius: 8,
-                cursor: canContinue ? 'pointer' : 'not-allowed',
-                minWidth: 200
-              }}
-            >
-              🟠 My target is ORANGE
-            </button>
-            <button
-              id="target-button-blue"
-              onClick={() => handleTargetConfirm('BLUE')}
-              disabled={!canContinue}
-              style={{
-                padding: '16px 32px',
-                fontSize: 18,
-                fontWeight: 'bold',
-                background: canContinue ? '#1e40af' : '#ccc',
-                color: '#fff',
-                border: 'none',
-                borderRadius: 8,
-                cursor: canContinue ? 'pointer' : 'not-allowed',
-                minWidth: 200
-              }}
-            >
-              🟦 My target is BLUE
-            </button>
-          </div>
-        </div>
-        <div style={{ marginBottom: 20 }}>
+        <div style={{ marginBottom: 30, marginTop: 30 }}>
           <h3 style={{ color: '#2c3e50', marginBottom: 15 }}>What to Expect:</h3>
-          <ul>
-            <li>You'll complete short blocks with breaks. Your only task is to focus on making your target color appear more often.</li>
-            <li>During each block, maintain continuous intention on your target - no feedback will be shown.</li>
-            <li>During breaks, you'll see your performance summary before continuing.</li>
+          <ul style={{ fontSize: 16, lineHeight: 1.8 }}>
+            <li>You'll complete 30 short blocks with breaks between each. Your only task is to know that your target color will appear more often than 50%.</li>
+            <li><strong>Critical moment:</strong> When you click "I'm Ready", the system will fetch quantum random data while your target color pulses on screen. <strong>This is when to focus all your intention on your target color.</strong></li>
+            <li>After the quantum data is retrieved, results appear instantly.</li>
+            <li>During breaks, you'll see your performance summary before the next block.</li>
             {debugUI && (
               <li style={{ opacity: 0.8 }}>{POLICY_TEXT.warmup}; {POLICY_TEXT.pause}; {POLICY_TEXT.resume}</li>
             )}
           </ul>
         </div>
 
-        {/* Start Trials button removed - target confirmation buttons now start the experiment */}
+        {/* Continue button */}
+        <div style={{ textAlign: 'center', marginTop: 40 }}>
+          <button
+            onClick={() => {
+              if (canContinue && !isRunning) {
+                console.log('✅ Starting experiment...');
+                ensureRunDoc().then(() => {
+                  console.log('✅ ensureRunDoc complete, transitioning to rest phase');
+                  setblockIdx(0);
+                  setPhase('rest');
+                }).catch(err => {
+                  console.error('❌ ensureRunDoc failed:', err);
+                });
+              }
+            }}
+            disabled={!canContinue}
+            style={{
+              padding: '20px 60px',
+              fontSize: 20,
+              fontWeight: 'bold',
+              background: canContinue ? '#10b981' : '#ccc',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 8,
+              cursor: canContinue ? 'pointer' : 'not-allowed',
+              boxShadow: canContinue ? '0 4px 6px rgba(0,0,0,0.1)' : 'none'
+            }}
+          >
+            Continue
+          </button>
+        </div>
       </div>
     );
   }
 
-  // PRIME
-  // REST - Shows results and prepares for next block
-  if (phase === 'rest') {
+  // SCORE - Show last block results
+  if (phase === 'score') {
     const pctLast = lastBlock && lastBlock.n ? Math.round((100 * lastBlock.k) / lastBlock.n) : 0;
-    const isFirstBlock = blockIdx === 0;
-    const isGhostTapeReady = ghostTape !== null;
+    // Show audit after blocks 5, 10, 15, 20, 25 (when blockIdx is 5, 10, 15, 20, 25)
+    const needsAudit = blockIdx > 0 && blockIdx % C.AUDIT_EVERY_N_BLOCKS === 0 && blockIdx < C.BLOCKS_TOTAL;
 
     return (
-      <div style={{ padding: 24, textAlign: 'center', position: 'relative', maxWidth: 600, margin: '0 auto' }}>
-        {!isFirstBlock && (
-          <>
-            <h2 style={{ marginBottom: 20 }}>Block {blockIdx} Complete</h2>
+      <div style={{ padding: 24, textAlign: 'center', maxWidth: 600, margin: '0 auto' }}>
+        <h2 style={{ marginBottom: 20 }}>Block {blockIdx} Complete</h2>
 
-            {/* Show last block score */}
-            {lastBlock && lastBlock.n > 0 && (
-              <div
-                style={{
-                  display: 'inline-block',
-                  padding: '16px 24px',
-                  borderRadius: 12,
-                  border: '2px solid #ddd',
-                  background: '#f9f9f9',
-                  marginBottom: 24,
-                  fontSize: 24,
-                  fontWeight: 600
-                }}
-              >
-                Your Score: {pctLast}% ({lastBlock.k}/{lastBlock.n} HITs)
-              </div>
-            )}
-
-            {/* Optional totals board */}
-            <BlockScoreboard
-              last={lastBlock || { k: hitsRef.current, n: alignedRef.current.length, z: 0, pTwo: 1, kg: 0, ng: 0, zg: 0, pg: 1, kind: 'live' }}
-              totals={totals}
-              targetSide={target}
-              hideGhost={true}
-              hideBlockType={true}
-            />
-          </>
+        {/* Show last block score */}
+        {lastBlock && lastBlock.n > 0 && (
+          <div
+            style={{
+              display: 'inline-block',
+              padding: '16px 24px',
+              borderRadius: 12,
+              border: '2px solid #ddd',
+              background: '#f9f9f9',
+              marginBottom: 24,
+              fontSize: 24,
+              fontWeight: 600
+            }}
+          >
+            Your Score: {pctLast}% ({lastBlock.k}/{lastBlock.n} HITs)
+          </div>
         )}
 
-        {/* Focus prompt for next block */}
+        {/* Session totals */}
+        <BlockScoreboard
+          last={lastBlock || { k: 0, n: 0, z: 0, pTwo: 1, kind: 'instant' }}
+          totals={totals}
+          targetSide={target}
+          hideGhost={true}
+          hideBlockType={true}
+        />
+
+        <button
+          onClick={() => {
+            if (needsAudit) {
+              setPhase('audit');
+            } else {
+              setPhase('target_announce');
+            }
+          }}
+          style={{
+            marginTop: 32,
+            padding: '16px 32px',
+            fontSize: 18,
+            fontWeight: 600,
+            background: '#10b981',
+            color: 'white',
+            border: 'none',
+            borderRadius: 8,
+            cursor: 'pointer',
+            boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
+          }}
+        >
+          Continue
+        </button>
+
+        <p style={{ marginTop: 16, fontSize: 14, color: '#6b7280' }}>
+          Block {blockIdx + 1} of {C.BLOCKS_TOTAL}
+        </p>
+      </div>
+    );
+  }
+
+  // TARGET_ANNOUNCE / REST - Large target display with "I'm Ready" button
+  if (phase === 'target_announce' || phase === 'rest') {
+    const targetColor = target === 'BLUE' ? '#1e40af' : '#ea580c';
+    const targetEmoji = target === 'BLUE' ? '🟦' : '🟠';
+    const isFirstBlock = blockIdx === 0;
+
+    // Expose state for AI agent to read
+    if (isAIMode && typeof window !== 'undefined') {
+      window.expState = {
+        target,
+        score: 0,
+        hits: 0,
+        trials: 0,
+        totalTrials: trialsPerBlock,
+        blockIdx: blockIdx,
+        totalBlocks: C.BLOCKS_TOTAL
+      };
+    }
+
+    return (
+      <div style={{ padding: 24, textAlign: 'center', maxWidth: 600, margin: '0 auto' }}>
+        {/* Large target display */}
         <div style={{
-          marginTop: 32,
+          padding: 60,
+          background: '#f9f9f9',
+          borderRadius: 20,
+          border: `4px solid ${targetColor}`,
+          marginBottom: 40
+        }}>
+          <p style={{ fontSize: 24, fontWeight: 'bold', marginBottom: 20, color: '#666' }}>
+            Your Target:
+          </p>
+          <div style={{ fontSize: 96, marginBottom: 10 }}>
+            {targetEmoji}
+          </div>
+          <div style={{ fontSize: 48, fontWeight: 'bold', color: targetColor }}>
+            {target}
+          </div>
+        </div>
+
+        {/* Ready prompt */}
+        <div style={{
           padding: 24,
           background: '#f0f7ff',
           borderRadius: 12,
-          border: '2px solid #3b82f6'
+          border: '2px solid #3b82f6',
+          marginBottom: 24
         }}>
           <p style={{ fontSize: 18, marginBottom: 16, fontWeight: 500 }}>
             {isFirstBlock ? 'Ready to begin?' : 'Ready for the next block?'}
           </p>
 
-          {/* Show loading state if ghost tape not ready */}
-          {!isGhostTapeReady && (
-            <div style={{ marginBottom: 20 }}>
-              <div style={{
-                display: 'inline-block',
-                width: 24,
-                height: 24,
-                border: '3px solid #ddd',
-                borderTop: '3px solid #3b82f6',
-                borderRadius: '50%',
-                animation: 'spin 1s linear infinite',
-                marginRight: 12,
-                verticalAlign: 'middle'
-              }} />
-              <span style={{ fontSize: 16, color: '#666' }}>
-                Connecting to quantum source...
-              </span>
-            </div>
-          )}
-
-          {isGhostTapeReady && (
-            <>
-              <p style={{ fontSize: 16, marginBottom: 8, color: '#555' }}>
-                We're about to fetch quantum data from the QRNG.
-              </p>
-              <p style={{ fontSize: 16, marginBottom: 20, color: '#555' }}>
-                <strong>Focus on your target color</strong> ({target === 'BLUE' ? '🟦 BLUE' : '🟠 ORANGE'}) and click when ready.
-              </p>
-            </>
-          )}
+          <p style={{ fontSize: 16, marginBottom: 8, color: '#555' }}>
+            We're about to fetch quantum data from the QRNG.
+          </p>
+          <p style={{ fontSize: 16, marginBottom: 20, color: '#555' }}>
+            <strong>Know that your target color will appear more often than 50%.</strong> Click when ready.
+          </p>
 
           <button
             onClick={() => setPhase('fetching')}
-            disabled={!isGhostTapeReady}
             style={{
               padding: '16px 48px',
               fontSize: 20,
               fontWeight: 'bold',
               borderRadius: 8,
               border: 'none',
-              background: isGhostTapeReady ? (target === 'BLUE' ? '#1e40af' : '#ea580c') : '#ccc',
+              background: target === 'BLUE' ? '#1e40af' : '#ea580c',
               color: '#fff',
-              cursor: isGhostTapeReady ? 'pointer' : 'not-allowed',
-              transition: 'transform 0.1s',
-              opacity: isGhostTapeReady ? 1 : 0.6
+              cursor: 'pointer',
+              transition: 'transform 0.1s'
             }}
-            onMouseDown={(e) => isGhostTapeReady && (e.currentTarget.style.transform = 'scale(0.95)')}
-            onMouseUp={(e) => isGhostTapeReady && (e.currentTarget.style.transform = 'scale(1)')}
-            onMouseLeave={(e) => isGhostTapeReady && (e.currentTarget.style.transform = 'scale(1)')}
+            onMouseDown={(e) => (e.currentTarget.style.transform = 'scale(0.95)')}
+            onMouseUp={(e) => (e.currentTarget.style.transform = 'scale(1)')}
+            onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
           >
-            {isGhostTapeReady ? "I'm Ready" : 'Please Wait...'}
+            I'm Ready
           </button>
         </div>
 
@@ -1956,12 +1939,64 @@ export default function MainApp() {
     );
   }
 
+  // AUDIT - Rest & recovery screen with audit fetch in background
+  if (phase === 'audit') {
+    return (
+      <div style={{ padding: 24, textAlign: 'center', maxWidth: 600, margin: '0 auto' }}>
+        <h2 style={{ marginBottom: 32 }}>Block {blockIdx} Complete</h2>
+
+        {/* Audit rest prompt */}
+        <div style={{
+          marginTop: 32,
+          padding: 32,
+          background: '#f0fdf4',
+          borderRadius: 12,
+          border: '2px solid #10b981'
+        }}>
+          <h3 style={{ color: '#059669', marginBottom: 16 }}>Rest & Recovery</h3>
+          <p style={{ fontSize: 18, lineHeight: 1.6, marginBottom: 16 }}>
+            Take a moment to breathe and relax...
+          </p>
+          <p style={{ fontSize: 14, color: '#6b7280' }}>
+            Clear your mind. Let go of any focus or intention.
+          </p>
+        </div>
+
+        {/* Continue button */}
+        <button
+          onClick={() => setPhase('target_announce')}
+          style={{
+            marginTop: 32,
+            padding: '16px 32px',
+            fontSize: 18,
+            fontWeight: 600,
+            background: '#10b981',
+            color: 'white',
+            border: 'none',
+            borderRadius: 8,
+            cursor: 'pointer',
+            boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
+          }}
+          onMouseDown={(e) => (e.currentTarget.style.transform = 'scale(0.95)')}
+          onMouseUp={(e) => (e.currentTarget.style.transform = 'scale(1)')}
+          onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
+        >
+          Continue
+        </button>
+
+        <p style={{ marginTop: 16, fontSize: 14, color: '#6b7280' }}>
+          Block {blockIdx + 1} of {C.BLOCKS_TOTAL}
+        </p>
+      </div>
+    );
+  }
+
   // FETCHING - Full-screen target color with 5Hz pulse + white spinner
   if (phase === 'fetching') {
     const targetColor = target === 'BLUE' ? '#1e40af' : '#ea580c';
     const pulseKeyframes = `
       @keyframes breathe {
-        0%, 100% { opacity: 0.7; }
+        0%, 100% { opacity: 0.8; }
         50% { opacity: 1; }
       }
     `;
@@ -2010,8 +2045,10 @@ export default function MainApp() {
     );
   }
 
-  // RUNNING
-  if (phase === 'running') {
+  // RUNNING phase removed - trials process instantly now
+
+  // POST QUESTIONS - Skip for auto/AI modes
+  if (false && phase === 'running') {
     const isLive = true; // All blocks are live now
     const trialsPlanned = trialsPerBlock;
 
@@ -2299,15 +2336,18 @@ export default function MainApp() {
           <p>Your data contributes to a larger dataset that will be analyzed for statistical patterns. Results will be made available once data collection is complete and analysis is finished.</p>
         </div>
 
-        <HighScoreEmailGate
-          experiment="exp3"
-          step="done"
-          sessionId={runRef?.id}
-          participantId={uid}
-          finalPercent={finalPct}
-          cutoffOverride={C.FINALIST_MIN_PCT}
-          lowCutoffOverride={C.FINALIST_MAX_PCT}
-        />
+        {/* Hide email capture for auto-mode and AI-mode */}
+        {!isAutoMode && !isAIMode && (
+          <HighScoreEmailGate
+            experiment="exp3"
+            step="done"
+            sessionId={runRef?.id}
+            participantId={uid}
+            finalPercent={finalPct}
+            cutoffOverride={C.FINALIST_MIN_PCT}
+            lowCutoffOverride={C.FINALIST_MAX_PCT}
+          />
+        )}
 
         <button
           className="primary-btn"
@@ -2320,15 +2360,15 @@ export default function MainApp() {
     );
   }
 
-  // AUTO-MODE COMPLETION SCREEN
-  if (phase === 'auto_complete') {
+  // AUTO-MODE / AI-MODE COMPLETION SCREEN
+  if (phase === 'auto_complete' || phase === 'ai_complete') {
     return (
       <div className="App" style={{ textAlign: 'center', maxWidth: 600, margin: '0 auto', padding: 24 }}>
-        <h1>🤖 Auto-Mode Complete</h1>
+        <h1>🤖 {phase === 'ai_complete' ? 'AI-Mode' : 'Auto-Mode'} Complete</h1>
         <div style={{ marginTop: 32, padding: '24px', background: '#f0fdf4', border: '2px solid #10b981', borderRadius: 8 }}>
-          <h2 style={{ color: '#059669', marginBottom: 16 }}>✓ Baseline Data Collection Complete</h2>
+          <h2 style={{ color: '#059669', marginBottom: 16 }}>✓ {phase === 'ai_complete' ? 'AI Agent Sessions' : 'Baseline Data Collection'} Complete</h2>
           <p style={{ fontSize: 18, marginBottom: 12 }}>
-            Successfully completed {autoSessionCount} baseline session{autoSessionCount !== 1 ? 's' : ''}
+            Successfully completed {autoSessionCount} {phase === 'ai_complete' ? 'AI agent' : 'baseline'} session{autoSessionCount !== 1 ? 's' : ''}
           </p>
           <p style={{ color: '#6b7280', fontSize: 14 }}>
             Data has been saved to the database. You can now view the results in the QA dashboard.
@@ -2337,7 +2377,7 @@ export default function MainApp() {
 
         <div style={{ marginTop: 24, padding: '16px', background: '#fff', border: '1px solid #ddd', borderRadius: 8 }}>
           <p style={{ fontFamily: 'monospace', fontSize: 12, color: '#6b7280' }}>
-            Auto-mode enabled via #auto URL hash
+            {phase === 'ai_complete' ? 'AI-mode enabled via #ai URL hash' : 'Auto-mode enabled via #auto URL hash'}
           </p>
         </div>
       </div>
