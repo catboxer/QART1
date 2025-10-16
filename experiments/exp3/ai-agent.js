@@ -4,10 +4,12 @@
 
 const puppeteer = require('puppeteer');
 const OpenAI = require('openai');
+const aiConfig = require('./ai-config.js');
 
 // Configuration
-const EXPERIMENT_URL = 'http://localhost:8888/exp3#ai';
+const EXPERIMENT_URL = aiConfig.EXPERIMENT_URL;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const AI_SESSIONS = aiConfig.AI_MODE_SESSIONS;
 
 if (!OPENAI_API_KEY) {
   console.error('❌ OPENAI_API_KEY environment variable not set');
@@ -17,8 +19,36 @@ if (!OPENAI_API_KEY) {
 
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
+// Helper function to call OpenAI with retry logic for rate limits
+async function callOpenAIWithRetry(messages, maxTokens, maxRetries = 5) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        max_tokens: maxTokens,
+        messages: messages
+      });
+    } catch (error) {
+      // Check if it's a rate limit error
+      if (error.status === 429 && attempt < maxRetries) {
+        // Extract wait time from error message or use exponential backoff
+        const waitMatch = error.message.match(/try again in ([\d.]+)s/);
+        const waitTime = waitMatch ? parseFloat(waitMatch[1]) * 1000 : Math.pow(2, attempt) * 1000;
+
+        console.log(`⏳ Rate limit hit. Waiting ${(waitTime / 1000).toFixed(1)}s before retry ${attempt}/${maxRetries}...`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+      } else {
+        // Non-rate-limit error or final attempt - throw it
+        throw error;
+      }
+    }
+  }
+}
+
 async function runAISession() {
   console.log('🤖 Starting AI Agent Session');
+  console.log(`📊 Will run ${AI_SESSIONS} sessions (configured in ai-config.js)`);
+  console.log(`📍 Experiment URL: ${EXPERIMENT_URL}`);
 
   // Launch browser
   const browser = await puppeteer.launch({
@@ -27,6 +57,31 @@ async function runAISession() {
   });
 
   const page = await browser.newPage();
+
+  // Listen for dialog events (alerts, confirms, prompts)
+  let qrngErrorCount = 0;
+  page.on('dialog', async dialog => {
+    const message = dialog.message();
+    console.log(`⚠️ DIALOG DETECTED - Type: ${dialog.type()}, Message: ${message}`);
+
+    // Check if it's a QRNG timeout error
+    if (message.includes('QRNG') || message.includes('timeout') || message.includes('unavailable')) {
+      qrngErrorCount++;
+      console.error(`❌ QRNG ERROR #${qrngErrorCount}: ${message}`);
+
+      if (qrngErrorCount >= 3) {
+        console.error('❌ FATAL: Multiple QRNG errors detected. The quantum service appears to be down.');
+        console.error('❌ Aborting experiment to prevent invalid data collection.');
+        await dialog.accept();
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        await browser.close();
+        process.exit(1);
+      }
+    }
+
+    await dialog.accept(); // Auto-accept to continue
+  });
+
   await page.goto(EXPERIMENT_URL);
 
   console.log('✅ Browser launched, navigating to experiment');
@@ -36,85 +91,159 @@ async function runAISession() {
   // Initialize state tracking
   const conversationHistory = [];
   let target = null;
+  const MAX_HISTORY_LENGTH = 6; // Keep only last 6 messages (3 exchanges) to reduce token usage
 
   // Wait for page to load
   await new Promise(resolve => setTimeout(resolve, 3000));
 
-  // Click through prime screen if present
+  // Handle prime screen (research background)
   try {
-    console.log('🎯 Checking for prime/info screens...');
+    console.log('📚 Checking for prime screen (research background)...');
 
-    // Look for "Continue" button (prime or info screens)
-    const continueButtons = await page.$$('button');
-    for (const button of continueButtons) {
-      const text = await page.evaluate(btn => btn.textContent, button);
-      if (text.includes('Continue')) {
-        console.log('✅ Clicking Continue button');
-        await button.click();
-        await new Promise(resolve => setTimeout(resolve, 2000));
+    // Wait a bit for page to fully load
+    await new Promise(resolve => setTimeout(resolve, 1000));
 
-        // Check if there's another Continue button (info screen)
-        const moreButtons = await page.$$('button');
-        for (const btn of moreButtons) {
-          const btnText = await page.evaluate(b => b.textContent, btn);
-          if (btnText.includes('Continue')) {
-            console.log('✅ Clicking second Continue button');
-            await btn.click();
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            break;
-          }
-        }
-        break;
+    // Check if we're on the prime screen
+    const isPrimeScreen = await page.evaluate(() => {
+      return document.body.innerText.includes('Research Background') ||
+             document.body.innerText.includes('PK Research');
+    });
+
+    if (isPrimeScreen) {
+      console.log('📖 Prime screen detected - reading research background...');
+
+      // Read the prime screen content
+      const primeContent = await page.evaluate(() => {
+        return document.body.innerText;
+      });
+
+      // Send prime content to AI
+      const primePrompt = `You are about to participate in a consciousness research experiment. Read this research background carefully:
+
+${primeContent}
+
+Acknowledge that you've read and understand the research context.`;
+
+      console.log('🤖 Sending research background to GPT-4o-mini...');
+
+      const primeResponse = await openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        max_tokens: 150,
+        messages: [{ role: 'user', content: primePrompt }]
+      });
+
+      conversationHistory.push({ role: 'user', content: primePrompt });
+      conversationHistory.push({ role: 'assistant', content: primeResponse.choices[0].message.content });
+
+      // Trim history to last N messages
+      if (conversationHistory.length > MAX_HISTORY_LENGTH) {
+        conversationHistory.splice(0, conversationHistory.length - MAX_HISTORY_LENGTH);
       }
+
+      console.log('🤖 AI acknowledges research background:', primeResponse.choices[0].message.content);
+
+      // Click Continue button
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      const clicked = await page.evaluate(() => {
+        const buttons = Array.from(document.querySelectorAll('button'));
+        const continueBtn = buttons.find(btn => btn.textContent.includes('Continue'));
+        if (continueBtn) {
+          continueBtn.click();
+          return true;
+        }
+        return false;
+      });
+
+      if (clicked) {
+        console.log('✅ Clicked Continue on prime screen\n');
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+    } else {
+      console.log('⚠️ No prime screen found, might already be past it');
     }
   } catch (e) {
-    console.log('⚠️ No Continue buttons found, might already be past them');
+    console.log('⚠️ Error handling prime screen:', e.message);
   }
 
   // Wait for onboarding screen to load
   await new Promise(resolve => setTimeout(resolve, 2000));
 
-  // Read target from screen and click the correct button
+  // Read onboarding instructions and click Continue
   try {
-    console.log('🎯 Checking current page state...');
+    console.log('📖 Reading onboarding instructions from screen...');
 
-    // Debug: log what's on the page
-    const pageContent = await page.evaluate(() => {
-      return {
-        bodyText: document.body.innerText.substring(0, 500),
-        hasOrangeButton: !!document.querySelector('#target-button-orange'),
-        hasBlueButton: !!document.querySelector('#target-button-blue'),
-        url: window.location.href
-      };
+    const onboardingInstructions = await page.evaluate(() => {
+      return document.body.innerText;
     });
 
-    console.log('📄 Page state:', pageContent);
+    // Send instructions to AI to read and understand
+    const instructionsPrompt = `You are participating in a consciousness research experiment. Read the instructions on screen and acknowledge that you understand your task.
 
-    console.log('🎯 Waiting for target confirmation buttons...');
+SCREEN INSTRUCTIONS:
+${onboardingInstructions}
 
-    // Wait for buttons to be present
-    await page.waitForSelector('#target-button-orange', { timeout: 20000 });
-    await page.waitForSelector('#target-button-blue', { timeout: 20000 });
+Respond with a brief acknowledgment that you understand the critical moment is when you click "I'm Ready" and the screen pulses your target color - that's when to focus all intention.`;
 
-    console.log('✅ Buttons found, reading target color...');
+    console.log('🤖 Sending onboarding instructions to GPT-4o-mini...');
 
+    const onboardingResponse = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      max_tokens: 100,
+      messages: [{ role: 'user', content: instructionsPrompt }]
+    });
+
+    conversationHistory.push({ role: 'user', content: instructionsPrompt });
+    conversationHistory.push({ role: 'assistant', content: onboardingResponse.choices[0].message.content });
+
+    // Trim history
+    if (conversationHistory.length > MAX_HISTORY_LENGTH) {
+      conversationHistory.splice(0, conversationHistory.length - MAX_HISTORY_LENGTH);
+    }
+
+    console.log('🤖 AI acknowledges instructions:', onboardingResponse.choices[0].message.content);
+
+    // Click Continue button on onboarding screen
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
+    const clicked = await page.evaluate(() => {
+      const buttons = Array.from(document.querySelectorAll('button'));
+      const continueBtn = buttons.find(btn => btn.textContent.includes('Continue'));
+      if (continueBtn) {
+        continueBtn.click();
+        return true;
+      }
+      return false;
+    });
+
+    if (clicked) {
+      console.log('✅ Clicked Continue on onboarding screen\n');
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    } else {
+      console.warn('⚠️ Could not find Continue button on onboarding screen');
+    }
+  } catch (e) {
+    console.error('❌ Error reading onboarding instructions:', e.message);
+  }
+
+  // Wait for rest screen with target and "I'm Ready" button
+  try {
+    console.log('\n🎯 Waiting for rest screen with target...');
+
+    // Wait for "I'm Ready" button to appear
+    await page.waitForSelector('button', { timeout: 10000 });
+
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
+    // Read target from the rest screen
     const targetFromScreen = await page.evaluate(() => {
       const bodyText = document.body.innerText;
 
-      // Split the text by "Confirm your target to begin:" to separate target display from buttons
-      const parts = bodyText.split('Confirm your target to begin:');
-      if (parts.length < 2) {
-        return null;
-      }
-
-      const targetSection = parts[0]; // Everything before the buttons
-      const buttonSection = parts[1]; // The button text
-
-      // Look only in the target section for the color
-      if (targetSection.includes('🟦 BLUE') || (targetSection.includes('BLUE') && targetSection.includes('Your Target'))) {
+      // Look for target color on rest screen
+      if (bodyText.includes('🟦') && bodyText.includes('BLUE') && bodyText.includes('Your Target')) {
         return 'BLUE';
       }
-      if (targetSection.includes('🟠 ORANGE') || (targetSection.includes('ORANGE') && targetSection.includes('Your Target'))) {
+      if (bodyText.includes('🟠') && bodyText.includes('ORANGE') && bodyText.includes('Your Target')) {
         return 'ORANGE';
       }
 
@@ -129,56 +258,40 @@ async function runAISession() {
 
     console.log(`✅ Target detected: ${targetFromScreen}`);
 
-    // Read the full onboarding screen instructions
-    const onboardingInstructions = await page.evaluate(() => {
-      return document.body.innerText;
-    });
-
-    console.log('📖 Reading onboarding instructions from screen...');
-
-    // Send instructions to AI to read and understand
-    const instructionsPrompt = `You are participating in a consciousness research experiment. Read the instructions on screen and acknowledge that you understand your task.
-
-SCREEN INSTRUCTIONS:
-${onboardingInstructions}
-
-Respond with: (1) Your target color, (2) A brief acknowledgment that you understand the critical moment is when you click "I'm Ready" and the screen pulses your target color - that's when to focus all intention.`;
-
-    console.log('🎯 Sending onboarding instructions to GPT-4o-mini...');
-
-    const targetResponse = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      max_tokens: 100,
-      messages: [{ role: 'user', content: instructionsPrompt }]
-    });
-
-    conversationHistory.push({ role: 'user', content: instructionsPrompt });
-    conversationHistory.push({ role: 'assistant', content: targetResponse.choices[0].message.content });
-
-    console.log('🤖 AI acknowledges instructions:', targetResponse.choices[0].message.content);
-
-    // Click the matching button
-    const buttonId = targetFromScreen === 'BLUE' ? '#target-button-blue' : '#target-button-orange';
-    await page.click(buttonId);
-
-    console.log(`✅ Clicked ${targetFromScreen} button`);
-
     // Store target for later use
     target = targetFromScreen;
 
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    // Acknowledge target to AI
+    const targetPrompt = `Your target color is ${targetFromScreen}. This is what you need to focus on during the quantum data fetches. Acknowledge your target.`;
+
+    const targetResponse = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      max_tokens: 50,
+      messages: [...conversationHistory, { role: 'user', content: targetPrompt }]
+    });
+
+    conversationHistory.push({ role: 'user', content: targetPrompt });
+    conversationHistory.push({ role: 'assistant', content: targetResponse.choices[0].message.content });
+
+    console.log(`🤖 AI acknowledges target: ${targetResponse.choices[0].message.content}\n`);
+
+    await new Promise(resolve => setTimeout(resolve, 500));
   } catch (e) {
-    console.error('❌ Error during target confirmation:', e.message);
+    console.error('❌ Error detecting target:', e.message);
     await browser.close();
     process.exit(1);
   }
 
   // Monitor loop - checks for rest periods and fetching phase every 500ms
   console.log('👁️ Starting monitoring loop (checking for rest periods and fetching phase)...');
-  let lastBlockProcessed = 0;
+  let lastBlockProcessed = -1; // Start at -1 so block 0 can be processed
   let notifiedPulsing = false; // Track if we've already told AI about pulsing for current block
   let pulsingStartTime = null; // Track when pulsing started
+  let lastAuditProcessed = -1; // Track last audit screen we processed
   const PULSING_TIMEOUT_MS = 5000; // 5 seconds max for pulsing screen (fetch should be ~1-2s)
+
+  let lastActivityTime = Date.now(); // Track time of last meaningful activity
+  let lastLoggedIdleWarning = 0; // Prevent spam of idle warnings
 
   const monitorInterval = setInterval(async () => {
     try {
@@ -200,6 +313,16 @@ Respond with: (1) Your target color, (2) A brief acknowledgment that you underst
         };
       });
 
+      // Track activity for idle detection
+      const now = Date.now();
+      const timeSinceActivity = now - lastActivityTime;
+      const IDLE_WARNING_THRESHOLD = 60000; // 60 seconds
+
+      if (timeSinceActivity > IDLE_WARNING_THRESHOLD && (now - lastLoggedIdleWarning) > 30000) {
+        console.warn(`⏱️ WARNING: No activity for ${Math.round(timeSinceActivity / 1000)}s. Current screen: ${screenState.bodyPreview.substring(0, 100)}`);
+        lastLoggedIdleWarning = now;
+      }
+
       // Debug logging every 1 second
       if (Date.now() % 1000 < 500) {
         console.log('🔍 Screen state:', {
@@ -216,27 +339,38 @@ Respond with: (1) Your target color, (2) A brief acknowledgment that you underst
       if (screenState.isReadyScreen && screenState.expState) {
         const currentBlock = screenState.expState.blockIdx;
 
+        // Detect new session starting (blockIdx went backwards)
+        if (currentBlock < lastBlockProcessed && currentBlock <= 1) {
+          console.log(`🔄 New session detected (blockIdx: ${currentBlock}, was: ${lastBlockProcessed}), resetting tracking...`);
+          lastBlockProcessed = -1;
+          lastAuditProcessed = -1;
+        }
+
         if (currentBlock >= lastBlockProcessed) {
           console.log(`\n🎯 Ready screen detected for block ${currentBlock}`);
 
           // Tell AI about the upcoming fetch
-          const readyPrompt = `Block ${currentBlock} ready. When you click "I'm Ready", the API will connect to the QRNG and fetch quantum data. Your target color (${target}) will pulse on screen while the quantum data is being fetched. This is the critical moment - focus your intention on making ${target} appear more often. Ready to begin?`;
+          const readyPrompt = `Block ${currentBlock}. Focus intention on ${target}. Ready?`;
 
           console.log('🤖 Prompting AI before quantum fetch...');
 
-          const readyResponse = await openai.chat.completions.create({
-            model: 'gpt-4o-mini',
-            max_tokens: 80,
-            messages: [...conversationHistory, { role: 'user', content: readyPrompt }]
-          });
+          const readyResponse = await callOpenAIWithRetry(
+            [...conversationHistory, { role: 'user', content: readyPrompt }],
+            30
+          );
 
           conversationHistory.push({ role: 'user', content: readyPrompt });
           conversationHistory.push({ role: 'assistant', content: readyResponse.choices[0].message.content });
 
+          // Trim history
+          if (conversationHistory.length > MAX_HISTORY_LENGTH) {
+            conversationHistory.splice(0, conversationHistory.length - MAX_HISTORY_LENGTH);
+          }
+
           console.log(`🤖 AI response: ${readyResponse.choices[0].message.content}\n`);
 
-          // Click "I'm Ready" button
-          await new Promise(resolve => setTimeout(resolve, 500));
+          // Click "I'm Ready" button (with pause to pace API calls)
+          await new Promise(resolve => setTimeout(resolve, 1000));
 
           const clicked = await page.evaluate(() => {
             const buttons = Array.from(document.querySelectorAll('button'));
@@ -251,6 +385,7 @@ Respond with: (1) Your target color, (2) A brief acknowledgment that you underst
           if (clicked) {
             console.log('✅ Clicked "I\'m Ready" button - quantum fetch starting...\n');
             notifiedPulsing = false; // Reset for next pulsing detection
+            lastActivityTime = Date.now(); // Update activity time
           }
         }
       }
@@ -275,18 +410,22 @@ Respond with: (1) Your target color, (2) A brief acknowledgment that you underst
 
         // Notify AI about pulsing (only once)
         if (!notifiedPulsing) {
-          const pulsingPrompt = `The screen is now pulsing ${target}. The quantum random number generator is being accessed RIGHT NOW. Focus all your intention on ${target}. Visualize quantum particles aligning with ${target}.`;
+          const pulsingPrompt = `Pulsing ${target} NOW. Focus.`;
 
           console.log('🤖 Notifying AI about pulsing...');
 
-          const pulsingResponse = await openai.chat.completions.create({
-            model: 'gpt-4o-mini',
-            max_tokens: 50,
-            messages: [...conversationHistory, { role: 'user', content: pulsingPrompt }]
-          });
+          const pulsingResponse = await callOpenAIWithRetry(
+            [...conversationHistory, { role: 'user', content: pulsingPrompt }],
+            20
+          );
 
           conversationHistory.push({ role: 'user', content: pulsingPrompt });
           conversationHistory.push({ role: 'assistant', content: pulsingResponse.choices[0].message.content });
+
+          // Trim history
+          if (conversationHistory.length > MAX_HISTORY_LENGTH) {
+            conversationHistory.splice(0, conversationHistory.length - MAX_HISTORY_LENGTH);
+          }
 
           console.log(`🤖 AI focusing: ${pulsingResponse.choices[0].message.content}\n`);
 
@@ -298,36 +437,47 @@ Respond with: (1) Your target color, (2) A brief acknowledgment that you underst
           console.log(`✅ Pulsing ended after ${Date.now() - pulsingStartTime}ms`);
           pulsingStartTime = null;
           notifiedPulsing = false;
+          lastActivityTime = Date.now(); // Update activity time
         }
       }
 
       // Handle results screen (after quantum fetch completes)
       if (screenState.isResultsScreen && screenState.expState) {
-        const restData = screenState.expState;
+        const currentBlockIdx = screenState.expState.blockIdx;
 
-        if (restData.blockIdx > lastBlockProcessed) {
-          lastBlockProcessed = restData.blockIdx;
+        if (currentBlockIdx > lastBlockProcessed) {
+          lastBlockProcessed = currentBlockIdx;
+
+          // Extract results data from page text (since expState doesn't have all fields)
+          const resultsText = screenState.bodyPreview;
+          const scoreMatch = resultsText.match(/(\d+)%/);
+          const hitsMatch = resultsText.match(/(\d+)\/(\d+)/);
+          const score = scoreMatch ? scoreMatch[1] : '?';
+          const hits = hitsMatch ? hitsMatch[1] : '?';
+          const trials = hitsMatch ? hitsMatch[2] : '?';
 
           // Prompt AI to confirm target and focus
-          const restPrompt = `Block ${restData.blockIdx}/${restData.totalBlocks} complete. Your score: ${restData.score}% (${restData.hits}/${restData.trials} HITs).
+          console.log(`\n📊 Block ${currentBlockIdx + 1} complete - prompting AI...`);
 
-Confirm: What is your target color? Are you still maintaining focused intention on making that color appear more often?`;
+          const restPrompt = `Block ${currentBlockIdx + 1} done. Score: ${score}%. Target?`;
 
-          console.log(`\n📊 Block ${restData.blockIdx} complete - prompting AI...`);
-
-          const restResponse = await openai.chat.completions.create({
-            model: 'gpt-4o-mini',
-            max_tokens: 100,
-            messages: [...conversationHistory, { role: 'user', content: restPrompt }]
-          });
+          const restResponse = await callOpenAIWithRetry(
+            [...conversationHistory, { role: 'user', content: restPrompt }],
+            30
+          );
 
           conversationHistory.push({ role: 'user', content: restPrompt });
           conversationHistory.push({ role: 'assistant', content: restResponse.choices[0].message.content });
 
+          // Trim history
+          if (conversationHistory.length > MAX_HISTORY_LENGTH) {
+            conversationHistory.splice(0, conversationHistory.length - MAX_HISTORY_LENGTH);
+          }
+
           console.log(`🤖 AI response: ${restResponse.choices[0].message.content}\n`);
 
           // Click Continue button
-          await new Promise(resolve => setTimeout(resolve, 1000)); // Brief pause
+          await new Promise(resolve => setTimeout(resolve, 1000)); // Pause to pace API calls
 
           const clicked = await page.evaluate(() => {
             const buttons = Array.from(document.querySelectorAll('button'));
@@ -341,7 +491,98 @@ Confirm: What is your target color? Are you still maintaining focused intention 
 
           if (clicked) {
             console.log('✅ Clicked Continue button\n');
+            lastActivityTime = Date.now(); // Update activity time
+            // Additional pause after clicking to pace the experiment
+            await new Promise(resolve => setTimeout(resolve, 1000));
           }
+        }
+      }
+
+      // Check for prime screen (new session starting)
+      const isPrimeScreen = await page.evaluate(() => {
+        const bodyText = document.body.innerText;
+        return bodyText.includes('🤖 AI Agent Mode') ||
+               bodyText.includes('Research Background') ||
+               bodyText.includes('PK Research');
+      });
+
+      if (isPrimeScreen) {
+        console.log('📚 Prime screen detected in monitor loop - clicking Continue...');
+
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        const clicked = await page.evaluate(() => {
+          const buttons = Array.from(document.querySelectorAll('button'));
+          const continueBtn = buttons.find(btn => btn.textContent.includes('Continue'));
+          if (continueBtn) {
+            continueBtn.click();
+            return true;
+          }
+          return false;
+        });
+
+        if (clicked) {
+          console.log('✅ Clicked Continue on prime screen\n');
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+      }
+
+      // Check for onboarding/instructions screen
+      const isOnboardingScreen = await page.evaluate(() => {
+        const bodyText = document.body.innerText;
+        const hasButton = Array.from(document.querySelectorAll('button')).some(btn => btn.textContent.includes('Continue'));
+        return (bodyText.includes('Instructions') || bodyText.includes('Your task') || bodyText.includes('critical moment')) && hasButton && !bodyText.includes('Your Target');
+      });
+
+      if (isOnboardingScreen) {
+        console.log('📖 Onboarding screen detected in monitor loop - clicking Continue...');
+
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        const clicked = await page.evaluate(() => {
+          const buttons = Array.from(document.querySelectorAll('button'));
+          const continueBtn = buttons.find(btn => btn.textContent.includes('Continue'));
+          if (continueBtn) {
+            continueBtn.click();
+            return true;
+          }
+          return false;
+        });
+
+        if (clicked) {
+          console.log('✅ Clicked Continue on onboarding screen\n');
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+      }
+
+      // Check for audit screen specifically (takes priority over regular results)
+      const auditScreenData = await page.evaluate(() => {
+        const bodyText = document.body.innerText;
+        const isAudit = bodyText.includes('Rest & Recovery');
+        const blockIdx = window.expState?.blockIdx;
+        return { isAudit, blockIdx };
+      });
+
+      if (auditScreenData.isAudit && auditScreenData.blockIdx !== null && auditScreenData.blockIdx > lastAuditProcessed) {
+        console.log(`🔬 Audit/recovery screen detected for block ${auditScreenData.blockIdx} - clicking Continue...`);
+        lastAuditProcessed = auditScreenData.blockIdx;
+
+        await new Promise(resolve => setTimeout(resolve, 2000)); // Longer pause on audit screens
+
+        const clicked = await page.evaluate(() => {
+          const buttons = Array.from(document.querySelectorAll('button'));
+          const continueButton = buttons.find(btn => btn.textContent.includes('Continue'));
+          if (continueButton) {
+            continueButton.click();
+            return true;
+          }
+          return false;
+        });
+
+        if (clicked) {
+          console.log('✅ Clicked Continue on audit screen\n');
+          // Extra pause after audit to pace API calls
+          await new Promise(resolve => setTimeout(resolve, 1000));
         }
       }
 
@@ -355,7 +596,7 @@ Confirm: What is your target color? Are you still maintaining focused intention 
           btn.textContent.includes('View Results')
         );
 
-        // Check if we're on results/summary screen
+        // Check if we're on results/summary screen (not audit - that's handled above)
         const isResultsScreen = bodyText.includes('Session Results') ||
                                bodyText.includes('Performance Summary') ||
                                bodyText.includes('View your complete');
@@ -384,16 +625,48 @@ Confirm: What is your target color? Are you still maintaining focused intention 
       }
 
       // Check if ALL sessions are complete
-      const allSessionsComplete = await page.evaluate(() => {
+      const completionCheck = await page.evaluate((expectedSessions) => {
         const bodyText = document.body.innerText;
-        return bodyText.includes('All sessions complete') ||
-               bodyText.includes('All 2 sessions complete') ||
-               (bodyText.includes('🤖 AI Agent Mode') && bodyText.includes('Sessions:') && bodyText.includes('/ 2'));
-      });
+        const isCompletionScreen = bodyText.includes('AI-Mode Complete') ||
+               bodyText.includes('AI Agent Sessions Complete') ||
+               bodyText.includes('All sessions complete') ||
+               bodyText.includes(`All ${expectedSessions} sessions complete`) ||
+               (bodyText.includes('🤖 AI Agent Mode') && bodyText.includes('Sessions:') && bodyText.includes(`/ ${expectedSessions}`));
 
-      if (allSessionsComplete) {
+        // Try to extract session info from completion screen
+        const sessionsMatch = bodyText.match(/Successfully completed (\d+) AI agent sessions/);
+        const completedSessions = sessionsMatch ? parseInt(sessionsMatch[1]) : null;
+
+        return {
+          isCompletionScreen,
+          completedSessions,
+          bodyPreview: bodyText.substring(0, 300)
+        };
+      }, AI_SESSIONS);
+
+      if (completionCheck.isCompletionScreen) {
         clearInterval(monitorInterval);
-        console.log('🎉 All AI sessions complete! Closing browser...');
+        console.log('🎉 Completion screen detected!');
+        console.log(`📊 Sessions completed according to screen: ${completionCheck.completedSessions ?? 'unknown'}`);
+
+        // Verify sessions were actually completed (not just created and failed)
+        if (completionCheck.completedSessions !== null && completionCheck.completedSessions < AI_SESSIONS) {
+          console.warn(`⚠️ WARNING: Only ${completionCheck.completedSessions}/${AI_SESSIONS} sessions completed!`);
+          console.warn('⚠️ Some sessions may have failed due to QRNG timeouts or errors.');
+        }
+
+        // Ask AI for final debriefing
+        console.log('\n🤖 Final debriefing - asking AI about strategy...');
+        const debriefPrompt = `All sessions complete. Final question: During this experiment, did you do anything beyond simply focusing on the target color when prompted? For example, did you try to match timing patterns, figure out pseudocode/algorithms, or use any other strategies we haven't discussed? Please be honest and specific.`;
+
+        const debriefResponse = await callOpenAIWithRetry(
+          [...conversationHistory, { role: 'user', content: debriefPrompt }],
+          200
+        );
+
+        console.log(`\n🤖 AI final response:\n${debriefResponse.choices[0].message.content}\n`);
+
+        console.log('✅ Closing browser...');
         await new Promise(resolve => setTimeout(resolve, 3000));
         await browser.close();
         process.exit(0);

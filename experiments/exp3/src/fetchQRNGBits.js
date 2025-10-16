@@ -1,5 +1,6 @@
 // fetchQRNGBits.js
-// Utility to fetch quantum bits on-demand using qrng-race endpoint
+// Utility to fetch quantum bits on-demand using qrng-race or random-org endpoint
+import { config } from './config.js';
 
 /**
  * Test if a bit string passes basic randomness checks
@@ -69,27 +70,37 @@ function validateRandomness(bits) {
  * @returns {Promise<string>} - String of '0' and '1' characters
  */
 export async function fetchQRNGBits(nBits, retries = 3, validateGhost = false) {
-  console.log(`🎲 Fetching ${nBits} bits from QRNG...`);
+  const source = config.QRNG_SOURCE || 'qrng-race';
+  const endpoint = source === 'random-org' ? 'random-org-proxy' : 'qrng-race';
+
+  console.log(`🎲 Fetching ${nBits} bits from ${source}...`);
 
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       const nBytes = Math.ceil(nBits / 8);
-      const MAX_CHUNK = 1024; // qrng-race max bytes per request
+      const MAX_CHUNK = 1024; // max bytes per request
       let allBits = '';
 
       // Fetch in chunks if needed
       let remaining = nBytes;
       while (remaining > 0) {
         const chunk = Math.min(MAX_CHUNK, remaining);
-        console.log(`📡 Fetching chunk: ${chunk} bytes (${remaining} bytes remaining) [Attempt ${attempt}/${retries}]`);
+        console.log(`📡 Fetching chunk: ${chunk} bytes (${remaining} bytes remaining) [Attempt ${attempt}/${retries}] via ${endpoint}`);
 
-        const response = await fetch(`/.netlify/functions/random-org-proxy?n=${chunk}`);
+        const response = await fetch(`/.netlify/functions/${endpoint}?n=${chunk}`);
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
 
         const data = await response.json();
-        if (!data.success || !Array.isArray(data.bytes)) {
+
+        // Reject fallback PRNG - we need true QRNG for valid data
+        if (data.success === false || data.fallback === true || data.source === 'fallback_prng') {
+          const reason = data.error || data.message || data.reason || 'unknown reason';
+          throw new Error(`QRNG unavailable (${reason}) - fallback PRNG rejected for data integrity`);
+        }
+
+        if (!Array.isArray(data.bytes)) {
           throw new Error(`Invalid response: ${JSON.stringify(data)}`);
         }
 

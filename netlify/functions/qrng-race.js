@@ -356,11 +356,13 @@ async function sequentialFallback(n) {
     if (r1) return r1;
   }
 
-  const r2 = await tryProvider('lfdr', fromLFDR, LFDR_TIMEOUT_MS, 1);
-  if (r2) return r2;
+  // COMMENTED OUT: Do not fall back to LFDR or ANU in production
+  // They are unreliable and we want to fail gracefully instead
+  // const r2 = await tryProvider('lfdr', fromLFDR, LFDR_TIMEOUT_MS, 1);
+  // if (r2) return r2;
 
-  const r3 = await tryProvider('anu', fromANU, ANU_TIMEOUT_MS, 0);
-  if (r3) return r3;
+  // const r3 = await tryProvider('anu', fromANU, ANU_TIMEOUT_MS, 0);
+  // if (r3) return r3;
 
   throw new Error(errors.join('; '));
 }

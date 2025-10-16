@@ -740,9 +740,9 @@ function filterSessions(sessions, mode, binauralFilter, primeFilter, mappingFilt
 
   // Filter by completion status
   if (mode === 'completers') {
-    filtered = filtered.filter(s => s.completed);
+    filtered = filtered.filter(s => s.exitedEarly === false);
   } else if (mode === 'nonCompleters') {
-    filtered = filtered.filter(s => !s.completed);
+    filtered = filtered.filter(s => s.exitedEarly === true);
   }
 
   // Filter by session count (first vs repeat sessions)
@@ -4773,7 +4773,7 @@ export default function QAExport() {
 
   const summary = useMemo(() => {
     const total = runs.length;
-    const completers = runs.filter(r => r.completed).length;
+    const completers = runs.filter(r => r.exitedEarly === false).length;
     const nonCompleters = total - completers;
 
     // Count first vs repeat sessions
@@ -5230,7 +5230,7 @@ export default function QAExport() {
         <div style={{ marginBottom: 16 }}>
           <h3 style={{ fontSize: 16, fontWeight: 'bold', marginBottom: 8, color: '#374151' }}>QRNG Protocol (Random Half Assignment):</h3>
           <ul style={{ margin: 0, paddingLeft: 20, lineHeight: 1.8 }}>
-            <li><strong>Single 300-bit fetch</strong> per block from Random.org QRNG</li>
+            <li><strong>Single 300-bit fetch</strong> per block from the QRNG</li>
             <li><strong>Random assignment:</strong> First/second half (150 bits each) → Subject/Demon</li>
             <li>Both conditions use bits from <strong>identical quantum source</strong>, ensuring matched baseline</li>
             <li>Subject sees results in real-time; Demon half serves as no-focus control</li>

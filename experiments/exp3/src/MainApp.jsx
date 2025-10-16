@@ -22,7 +22,7 @@ import {
 } from 'firebase/firestore';
 import { useLiveStreamQueue } from './useLiveStreamQueue.js';
 import { fetchQRNGBits } from './fetchQRNGBits.js';
-import { MappingDisplay } from './SelectionMappings.jsx';
+
 import { preQuestions, postQuestions } from './questions.js';
 import { QuestionsForm } from './Forms.jsx';
 import { BlockScoreboard } from './Scoring.jsx';
@@ -215,21 +215,7 @@ function flattenBits(accum) {
 
 // Break a bit array into non-overlapping windows and compute entropy per window.
 // Leaves any trailing remainder in-place in the accumulator.
-function extractEntropyWindowsFromAccumulator(accumArray, winSize = 1000) {
-  const flat = flattenBits(accumArray);
-  if (flat.length > 0 && !flat.every(b => b === 0 || b === 1)) {
-    console.warn('Entropy accumulator contains non-binary elements (after flatten):', flat.slice(0,20));
-  }
-  const windows = [];
-  while (flat.length >= winSize) {
-    const w = flat.splice(0, winSize);
-    windows.push(shannonEntropy(w));
-  }
-  // replace original accumulator with the leftover flat array
-  accumArray.length = 0;
-  accumArray.push(...flat);
-  return windows;
-}
+
 
 
 function CircularGauge({ value = 0.5, targetBit = 1, width = 220, label = 'Short-term avg', subLabel }) {
@@ -483,7 +469,7 @@ export default function MainApp() {
 
     const result = await createPromise;
     return result;
-  }, [runRef, target, uid, requireUid, isAutoMode]);
+  }, [runRef, target, uid, requireUid, isAutoMode, isAIMode]);
 
   // ---- phase & per-minute state
   const [phase, setPhase] = useState('consent');
@@ -494,21 +480,21 @@ export default function MainApp() {
   const [totals, setTotals] = useState({ k: 0, n: 0 });
   // eslint-disable-next-line no-unused-vars
   const [renderTrigger, setRenderTrigger] = useState(0); // Force re-renders for ref updates
-  const [savingBlock, setSavingBlock] = useState(false); // Track when persistMinute is saving
 
   const bitsRef = useRef([]);
   const demonBitsRef = useRef([]);
   const alignedRef = useRef([]);
   const hitsRef = useRef(0);
   const demonHitsRef = useRef(0);
+  const blockIdxToPersist = useRef(-1); // Stores the correct blockIdx to save
   const trialsPerMinute = trialsPerBlock;
 
   // Process trials with randomized half assignment (subject/demon)
   const processTrials = useCallback((quantumBits) => {
     console.log('🎲 Processing 150 trials with randomized half assignment...');
 
-    if (quantumBits.length !== 300) {
-      throw new Error(`Expected 300 bits, got ${quantumBits.length}`);
+    if (quantumBits.length !== C.BITS_PER_BLOCK) {
+      throw new Error(`Expected ${C.BITS_PER_BLOCK} bits, got ${quantumBits.length}`);
     }
 
     // Clear previous block data
@@ -520,16 +506,18 @@ export default function MainApp() {
 
     const targetBit = target === 'BLUE' ? 1 : 0;
 
-    // Split into two halves
-    const halfA = quantumBits.slice(0, 150);
-    const halfB = quantumBits.slice(150, 300);
+    // Use first bit (bit 0) to decide assignment (QRNG-based, not Math.random())
+    const assignmentBit = parseInt(quantumBits[0], 10);
+    const subjectGetsFirstHalf = assignmentBit === 1;
 
-    // Randomly assign which half goes to subject vs demon
-    const subjectGetsFirstHalf = Math.random() < 0.5;
+    // Split remaining 300 bits (after assignment bit) into two halves for trials
+    const halfA = quantumBits.slice(1, 151);    // bits 1-150 (150 bits)
+    const halfB = quantumBits.slice(151, 301);  // bits 151-300 (150 bits)
+
     const subjectBits = subjectGetsFirstHalf ? halfA : halfB;
     const demonBits = subjectGetsFirstHalf ? halfB : halfA;
 
-    console.log(`🎲 Assignment: Subject gets ${subjectGetsFirstHalf ? 'first' : 'second'} half, Demon gets ${subjectGetsFirstHalf ? 'second' : 'first'} half`);
+    console.log(`🎲 Assignment (QRNG bit ${assignmentBit}): Subject gets ${subjectGetsFirstHalf ? 'first' : 'second'} half, Demon gets ${subjectGetsFirstHalf ? 'second' : 'first'} half`);
 
     // Process subject bits
     for (let i = 0; i < 150; i++) {
@@ -579,6 +567,149 @@ export default function MainApp() {
 
   }, [target]);
 
+  // Calculate and save session-level temporal entropy (k=2 and k=3 windows)
+  const calculateSessionTemporalEntropy = useCallback(async () => {
+    if (!runRef) return;
+
+    try {
+      const allSubjectBits = [];
+      const allGhostBits = [];
+
+      // Fetch all minutes to get their indices
+      const minutesSnapshot = await getDocs(collection(runRef, 'minutes'));
+      const sortedMinutes = minutesSnapshot.docs
+        .map(d => ({ id: d.id, ref: d.ref, idx: d.data().idx || 0 }))
+        .sort((a, b) => a.idx - b.idx);
+
+      // For each minute, read trials subcollection and extract bits in order
+      for (const minute of sortedMinutes) {
+        const trialsSnapshot = await getDocs(collection(minute.ref, 'trials'));
+
+        // Sort trials by trialIndex to maintain proper order
+        const sortedTrials = trialsSnapshot.docs
+          .map(d => d.data())
+          .sort((a, b) => (a.trialIndex || 0) - (b.trialIndex || 0));
+
+        sortedTrials.forEach(trial => {
+          allSubjectBits.push(trial.subjectBit);
+          allGhostBits.push(trial.ghostBit);
+        });
+      }
+
+      const n = allSubjectBits.length;
+
+      if (n === 0) {
+        console.warn('No subject bits found for session-level entropy calculation');
+        return;
+      }
+
+      // NEW: Aggregate block-level entropy trajectories for H(t) fitting
+      const allBlockEntropySubj = [];
+      const allBlockEntropyGhost = [];
+
+      // Fetch block-level entropy from each minute
+      for (const minute of sortedMinutes) {
+        const minuteDoc = await getDoc(minute.ref);
+        const minuteData = minuteDoc.data();
+
+        if (minuteData?.entropy?.block_entropy_subj !== undefined) {
+          allBlockEntropySubj.push({
+            blockIdx: minuteData.entropy.block_idx,
+            entropy: minuteData.entropy.block_entropy_subj,
+            timestamp: minuteData.entropy.block_timestamp || minuteData.timing?.block_start_time
+          });
+        }
+
+        if (minuteData?.entropy?.block_entropy_ghost !== undefined) {
+          allBlockEntropyGhost.push({
+            blockIdx: minuteData.entropy.block_idx,
+            entropy: minuteData.entropy.block_entropy_ghost,
+            timestamp: minuteData.entropy.block_timestamp || minuteData.timing?.block_start_time
+          });
+        }
+      }
+
+      console.log('📈 BLOCK-LEVEL ENTROPY TRAJECTORIES:', {
+        subjectBlocks: allBlockEntropySubj.length,
+        ghostBlocks: allBlockEntropyGhost.length,
+        sampleSubject: allBlockEntropySubj.slice(0, 5).map(b => `Block ${b.blockIdx}: ${b.entropy.toFixed(4)}`),
+        sampleGhost: allBlockEntropyGhost.slice(0, 5).map(b => `Block ${b.blockIdx}: ${b.entropy.toFixed(4)}`)
+      });
+
+      // Minimum window size for meaningful entropy calculation
+      const MIN_WINDOW_SIZE = 500;
+
+      // k=2: split into first/second half (1500/1500 for 3000 bits)
+      const half = Math.floor(n / 2);
+      if (half < MIN_WINDOW_SIZE) {
+        console.warn(`Insufficient bits for k=2 temporal entropy: ${n} bits (need ${MIN_WINDOW_SIZE * 2}+ for meaningful windows)`);
+        return;
+      }
+      const entropy_k2 = [
+        shannonEntropy(allSubjectBits.slice(0, half)),
+        shannonEntropy(allSubjectBits.slice(half, n))
+      ];
+      const ghost_entropy_k2 = [
+        shannonEntropy(allGhostBits.slice(0, half)),
+        shannonEntropy(allGhostBits.slice(half, n))
+      ];
+
+      // k=3: split into thirds (1000/1000/1000 for 3000 bits)
+      const third = Math.floor(n / 3);
+      if (third < MIN_WINDOW_SIZE) {
+        console.warn(`Insufficient bits for k=3 temporal entropy: ${n} bits (need ${MIN_WINDOW_SIZE * 3}+ for meaningful windows)`);
+        return;
+      }
+      const entropy_k3 = [
+        shannonEntropy(allSubjectBits.slice(0, third)),
+        shannonEntropy(allSubjectBits.slice(third, 2 * third)),
+        shannonEntropy(allSubjectBits.slice(2 * third, n))
+      ];
+      const ghost_entropy_k3 = [
+        shannonEntropy(allGhostBits.slice(0, third)),
+        shannonEntropy(allGhostBits.slice(third, 2 * third)),
+        shannonEntropy(allGhostBits.slice(2 * third, n))
+      ];
+
+      console.log('📊 SESSION-LEVEL TEMPORAL ENTROPY:', {
+        totalBits: n,
+        k2_windows: entropy_k2.map((e, i) => `W${i+1}: ${e?.toFixed(4) || 'null'}`),
+        k3_windows: entropy_k3.map((e, i) => `W${i+1}: ${e?.toFixed(4) || 'null'}`),
+        k2_sizes: [half, n - half],
+        k3_sizes: [third, third, n - 2 * third]
+      });
+
+      // Save to session document
+      await setDoc(runRef, {
+        entropy: {
+          temporal: {
+            subj_bits_count: n,
+            entropy_k2: entropy_k2,
+            entropy_k3: entropy_k3,
+            ghost_entropy_k2: ghost_entropy_k2,
+            ghost_entropy_k3: ghost_entropy_k3,
+          },
+          temporal_trajectories: {
+            block_level_subj: allBlockEntropySubj,
+            block_level_ghost: allBlockEntropyGhost,
+            // This enables H_subject(t) and H_ghost(t) fitting for thermalization analysis
+          }
+        }
+      }, { merge: true });
+
+      console.log('✅ Session-level temporal entropy saved to DB', {
+        bitsIncluded: n
+      });
+
+      // Reset all accumulators to prevent bleed into next session
+      bitsRef.current = [];
+      demonBitsRef.current = [];
+      alignedRef.current = [];
+      console.log('🔄 Reset all accumulators for next session');
+    } catch (error) {
+      console.error('Error calculating session temporal entropy:', error);
+    }
+  }, [runRef]);
 
   // Fetch subject+demon tape when entering fetching phase, then process trials
   const [needsPersist, setNeedsPersist] = useState(false);
@@ -597,47 +728,81 @@ export default function MainApp() {
 
     (async () => {
       try {
-        console.log('🎯 Fetching 300 bits during focused intention...');
+        console.log(`🎯 Fetching ${C.BITS_PER_BLOCK} bits during focused intention...`);
 
-        // Fetch 300 bits
+        // Fetch quantum bits (301 bits: 1 for assignment + 300 for trials)
         const quantumBits = await fetchQRNGBits(C.BITS_PER_BLOCK);
 
         if (isCancelled) return;
 
         console.log('✅ Bits fetched:', quantumBits.length);
 
+        // Check if we just completed the final block BEFORE processing
+        // blockIdx in closure is the value BEFORE processTrials increments it
+        const justCompletedBlockIdx = blockIdx;
+        const nextBlockIdx = justCompletedBlockIdx + 1;
+
+        // Store the current blockIdx before it gets incremented (this is what persistMinute should use)
+        blockIdxToPersist.current = blockIdx;
+
         // Process all trials instantly (this increments blockIdx from blockIdx to blockIdx+1)
         processTrials(quantumBits);
 
-        // Flag that we need to persist data
-        setNeedsPersist(true);
-
-        // Check if we just completed the final block
-        // Note: blockIdx in closure is the OLD value (before processTrials incremented it)
-        // So if blockIdx was 29, processTrials incremented it to 30, and we're done
-        const justCompletedBlockIdx = blockIdx;
-        const nextBlockIdx = justCompletedBlockIdx + 1;
         console.log(`📊 Block ${justCompletedBlockIdx} complete. Next blockIdx: ${nextBlockIdx}, BLOCKS_TOTAL: ${C.BLOCKS_TOTAL}`);
 
-        // Check if session complete (we just finished block BLOCKS_TOTAL-1, which is the last block)
+        // Always persist (we need all 30 blocks saved, idx 0-29)
+        setNeedsPersist(true);
+
+        // Always go to score phase first to show results
+        setPhase('score');
+
+        // If this was the final block, calculate session entropy in background
         if (nextBlockIdx >= C.BLOCKS_TOTAL) {
-          console.log('✅ Session complete! Moving to done phase...');
-          setPhase('done');
-          // Calculate entropy in background
           calculateSessionTemporalEntropy().catch(err =>
             console.error('Failed to calculate final entropy:', err)
           );
-          return;
         }
-
-        // Always show score screen after processing
-        setPhase('score');
 
       } catch (error) {
         console.error('❌ Failed to fetch bits:', error);
+
+        // Capture detailed error information
+        const errorDetails = {
+          message: error.message || String(error),
+          stack: error.stack,
+          timestamp: new Date().toISOString(),
+        };
+        console.error('📋 Error details:', errorDetails);
+
         if (!isCancelled) {
-          alert('Failed to fetch quantum data. Please try again.');
-          setPhase('rest');
+          if (isAutoMode || isAIMode) {
+            // Auto/AI mode: exit early without completing session (no alert popup)
+            console.log(`🚫 ${isAIMode ? 'AI' : 'AUTO'}-MODE: QRNG unavailable after retries, exiting session early`);
+            console.log(`💾 Saving ${blockIdx} completed blocks and marking as early exit due to QRNG unavailability`);
+            // Mark as early exit and go to results
+            if (runRef) {
+              await updateDoc(runRef, {
+                exitedEarly: true,
+                exit_reason: 'qrng_unavailable',
+                exit_error_details: errorDetails,
+                exit_block_index: blockIdx
+              });
+            }
+            setPhase('results');
+          } else {
+            // Human mode: show alert and exit gracefully
+            alert('We ran out of QRNG data for today. Your progress has been saved. Please schedule a session with us or try again tomorrow.');
+            // Save and exit
+            if (runRef) {
+              await updateDoc(runRef, {
+                exitedEarly: true,
+                exit_reason: 'qrng_unavailable',
+                exit_error_details: errorDetails,
+                exit_block_index: blockIdx
+              });
+            }
+            setPhase('results');
+          }
         }
       }
     })();
@@ -645,7 +810,7 @@ export default function MainApp() {
     return () => {
       isCancelled = true;
     };
-  }, [phase, blockIdx, processTrials]);
+  }, [phase, blockIdx, processTrials, calculateSessionTemporalEntropy, isAutoMode, isAIMode, runRef]);
 
   // Audit phase: Fetch audit bits in background and randomize target
   useEffect(() => {
@@ -757,24 +922,50 @@ export default function MainApp() {
   useEffect(() => {
     if (!isAutoMode && !isAIMode) return;
 
-    if (phase === 'consent' || phase === 'pre_questions' || phase === 'prime' || phase === 'info') {
-      console.log(`🤖 ${isAIMode ? 'AI-MODE' : 'AUTO-MODE'}: Skipping`, phase, '→ onboarding');
+    // Auto-mode: skip all screens
+    // AI-mode: skip consent/pre_questions/info, but SHOW prime (research background)
+    if (phase === 'consent' || phase === 'pre_questions' || phase === 'info') {
+      console.log(`🤖 ${isAIMode ? 'AI-MODE' : 'AUTO-MODE'}: Skipping`, phase, '→', isAIMode && phase === 'consent' ? 'prime' : 'onboarding');
+      setPhase(isAIMode && phase === 'consent' ? 'prime' : 'onboarding');
+    } else if (isAutoMode && phase === 'prime') {
+      // Auto-mode skips prime, AI-mode shows it
+      console.log('🤖 AUTO-MODE: Skipping prime → onboarding');
       setPhase('onboarding');
-    } else if (phase === 'rest' && isAutoMode) {
-      // Only auto-continue rest screens in auto-mode, not AI-mode (AI clicks manually)
+    } else if (phase === 'score' && isAutoMode) {
+      // Auto-continue score screens in auto-mode
       const timer = setTimeout(() => {
-        console.log(`🤖 AUTO-MODE: Auto-continuing after ${C.AUTO_MODE_REST_MS / 1000}s rest`);
+        console.log(`🤖 AUTO-MODE: Auto-continuing from score after ${C.AUTO_MODE_REST_MS / 1000}s`);
+        // Check if session is complete (all 30 blocks done)
+        if (blockIdx >= C.BLOCKS_TOTAL) {
+          console.log('🤖 AUTO-MODE: Session complete, going to done phase');
+          setPhase('done');
+        } else {
+          // Check if audit is needed based on the just-completed block (not the incremented blockIdx)
+          const completedBlockIdx = blockIdxToPersist.current;
+          const needsAudit = completedBlockIdx >= 0 && (completedBlockIdx + 1) % C.AUDIT_EVERY_N_BLOCKS === 0 && blockIdx < C.BLOCKS_TOTAL;
+          setPhase(needsAudit ? 'audit' : 'target_announce');
+        }
+      }, C.AUTO_MODE_REST_MS);
+      return () => clearTimeout(timer);
+    } else if ((phase === 'rest' || phase === 'target_announce') && isAutoMode) {
+      // Auto-continue rest/target_announce screens in auto-mode
+      const timer = setTimeout(() => {
+        console.log(`🤖 AUTO-MODE: Auto-continuing after ${C.AUTO_MODE_REST_MS / 1000}s from ${phase}`);
         setPhase('fetching'); // Go to fetching phase instead of old startNextMinute
       }, C.AUTO_MODE_REST_MS);
       return () => clearTimeout(timer);
+    } else if (phase === 'audit' && isAutoMode) {
+      // Auto-continue audit screens in auto-mode
+      const timer = setTimeout(() => {
+        console.log(`🤖 AUTO-MODE: Auto-continuing after ${C.AUTO_MODE_REST_MS / 1000}s from audit`);
+        setPhase('target_announce');
+      }, C.AUTO_MODE_REST_MS);
+      return () => clearTimeout(timer);
     } else if (phase === 'done') {
-      // Skip post-questionnaire in auto/AI mode, mark completed, and go to results
+      // Skip post-questionnaire in auto/AI mode, go to results
+      // Note: exitedEarly is already false by default, so completing all 30 blocks = completer
       console.log(`🤖 ${isAIMode ? 'AI-MODE' : 'AUTO-MODE'}: Skipping post-questionnaire → results`);
-      if (runRef) {
-        setDoc(runRef, { completed: true }, { merge: true }).catch(e =>
-          console.warn('Auto/AI-mode completion save error:', e)
-        );
-      }
+      console.log(`✅ Session completed all ${C.BLOCKS_TOTAL} blocks (exitedEarly should be false)`);
       setPhase('results');
     } else if (phase === 'results' || phase === 'summary') {
       // Skip results/summary screens in auto/AI mode, go to next session
@@ -806,31 +997,9 @@ export default function MainApp() {
         setPhase('consent');
       }, 100);
     }
-  }, [isAutoMode, isAIMode, phase, autoSessionCount, autoSessionTarget, startNextMinute, runRef]);
+    // Note: blockIdxToPersist is a ref, not a state, so it doesn't need to be in dependencies
+  }, [isAutoMode, isAIMode, phase, blockIdx, autoSessionCount, autoSessionTarget, runRef]);
   const targetBit = target === 'BLUE' ? 1 : 0;
-  // Accumulate bits across minutes until we have full windows (e.g., 1000 bits)
-  const entropyAccumRef = useRef({ subj: [], ghost: [] });
-  // Running store of computed entropy windows (keeps history of windows across the run)
-  const entropyWindowsRef = useRef({ subj: [], ghost: [] });
-  // Configuration: window size for Shannon entropy (1000-bit standard)
-  const ENTROPY_WINDOW_SIZE = 1000;
-
-  // No retro functionality - all blocks are live
-
-  // S-Selection mapping & micro-entropy
-  const [mappingType, setMappingType] = useState('low_entropy');
-  const microEntropyRef = useRef({ sum: 0, count: 0 });
-  // Mapping selection removed - no longer needed without running phase
-  useEffect(() => {
-    // Disabled - was for selecting visual mapping during running phase
-    if (false && phase === 'running') {
-      const randomByte = crypto.getRandomValues(new Uint8Array(1))[0];
-      const randomBit = randomByte & 1;
-      const pick = randomBit ? 'low_entropy' : 'high_entropy';
-      setMappingType(pick);
-      microEntropyRef.current = { sum: 0, count: 0 };
-    }
-  }, [phase, blockIdx]);
 
   // live buffer guardrails
   const [isBuffering, setIsBuffering] = useState(false);
@@ -841,19 +1010,7 @@ export default function MainApp() {
   const redoCurrentMinuteRef = useRef(false);
   const minuteInvalidRef = useRef(false);
   const invalidReasonRef = useRef('');
-  const blockStartTimeRef = useRef(0);
-  const blockEndTimeRef = useRef(0);
-  const previousBlockEndTimeRef = useRef(0);
 
-  const resetLivePauseCounters = useCallback(() => {
-    pauseCountRef.current = 0;
-    totalPausedMsRef.current = 0;
-    longestPauseMsRef.current = 0;
-    pauseStartedAtRef.current = 0;
-    setIsBuffering(false);
-    minuteInvalidRef.current = false;
-    invalidReasonRef.current = '';
-  }, []);
   const maybePause = useCallback((now) => {
     if (!isBuffering && liveBufferedBits() < PAUSE_THRESHOLD_LT) {
       setIsBuffering(true);
@@ -886,6 +1043,14 @@ export default function MainApp() {
   // --- persist & end-minute (persist must be defined BEFORE endMinute) ---
   const persistMinute = useCallback(async () => {
     if (!runRef) return;
+
+    // Use the captured blockIdx (before increment) instead of current blockIdx
+    const saveBlockIdx = blockIdxToPersist.current;
+
+    if (saveBlockIdx < 0 || saveBlockIdx >= C.BLOCKS_TOTAL) {
+      console.log(`⚠️ Skipping persist: invalid blockIdx ${saveBlockIdx} (should be 0-${C.BLOCKS_TOTAL - 1})`);
+      return;
+    }
 
     const n = 150;
     const k = hitsRef.current;
@@ -934,16 +1099,16 @@ export default function MainApp() {
       shannonEntropy(demonBitsRef.current.slice(2 * third))
     ];
 
-    console.log(`📊 BLOCK ENTROPY: Block ${blockIdx}, Subject: ${blockSubjEntropy?.toFixed(4)}, Demon: ${blockDemonEntropy?.toFixed(4)}`);
+    console.log(`📊 BLOCK ENTROPY: Block ${saveBlockIdx}, Subject: ${blockSubjEntropy?.toFixed(4)}, Demon: ${blockDemonEntropy?.toFixed(4)}`);
 
-    const mdoc = doc(runRef, 'minutes', String(blockIdx));
+    const mdoc = doc(runRef, 'minutes', String(saveBlockIdx));
 
-    console.log(`💾 Saving block ${blockIdx} to Firestore`);
+    console.log(`💾 Saving block ${saveBlockIdx} to Firestore`);
 
     const targetBit = target === 'BLUE' ? 1 : 0;
 
     await setDoc(mdoc, {
-      idx: blockIdx,
+      idx: saveBlockIdx,
       kind: 'instant',
       ended_by: 'instant_process',
       startedAt: serverTimestamp(),
@@ -1103,7 +1268,7 @@ export default function MainApp() {
         return;
       }
 
-      let bit, ghost, subjectRawIndex, ghostRawIndex;
+      let bit, ghost;
       if (C.USE_LIVE_STREAM) {
         const now = performance.now();
         if (isBuffering) { maybeResume(now); return; } // Don't increment i when buffering
@@ -1125,8 +1290,6 @@ export default function MainApp() {
         // Extract bit values and indices
         const subjectBit = sBitObj.bit;
         const ghostBit = gBitObj.bit;
-        subjectRawIndex = sBitObj.rawIndex;
-        ghostRawIndex = gBitObj.rawIndex;
 
         // Convert bit strings to integers for display logic
         bit = subjectBit === '1' ? 1 : 0;
@@ -1188,223 +1351,8 @@ export default function MainApp() {
   ]);
 
 
-  // Prepare next block (warmup / load buffers)
-  const ensureNextBlockReady = useCallback(async (nextIdx) => {
-    // All blocks are live now
-    // STREAMING: warm up buffer, no prefetch
-    if (C.USE_LIVE_STREAM) {
-      if (!liveConnected) { liveConnect(); }
-      const t0 = Date.now();
-      // Wait for WARMUP_BITS_START bits before starting
-      while (Date.now() - t0 < WARMUP_TIMEOUT_MS &&
-        liveBufferedBits() < WARMUP_BITS_START) {
-        await new Promise((r) => setTimeout(r, 50));
-      }
-      resetLivePauseCounters();
-      return;
-    }
 
-    // NON-STREAM (prefetch model)
-    if (!nextLiveBufRef.current) { await prefetchLivePairs(); }
-    if (nextLiveBufRef.current) {
-      liveBufRef.current = nextLiveBufRef.current;
-      nextLiveBufRef.current = null;
-    } else {
-      // last-resort local
-      liveBufRef.current = localPairs(Math.round((C.BLOCK_MS / 1000) * C.VISUAL_HZ));
-    }
-    return;
 
-  }, [
-    // streaming deps
-    liveConnected, liveConnect, liveBufferedBits, resetLivePauseCounters,
-    // prefetch model deps
-    prefetchLivePairs,
-  ]);
-
-  // Calculate and save session-level temporal entropy (k=2 and k=3 windows)
-  const calculateSessionTemporalEntropy = useCallback(async () => {
-    if (!runRef) return;
-
-    try {
-      const allSubjectBits = [];
-      const allGhostBits = [];
-
-      // Fetch all minutes to get their indices
-      const minutesSnapshot = await getDocs(collection(runRef, 'minutes'));
-      const sortedMinutes = minutesSnapshot.docs
-        .map(d => ({ id: d.id, ref: d.ref, idx: d.data().idx || 0 }))
-        .sort((a, b) => a.idx - b.idx);
-
-      // For each minute, read trials subcollection and extract bits in order
-      for (const minute of sortedMinutes) {
-        const trialsSnapshot = await getDocs(collection(minute.ref, 'trials'));
-
-        // Sort trials by trialIndex to maintain proper order
-        const sortedTrials = trialsSnapshot.docs
-          .map(d => d.data())
-          .sort((a, b) => (a.trialIndex || 0) - (b.trialIndex || 0));
-
-        sortedTrials.forEach(trial => {
-          allSubjectBits.push(trial.subjectBit);
-          allGhostBits.push(trial.ghostBit);
-        });
-      }
-
-      const n = allSubjectBits.length;
-
-      if (n === 0) {
-        console.warn('No subject bits found for session-level entropy calculation');
-        return;
-      }
-
-      // NEW: Aggregate block-level entropy trajectories for H(t) fitting
-      const allBlockEntropySubj = [];
-      const allBlockEntropyGhost = [];
-
-      // Fetch block-level entropy from each minute
-      for (const minute of sortedMinutes) {
-        const minuteDoc = await getDoc(minute.ref);
-        const minuteData = minuteDoc.data();
-
-        if (minuteData?.entropy?.block_entropy_subj !== undefined) {
-          allBlockEntropySubj.push({
-            blockIdx: minuteData.entropy.block_idx,
-            entropy: minuteData.entropy.block_entropy_subj,
-            timestamp: minuteData.entropy.block_timestamp || minuteData.timing?.block_start_time
-          });
-        }
-
-        if (minuteData?.entropy?.block_entropy_ghost !== undefined) {
-          allBlockEntropyGhost.push({
-            blockIdx: minuteData.entropy.block_idx,
-            entropy: minuteData.entropy.block_entropy_ghost,
-            timestamp: minuteData.entropy.block_timestamp || minuteData.timing?.block_start_time
-          });
-        }
-      }
-
-      console.log('📈 BLOCK-LEVEL ENTROPY TRAJECTORIES:', {
-        subjectBlocks: allBlockEntropySubj.length,
-        ghostBlocks: allBlockEntropyGhost.length,
-        sampleSubject: allBlockEntropySubj.slice(0, 5).map(b => `Block ${b.blockIdx}: ${b.entropy.toFixed(4)}`),
-        sampleGhost: allBlockEntropyGhost.slice(0, 5).map(b => `Block ${b.blockIdx}: ${b.entropy.toFixed(4)}`)
-      });
-
-      // Minimum window size for meaningful entropy calculation
-      const MIN_WINDOW_SIZE = 500;
-
-      // k=2: split into first/second half (1500/1500 for 3000 bits)
-      const half = Math.floor(n / 2);
-      if (half < MIN_WINDOW_SIZE) {
-        console.warn(`Insufficient bits for k=2 temporal entropy: ${n} bits (need ${MIN_WINDOW_SIZE * 2}+ for meaningful windows)`);
-        return;
-      }
-      const entropy_k2 = [
-        shannonEntropy(allSubjectBits.slice(0, half)),
-        shannonEntropy(allSubjectBits.slice(half, n))
-      ];
-      const ghost_entropy_k2 = [
-        shannonEntropy(allGhostBits.slice(0, half)),
-        shannonEntropy(allGhostBits.slice(half, n))
-      ];
-
-      // k=3: split into thirds (1000/1000/1000 for 3000 bits)
-      const third = Math.floor(n / 3);
-      if (third < MIN_WINDOW_SIZE) {
-        console.warn(`Insufficient bits for k=3 temporal entropy: ${n} bits (need ${MIN_WINDOW_SIZE * 3}+ for meaningful windows)`);
-        return;
-      }
-      const entropy_k3 = [
-        shannonEntropy(allSubjectBits.slice(0, third)),
-        shannonEntropy(allSubjectBits.slice(third, 2 * third)),
-        shannonEntropy(allSubjectBits.slice(2 * third, n))
-      ];
-      const ghost_entropy_k3 = [
-        shannonEntropy(allGhostBits.slice(0, third)),
-        shannonEntropy(allGhostBits.slice(third, 2 * third)),
-        shannonEntropy(allGhostBits.slice(2 * third, n))
-      ];
-
-      console.log('📊 SESSION-LEVEL TEMPORAL ENTROPY:', {
-        totalBits: n,
-        k2_windows: entropy_k2.map((e, i) => `W${i+1}: ${e?.toFixed(4) || 'null'}`),
-        k3_windows: entropy_k3.map((e, i) => `W${i+1}: ${e?.toFixed(4) || 'null'}`),
-        k2_sizes: [half, n - half],
-        k3_sizes: [third, third, n - 2 * third]
-      });
-
-      // Save to session document
-      await setDoc(runRef, {
-        entropy: {
-          temporal: {
-            subj_bits_count: n,
-            entropy_k2: entropy_k2,
-            entropy_k3: entropy_k3,
-            ghost_entropy_k2: ghost_entropy_k2,
-            ghost_entropy_k3: ghost_entropy_k3,
-          },
-          temporal_trajectories: {
-            block_level_subj: allBlockEntropySubj,
-            block_level_ghost: allBlockEntropyGhost,
-            // This enables H_subject(t) and H_ghost(t) fitting for thermalization analysis
-          }
-        }
-      }, { merge: true });
-
-      console.log('✅ Session-level temporal entropy saved to DB', {
-        bitsIncluded: n
-      });
-
-      // Reset all accumulators to prevent bleed into next session
-      bitsRef.current = [];
-      demonBitsRef.current = [];
-      alignedRef.current = [];
-      console.log('🔄 Reset all accumulators for next session');
-    } catch (error) {
-      console.error('Error calculating session temporal entropy:', error);
-    }
-  }, [runRef]);
-
-  async function startNextMinute() {
-    const redo = redoCurrentMinuteRef.current;
-    const next = redo ? blockIdx : (blockIdx + 1);
-
-    console.log(`🎬 startNextMinute: blockIdx=${blockIdx}, next=${next}, BLOCKS_TOTAL=${C.BLOCKS_TOTAL}, redo=${redo}`);
-
-    // If we've completed all blocks, go to post-experiment questions
-    if (!redo && blockIdx + 1 >= C.BLOCKS_TOTAL) {
-      console.log(`✅ Session complete: ${blockIdx + 1} blocks finished, going to 'done' phase`);
-      // Calculate and save session-level temporal entropy before ending
-      await calculateSessionTemporalEntropy();
-      setPhase('done');
-      return;
-    }
-
-    if (redo) {
-      redoCurrentMinuteRef.current = false;
-      minuteInvalidRef.current = false;
-      invalidReasonRef.current = '';
-      resetLivePauseCounters();
-    }
-
-    await ensureNextBlockReady(next);
-
-    setPhase('running');
-    setblockIdx(next);
-
-    // All blocks are live now - no retro tracking needed
-
-    bitsRef.current = []; alignedRef.current = [];
-    hitsRef.current = 0;
-    resetLivePauseCounters();
-    setRenderTrigger(0);
-
-    // Track block start time for timing data
-    blockStartTimeRef.current = Date.now();
-
-    setIsRunning(true);
-  }
 
   // Exit → persist + mark ended_by
   const userExitRef = useRef(false);
@@ -1663,7 +1611,10 @@ export default function MainApp() {
       // Auto-start when runRef is ready
       if (canContinue && !isRunning) {
         console.log('🤖 AUTO-MODE: Auto-starting trials for session', autoSessionCount + 1);
-        ensureRunDoc().then(() => setPhase('rest')); // Go to rest, then auto-mode will trigger fetching
+        ensureRunDoc().then(() => {
+          setblockIdx(0); // Initialize to 0 for first block
+          setPhase('rest');
+        }); // Go to rest, then auto-mode will trigger fetching
       }
 
       const isComplete = autoSessionCount >= autoSessionTarget;
@@ -1708,29 +1659,13 @@ export default function MainApp() {
       );
     }
 
-    // Handler for target confirmation
-    const handleTargetConfirm = (selectedTarget) => {
-      console.log('🎯 handleTargetConfirm called:', { selectedTarget, target, canContinue, isRunning, runRef: !!runRef });
-
-      if (selectedTarget === target) {
-        // Correct target - go to rest phase for first block
-        if (canContinue && !isRunning) {
-          console.log('✅ Target confirmed, calling ensureRunDoc...');
-          ensureRunDoc().then(() => {
-            console.log('✅ ensureRunDoc complete, transitioning to rest phase');
-            setblockIdx(0); // Start at block 0
-            setPhase('rest'); // Go to rest screen (will show "Ready to begin?")
-          }).catch(err => {
-            console.error('❌ ensureRunDoc failed:', err);
-          });
-        } else {
-          console.warn('⚠️ Cannot continue:', { canContinue, isRunning });
-        }
-      } else {
-        // Wrong target - show alert
-        alert('This is not your target color. Please select the correct target shown above.');
-      }
-    };
+    // AI mode - auto-initialize runRef to enable Continue button (but still require AI to click it)
+    if (isAIMode && !canContinue && !isRunning && target && uid) {
+      console.log('🤖 AI-MODE: Auto-initializing runRef to enable Continue button...');
+      ensureRunDoc().catch(err => {
+        console.error('❌ AI-MODE: Failed to initialize runRef:', err);
+      });
+    }
 
     return (
       <div style={{ padding: 24, maxWidth: 760, position: 'relative' }}>
@@ -1787,12 +1722,31 @@ export default function MainApp() {
   // SCORE - Show last block results
   if (phase === 'score') {
     const pctLast = lastBlock && lastBlock.n ? Math.round((100 * lastBlock.k) / lastBlock.n) : 0;
-    // Show audit after blocks 5, 10, 15, 20, 25 (when blockIdx is 5, 10, 15, 20, 25)
-    const needsAudit = blockIdx > 0 && blockIdx % C.AUDIT_EVERY_N_BLOCKS === 0 && blockIdx < C.BLOCKS_TOTAL;
+    // Use the just-completed block index (the one that was saved, not the incremented one)
+    const completedBlockIdx = blockIdxToPersist.current;
+    const completedBlockNum = completedBlockIdx + 1; // Human-readable (1-30)
+    // Show audit after blocks 5, 10, 15, 20, 25 (when completed block is 4, 9, 14, 19, 24 in 0-indexed)
+    const needsAudit = completedBlockIdx >= 0 && (completedBlockIdx + 1) % C.AUDIT_EVERY_N_BLOCKS === 0 && blockIdx < C.BLOCKS_TOTAL;
+    const isSessionComplete = blockIdx >= C.BLOCKS_TOTAL;
+
+    // Expose state for AI agent to read
+    if (isAIMode && typeof window !== 'undefined') {
+      window.expState = {
+        phase: 'score',
+        blockIdx: completedBlockNum, // Use human-readable block number (1-30) for consistency with other phases
+        completedBlock: completedBlockNum,
+        totalBlocks: C.BLOCKS_TOTAL,
+        score: pctLast,
+        hits: lastBlock?.k || 0,
+        trials: lastBlock?.n || 0,
+        isSessionComplete,
+        needsAudit
+      };
+    }
 
     return (
       <div style={{ padding: 24, textAlign: 'center', maxWidth: 600, margin: '0 auto' }}>
-        <h2 style={{ marginBottom: 20 }}>Block {blockIdx} Complete</h2>
+        <h2 style={{ marginBottom: 20 }}>Block {completedBlockNum} Complete</h2>
 
         {/* Show last block score */}
         {lastBlock && lastBlock.n > 0 && (
@@ -1823,7 +1777,10 @@ export default function MainApp() {
 
         <button
           onClick={() => {
-            if (needsAudit) {
+            // Check if this was the final block
+            if (blockIdx >= C.BLOCKS_TOTAL) {
+              setPhase('done');
+            } else if (needsAudit) {
               setPhase('audit');
             } else {
               setPhase('target_announce');
@@ -1846,7 +1803,7 @@ export default function MainApp() {
         </button>
 
         <p style={{ marginTop: 16, fontSize: 14, color: '#6b7280' }}>
-          Block {blockIdx + 1} of {C.BLOCKS_TOTAL}
+          Block {completedBlockNum} of {C.BLOCKS_TOTAL}
         </p>
       </div>
     );
@@ -1941,9 +1898,13 @@ export default function MainApp() {
 
   // AUDIT - Rest & recovery screen with audit fetch in background
   if (phase === 'audit') {
+    // Use the just-completed block for display
+    const completedBlockIdx = blockIdxToPersist.current;
+    const completedBlockNum = completedBlockIdx + 1;
+
     return (
       <div style={{ padding: 24, textAlign: 'center', maxWidth: 600, margin: '0 auto' }}>
-        <h2 style={{ marginBottom: 32 }}>Block {blockIdx} Complete</h2>
+        <h2 style={{ marginBottom: 32 }}>Block {completedBlockNum} Complete</h2>
 
         {/* Audit rest prompt */}
         <div style={{
@@ -1985,7 +1946,7 @@ export default function MainApp() {
         </button>
 
         <p style={{ marginTop: 16, fontSize: 14, color: '#6b7280' }}>
-          Block {blockIdx + 1} of {C.BLOCKS_TOTAL}
+          Block {completedBlockNum} of {C.BLOCKS_TOTAL}
         </p>
       </div>
     );
@@ -2046,226 +2007,6 @@ export default function MainApp() {
   }
 
   // RUNNING phase removed - trials process instantly now
-
-  // POST QUESTIONS - Skip for auto/AI modes
-  if (false && phase === 'running') {
-    const isLive = true; // All blocks are live now
-    const trialsPlanned = trialsPerBlock;
-
-    // Expose state for AI agent to read
-    if (isAIMode && typeof window !== 'undefined') {
-      window.expState = {
-        target,
-        score: alignedRef.current.length > 0 ? Math.round((hitsRef.current / alignedRef.current.length) * 100) : 0,
-        hits: hitsRef.current,
-        trials: alignedRef.current.length,
-        totalTrials: trialsPerBlock,
-        blockIdx: blockIdx + 1,
-        totalBlocks: C.BLOCKS_TOTAL
-      };
-    }
-
-    return (
-      <div
-        style={{
-          height: '100vh',
-          display: 'grid',
-          placeItems: 'center',
-          background: '#f5f7fa',
-          position: 'relative'
-        }}
-      >
-        {isLive && isBuffering && (
-          <div
-            style={{
-              position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)',
-              color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: 24, zIndex: 10
-            }}
-            aria-live="polite"
-          >
-            buffering… (keeping timing)
-          </div>
-        )}
-
-        <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '50vh' }}>
-          <div style={{ marginBottom: 80, fontSize: 48, color: '#666' }}>
-            Focus on: <strong style={{ fontSize: 64, color: target === 'BLUE' ? '#1e40af' : target === 'RED' ? '#dc2626' : target === 'GREEN' ? '#16a34a' : '#ea580c' }}>{target}</strong>
-          </div>
-
-          <div style={{ fontSize: 32, color: '#999', fontStyle: 'italic' }}>
-            Maintain your intention...
-          </div>
-        </div>
-
-        <div
-          style={{
-            position: 'fixed',
-            left: 16, top: 16,
-            background: '#fff',
-            padding: '8px 12px',
-            borderRadius: 8,
-          }}
-        >
-          <div>
-            Block {blockIdx + 1}/{C.BLOCKS_TOTAL}
-            {debugUI && (
-              <>
-                {' — '}
-                <strong>{isLive ? 'Live' : 'Retro'}</strong>
-                {!isLive && (
-                  <span style={{ marginLeft: 6, opacity: 0.7 }}>
-                    (live stream)
-                  </span>
-                )}
-                {isLive && !C.USE_LIVE_STREAM && liveBufRef.current?.source && (
-                  <span style={{ marginLeft: 6, opacity: 0.7 }}>
-                    [{liveBufRef.current.source} · {liveBufRef.current?.subj?.length || 0}]
-                  </span>
-                )}
-                {isLive && C.USE_LIVE_STREAM && (
-                  <span style={{ marginLeft: 6, opacity: 0.7 }}>
-                    [live src: {liveLastSource || '—'} · buf {liveBufferedBits()} bits]
-                  </span>
-                )}
-              </>
-            )}
-            {' — '}Target: {target === 'BLUE' ? '🟦' : '🟠'}
-          </div>
-
-          {(() => {
-            const n = alignedRef.current.length;
-            const k = hitsRef.current;
-            const minuteVal = n ? k / n : 0.5;
-            const toward = targetBit === 1 ? 'BLUE' : 'ORANGE';
-            return (
-              <>
-                {C.SHOW_FEEDBACK_GAUGE && (
-                  <CircularGauge
-                    value={minuteVal}
-                    targetBit={targetBit}
-                    label={`Toward ${toward}`}
-                    subLabel={`This minute average`}
-                  />
-                )}
-                <div style={{ fontSize: 12, opacity: 0.8, marginTop: 6 }}>
-                  Trial {n}/{trialsPlanned} 
-                  {/* · This minute: <strong>{Math.round(minuteVal * 100)}%</strong> */}
-                </div>
-              </>
-            );
-          })()}
-
-          {debugUI && (
-            <div style={{ marginTop: 6, display: 'flex', gap: 8, alignItems: 'center' }}>
-              <label>
-                <input type="checkbox" checked={lowContrast} onChange={(e) => setLowContrast(e.target.checked)} /> Low-contrast
-              </label>
-              <label>
-                <input type="checkbox" checked={patternsMode} onChange={(e) => setPatternsMode(e.target.checked)} /> Patterns
-              </label>
-            </div>
-          )}
-        </div>
-
-        <ExitDoorButton onClick={() => {
-          console.log('Exit button clicked!', { showExitModal });
-          setShowExitModal(true);
-          console.log('Set showExitModal to true');
-        }} />
-
-        {/* Exit modal */}
-        {showExitModal && (
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="exit-title"
-            style={{
-              position: 'fixed',
-              inset: 0,
-              background: 'rgba(0,0,0,0.45)',
-              display: 'grid',
-              placeItems: 'center',
-              zIndex: 9999,
-              padding: 16,
-            }}
-          >
-            <div
-              style={{
-                maxWidth: 400,
-                background: '#fff',
-                borderRadius: 12,
-                boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
-                padding: 24,
-              }}
-            >
-              <h3 id="exit-title" style={{ marginTop: 0, marginBottom: 16 }}>
-                Exit Survey
-              </h3>
-              <div style={{ marginBottom: 20 }}>
-                <label style={{ display: 'block', marginBottom: 8, fontWeight: 500 }}>
-                  Why are you exiting?
-                </label>
-                <select
-                  value={exitReason}
-                  onChange={(e) => setExitReason(e.target.value)}
-                  style={{ width: '100%', padding: 8, borderRadius: 4 }}
-                >
-                  <option value="time">Out of time</option>
-                  <option value="difficulty">Too difficult</option>
-                  <option value="technical">Technical problems</option>
-                  <option value="other">Other reason</option>
-                </select>
-              </div>
-              <div style={{ marginBottom: 20 }}>
-                <label style={{ display: 'block', marginBottom: 8, fontWeight: 500 }}>
-                  Additional notes (optional):
-                </label>
-                <textarea
-                  value={exitNotes}
-                  onChange={(e) => setExitNotes(e.target.value)}
-                  rows={3}
-                  style={{ width: '100%', padding: 8, borderRadius: 4, resize: 'vertical' }}
-                  placeholder="Any additional feedback..."
-                />
-              </div>
-              <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
-                <button
-                  onClick={() => setShowExitModal(false)}
-                  style={{
-                    padding: '10px 16px',
-                    borderRadius: 6,
-                    border: '1px solid #28a745',
-                    background: '#28a745',
-                    color: 'white',
-                    cursor: 'pointer',
-                  }}
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={() => {
-                    setShowExitModal(false);
-                    handleExitNow({ reason: exitReason, notes: exitNotes });
-                  }}
-                  style={{
-                    padding: '10px 16px',
-                    borderRadius: 6,
-                    border: 'none',
-                    background: '#dc3545',
-                    color: 'white',
-                    cursor: 'pointer',
-                  }}
-                >
-                  Save & Exit
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  }
 
   // POST QUESTIONS - Skip for auto/AI modes
   if (phase === 'done') {
