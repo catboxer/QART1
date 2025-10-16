@@ -91,6 +91,14 @@ export async function fetchQRNGBits(nBits, retries = 3, validateGhost = false) {
     if (crypto.subtle && !Object.isFrozen(crypto.subtle)) {
       throw new Error('SECURITY VIOLATION: crypto.subtle has been unfrozen');
     }
+
+    // SECURITY: Verify network APIs haven't been tampered with
+    if (window.fetch !== window.__originalFetch) {
+      throw new Error('SECURITY VIOLATION: fetch has been replaced');
+    }
+    if (typeof XMLHttpRequest !== 'undefined' && XMLHttpRequest !== window.__originalXMLHttpRequest) {
+      throw new Error('SECURITY VIOLATION: XMLHttpRequest has been replaced');
+    }
   }
 
   const source = config.QRNG_SOURCE || 'qrng-race';

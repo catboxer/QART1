@@ -6,7 +6,7 @@ export const config = {
 
   // QRNG source: 'qrng-race' (Outshift/LFDR/ANU) or 'random-org' (Random.org)
   // Set to 'random-org' for testing to avoid using paid Outshift quota
-  QRNG_SOURCE: 'random-org', // Switch to 'qrng-race' for production
+  QRNG_SOURCE: 'qrng-race', // Switch to 'qrng-race' for production or random-org for testing.
 };
 
 // Experiment constants grouped under experiments.pk
@@ -33,7 +33,7 @@ config.experiments = {
     BLOCK_HIGHLIGHT_PCT: 52, //what score gets a congrats
     FINALIST_MIN_PCT: 54, // 54 email capture high score gate opens at or above this percent
     FINALIST_MAX_PCT: 46, // 46 email capture low score gate opens at or below this percent
-    AUTO_MODE_SESSIONS: 8, // Number of automated baseline sessions to run (access via #auto URL /exp3#auto)
+    AUTO_MODE_SESSIONS: 2, // Number of automated baseline sessions to run (access via #auto URL /exp3#auto)
     AUTO_MODE_REST_MS: 1000, // 1 second auto-continue delay between blocks in auto-mode
     AI_MODE_SESSIONS: 2, // Set this in ai-config.js as it reads it from there. Number of AI agent sessions to run (access via #ai URL /exp3#ai) - run experiments/exp3/run-ai.sh first
   },

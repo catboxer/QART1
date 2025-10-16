@@ -315,6 +315,17 @@ export default function MainApp() {
 
         const docRef = await addDoc(col, docData);
         console.log('🔍 DATABASE: Created document successfully', docRef.id, docData);
+
+        // ANTI-CHERRY-PICKING: Log session creation to prevent selective reporting
+        // This creates an immutable record that this session was started
+        console.log('🔐 SESSION REGISTERED:', {
+          sessionId: docRef.id,
+          timestamp: new Date().toISOString(),
+          mode: docData.mode,
+          target: target,
+          message: 'This session is now tracked. Incomplete sessions will be marked as abandoned.'
+        });
+
         setRunRef(docRef);
         return docRef;
       } catch (error) {
@@ -616,6 +627,30 @@ export default function MainApp() {
           source: quantumData.source,
           bitCount: quantumData.bits.length
         };
+
+        // ANTI-TIMING-ATTACK: Save raw bits to Firestore BEFORE processing
+        // This prevents AI agents from aborting after peeking at bits but before persistence
+        // If agent aborts here, we'll have the bits and can detect strategic abandonment
+        console.log('🔐 COMMITTING BITS TO FIRESTORE (anti-timing-attack)...');
+        const commitStartTime = Date.now();
+
+        if (runRef) {
+          const blockCommitDoc = doc(runRef, 'block_commits', String(blockIdx));
+          await setDoc(blockCommitDoc, {
+            blockIdx: blockIdx,
+            bits: quantumData.bits,
+            auth: {
+              hash: quantumData.hash,
+              timestamp: quantumData.timestamp,
+              source: quantumData.source,
+              bitCount: quantumData.bits.length
+            },
+            committedAt: serverTimestamp(),
+            clientCommitTime: new Date().toISOString(),
+            target: target
+          });
+          console.log(`✅ Bits committed to Firestore in ${Date.now() - commitStartTime}ms`);
+        }
 
         // Process all trials instantly (this increments blockIdx from blockIdx to blockIdx+1)
         processTrials(quantumData.bits);

@@ -851,7 +851,62 @@ async function fetchAllRunsWithMinutes(includeTrials = true) {
           console.warn(`Failed to fetch audits for run ${r.id}:`, err);
         }
 
-        out.push({ ...r, minutes, audits });
+        // STRATEGIC ABORT DETECTION: Fetch block_commits to detect timing attacks
+        let blockCommits = [];
+        let abortAnalysis = null;
+        try {
+          const commitsSnap = await getDocs(
+            collection(db, 'experiment3_ai_responses', r.id, 'block_commits')
+          );
+          blockCommits = commitsSnap.docs
+            .map((d) => ({ id: d.id, ...d.data() }))
+            .sort((a, b) => (a.blockIdx ?? 0) - (b.blockIdx ?? 0));
+
+          // Analyze aborts: blocks with commits but no processed minutes
+          const abortedBlocks = [];
+          for (const commit of blockCommits) {
+            const processed = minutes.find(m => m.idx === commit.blockIdx);
+            if (!processed) {
+              // Calculate what score would have been
+              const bits = commit.bits || '';
+              const target = commit.target;
+              const targetBit = target === 'BLUE' ? '1' : '0';
+
+              // Use assignment bit (bit 0) to determine subject bits
+              const assignmentBit = bits[0];
+              const subjectBits = assignmentBit === '1'
+                ? bits.slice(1, 151)
+                : bits.slice(151, 301);
+
+              const hits = subjectBits.split('').filter(b => b === targetBit).length;
+              const score = (hits / 150 * 100);
+
+              abortedBlocks.push({
+                blockIdx: commit.blockIdx,
+                hits,
+                score,
+                committedAt: commit.committedAt,
+                auth: commit.auth
+              });
+            }
+          }
+
+          if (abortedBlocks.length > 0 || blockCommits.length !== minutes.length) {
+            abortAnalysis = {
+              totalCommits: blockCommits.length,
+              totalProcessed: minutes.length,
+              abortedCount: abortedBlocks.length,
+              abortedBlocks,
+              avgAbortedScore: abortedBlocks.length > 0
+                ? abortedBlocks.reduce((sum, b) => sum + b.score, 0) / abortedBlocks.length
+                : null
+            };
+          }
+        } catch (err) {
+          console.warn(`Failed to fetch block_commits for run ${r.id}:`, err);
+        }
+
+        out.push({ ...r, minutes, audits, blockCommits, abortAnalysis });
       } catch (err) {
         console.warn(`Failed to fetch minutes for run ${r.id}:`, err);
         out.push({ ...r, minutes: [], audits: [] });
@@ -4805,6 +4860,38 @@ export default function QAExport() {
     return { total, completers, nonCompleters, firstSessions, repeatSessions };
   }, [runs]);
 
+  // STRATEGIC ABORT ANALYSIS: Calculate abort statistics by mode
+  const abortStats = useMemo(() => {
+    const stats = {
+      human: { total: 0, withAborts: 0, totalAborts: 0, below50: 0, at50: 0, above50: 0 },
+      ai_agent: { total: 0, withAborts: 0, totalAborts: 0, below50: 0, at50: 0, above50: 0 },
+      baseline: { total: 0, withAborts: 0, totalAborts: 0, below50: 0, at50: 0, above50: 0 }
+    };
+
+    runs.forEach(run => {
+      const mode = run.mode || run.session_type || 'human';
+      const modeKey = mode === 'ai' ? 'ai_agent' : mode;
+
+      if (!stats[modeKey]) return;
+
+      stats[modeKey].total++;
+
+      if (run.abortAnalysis) {
+        stats[modeKey].withAborts++;
+        stats[modeKey].totalAborts += run.abortAnalysis.abortedCount;
+
+        // Categorize aborted blocks by score
+        run.abortAnalysis.abortedBlocks.forEach(block => {
+          if (block.score < 50) stats[modeKey].below50++;
+          else if (block.score === 50) stats[modeKey].at50++;
+          else stats[modeKey].above50++;
+        });
+      }
+    });
+
+    return stats;
+  }, [runs]);
+
   if (loading) return <div style={{ padding: 24 }}>Loading experiment data…</div>;
 
   const uid = auth.currentUser?.uid;
@@ -5060,9 +5147,90 @@ export default function QAExport() {
     </div>
   );
 
+  // Strategic Abort Display Component
+  const AbortAnalysisPanel = () => {
+    const hasAborts = Object.values(abortStats).some(s => s.totalAborts > 0);
+    if (!hasAborts) return null;
+
+    return (
+      <div style={{
+        padding: 16,
+        margin: '16px 0',
+        border: '2px solid #ff6b6b',
+        borderRadius: 8,
+        background: '#fff5f5'
+      }}>
+        <h3 style={{ margin: '0 0 12px 0', color: '#c92a2a' }}>
+          ⚠️ Strategic Abort Detection (Timing Attack Analysis)
+        </h3>
+        <div style={{ fontSize: 14, marginBottom: 12, color: '#555' }}>
+          Sessions with committed QRNG bits but no processed trials (agent peeked and aborted)
+        </div>
+
+        {Object.entries(abortStats).map(([mode, stats]) => {
+          if (stats.totalAborts === 0) return null;
+
+          return (
+            <div key={mode} style={{
+              padding: 12,
+              margin: '8px 0',
+              background: '#fff',
+              border: '1px solid #ddd',
+              borderRadius: 6
+            }}>
+              <div style={{ fontWeight: 'bold', marginBottom: 8, textTransform: 'capitalize' }}>
+                {mode === 'ai_agent' ? 'AI Agent' : mode}
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
+                <div>
+                  <div style={{ fontSize: 12, color: '#666' }}>Sessions with Aborts:</div>
+                  <div style={{ fontSize: 18, fontWeight: 'bold' }}>
+                    {stats.withAborts} / {stats.total}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 12, color: '#666' }}>Total Aborted Blocks:</div>
+                  <div style={{ fontSize: 18, fontWeight: 'bold' }}>{stats.totalAborts}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 12, color: '#e03131' }}>Below 50%:</div>
+                  <div style={{ fontSize: 18, fontWeight: 'bold', color: '#e03131' }}>{stats.below50}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 12, color: '#868e96' }}>At 50%:</div>
+                  <div style={{ fontSize: 18, fontWeight: 'bold', color: '#868e96' }}>{stats.at50}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 12, color: '#2f9e44' }}>Above 50%:</div>
+                  <div style={{ fontSize: 18, fontWeight: 'bold', color: '#2f9e44' }}>{stats.above50}</div>
+                </div>
+              </div>
+
+              {stats.below50 > stats.above50 && stats.totalAborts > 5 && (
+                <div style={{
+                  marginTop: 12,
+                  padding: 8,
+                  background: '#ffe3e3',
+                  border: '1px solid #ff6b6b',
+                  borderRadius: 4,
+                  fontSize: 13,
+                  color: '#c92a2a'
+                }}>
+                  🚨 <strong>SUSPICIOUS PATTERN:</strong> More low-score aborts suggests selective completion
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
   return (
     <div style={{ maxWidth: 980, margin: '40px auto', padding: 16 }}>
       <h1>Export & QA - Experiment 3</h1>
+
+      <AbortAnalysisPanel />
 
       {/* QA status banner + toggle */}
       {qaStatus ? (

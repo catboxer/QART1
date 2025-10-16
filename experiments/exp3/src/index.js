@@ -18,10 +18,39 @@ if (typeof crypto !== 'undefined') {
   Object.freeze(window.__originalCryptoDigest);
 }
 
-// Freeze fetch to prevent interception
+// CRITICAL SECURITY: Freeze network APIs to prevent interception/manipulation
+// Prevents AI agents from intercepting QRNG requests or blocking Firestore writes
 if (typeof fetch !== 'undefined') {
   window.__originalFetch = fetch.bind(window);
   Object.freeze(window.__originalFetch);
+  // Also freeze fetch on window to prevent reassignment
+  Object.defineProperty(window, 'fetch', {
+    value: window.__originalFetch,
+    writable: false,
+    configurable: false
+  });
+}
+
+if (typeof EventSource !== 'undefined') {
+  window.__originalEventSource = EventSource;
+  Object.freeze(window.__originalEventSource);
+  // Freeze EventSource constructor to prevent replacement
+  Object.defineProperty(window, 'EventSource', {
+    value: window.__originalEventSource,
+    writable: false,
+    configurable: false
+  });
+}
+
+// Freeze XMLHttpRequest (used by Firestore SDK)
+if (typeof XMLHttpRequest !== 'undefined') {
+  window.__originalXMLHttpRequest = XMLHttpRequest;
+  Object.freeze(window.__originalXMLHttpRequest);
+  Object.defineProperty(window, 'XMLHttpRequest', {
+    value: window.__originalXMLHttpRequest,
+    writable: false,
+    configurable: false
+  });
 }
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
