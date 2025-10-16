@@ -4,6 +4,19 @@ import './index.css';
 import App from './App';
 import reportWebVitals from './reportWebVitals';
 
+// CRITICAL SECURITY: Block Service Workers on experiment routes
+// Prevents AI agents from intercepting/rewriting network responses
+if ('serviceWorker' in navigator) {
+  const origRegister = navigator.serviceWorker.register;
+  navigator.serviceWorker.register = function() {
+    if (location.pathname.includes('/exp')) {
+      console.error('🚫 Service Worker registration blocked on experiment routes');
+      return Promise.reject(new Error('Service Workers disabled on experiments for security'));
+    }
+    return origRegister.apply(this, arguments);
+  };
+}
+
 // CRITICAL SECURITY: Freeze crypto APIs before any other code runs
 // Prevents AI agents from monkey-patching crypto.getRandomValues or crypto.subtle.digest
 if (typeof crypto !== 'undefined') {
