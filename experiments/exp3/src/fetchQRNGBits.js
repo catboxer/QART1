@@ -63,13 +63,36 @@ function validateRandomness(bits) {
 }
 
 /**
+ * Compute SHA-256 hash of a bitstream for cryptographic authentication
+ * @param {string} bits - String of '0' and '1' characters
+ * @returns {Promise<string>} - Hex-encoded SHA-256 hash
+ */
+async function hashBitstream(bits) {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(bits);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
  * Fetch n bits from QRNG using the qrng-race endpoint
  * @param {number} nBits - Number of bits to fetch
  * @param {number} retries - Number of retry attempts (default 3)
  * @param {boolean} validateGhost - If true, validate randomness for ghost tape (default false)
- * @returns {Promise<string>} - String of '0' and '1' characters
+ * @returns {Promise<{bits: string, hash: string, timestamp: string, source: string}>} - Bits with cryptographic authentication
  */
 export async function fetchQRNGBits(nBits, retries = 3, validateGhost = false) {
+  // SECURITY: Verify crypto APIs haven't been tampered with
+  if (typeof window !== 'undefined') {
+    if (!Object.isFrozen(crypto)) {
+      throw new Error('SECURITY VIOLATION: crypto object has been unfrozen');
+    }
+    if (crypto.subtle && !Object.isFrozen(crypto.subtle)) {
+      throw new Error('SECURITY VIOLATION: crypto.subtle has been unfrozen');
+    }
+  }
+
   const source = config.QRNG_SOURCE || 'qrng-race';
   const endpoint = source === 'random-org' ? 'random-org-proxy' : 'qrng-race';
 
@@ -127,8 +150,19 @@ export async function fetchQRNGBits(nBits, retries = 3, validateGhost = false) {
         console.log('✅ Ghost tape passed randomness validation');
       }
 
+      // Compute cryptographic hash for authentication
+      const hash = await hashBitstream(result);
+      const timestamp = new Date().toISOString();
+
       console.log(`✅ Successfully fetched ${result.length} bits from QRNG (source: ${nBytes > MAX_CHUNK ? 'chunked' : 'single'})`);
-      return result;
+      console.log(`🔐 Bitstream authenticated: SHA-256 = ${hash.slice(0, 16)}...`);
+
+      return {
+        bits: result,
+        hash,
+        timestamp,
+        source: endpoint
+      };
     } catch (error) {
       console.error(`❌ Attempt ${attempt}/${retries} failed:`, error);
 

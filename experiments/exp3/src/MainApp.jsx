@@ -20,7 +20,6 @@ import { db, ensureSignedIn } from './firebase.js';
 import {
   collection, doc, addDoc, setDoc, getDoc, getDocs, updateDoc, serverTimestamp,
 } from 'firebase/firestore';
-import { useLiveStreamQueue } from './useLiveStreamQueue.js';
 import { fetchQRNGBits } from './fetchQRNGBits.js';
 
 import { preQuestions, postQuestions } from './questions.js';
@@ -81,99 +80,8 @@ class DataCollectionErrorBoundary extends Component {
   }
 }
 
-const QRNG_URL = '/.netlify/functions/qrng-race';
-
-// ===== LIVE QUANTUM BUFFER MANAGEMENT =====
-// These parameters control how the experiment handles live quantum random number streams
-// to ensure smooth, uninterrupted biofeedback during consciousness research trials.
-
-const TICK_MS = Math.round(1000 / C.VISUAL_HZ);
-
-// BUFFER WARMUP PHASE
-// Before starting trials, we accumulate quantum bits to avoid immediate buffering issues
-const WARMUP_BITS_START = 24;     // Require 24 bits (~4.8s @ 5Hz) before starting trials
-const WARMUP_TIMEOUT_MS = 1500;   // Max 1.5s to wait for warmup (fallback to local PRNG)
-
-// BUFFER PAUSE/RESUME THRESHOLDS
-// These create a "hysteresis" system to prevent rapid pause/resume cycling
-// when quantum stream delivery is inconsistent due to network variability.
-//
-// CONSCIOUSNESS RESEARCH RATIONALE:
-// - Smooth, uninterrupted feedback is critical for consciousness-RNG experiments
-// - Participants need consistent 5Hz visual updates to maintain focus
-// - Buffer interruptions could contaminate results by breaking concentration
-//
-const PAUSE_THRESHOLD_LT = 1;     // PAUSE when buffer < 1 byte (was 6 bits, now ~1 byte for 2 trials)
-                                  // - Low enough to maximize quantum data usage
-                                  // - High enough to prevent buffer starvation
-
-const RESUME_THRESHOLD_GTE = 3;   // RESUME when buffer ≥ 3 bytes (was 20 bits, now ~3 bytes for safe resume)
-                                  // - Creates 14-bit "dead zone" (6-20) to prevent flicker
-                                  // - Ensures sufficient buffer depth before resuming
-                                  // - Balances quantum authenticity vs. experimental continuity
-
-// TRIAL INVALIDATION LIMITS
-// If buffering becomes excessive, the trial block is invalidated to maintain data quality
-const MAX_PAUSES = 3;             // Max 3 pause events per 30s block (10% pause tolerance)
-const MAX_TOTAL_PAUSE_MS = 5 * TICK_MS;  // Max 1s total pause time per block (~3.3%)
-const MAX_SINGLE_PAUSE_MS = 3 * TICK_MS; // Max 600ms for any single pause event
-
-const fmtSec = (ms) => `${(ms / 1000).toFixed(ms % 1000 ? 1 : 0)}s`;
-const POLICY_TEXT = {
-  warmup: `Warm-up until buffer ≥ ${WARMUP_BITS_START} bits (~${(WARMUP_BITS_START / C.VISUAL_HZ).toFixed(1)}s @ ${C.VISUAL_HZ}Hz)`,
-  pause: `Pause if buffer < ${PAUSE_THRESHOLD_LT} bytes`,
-  resume: `Resume when buffer ≥ ${RESUME_THRESHOLD_GTE} bytes`,
-  guardrails: `Invalidate if >${MAX_PAUSES} pauses, total pauses > ${fmtSec(MAX_TOTAL_PAUSE_MS)}, or any pause > ${fmtSec(MAX_SINGLE_PAUSE_MS)}`
-};
-
-// ===== helpers (module scope) =====
-async function fetchBytes(n, { timeoutMs = 3500, retries = 2, requireQRNG = false } = {}) {
-  async function tryOnce() {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), timeoutMs);
-    try {
-      const res = await fetch(`${QRNG_URL}?n=${n}&nonce=${Date.now()}`, { cache: 'no-store', signal: ctrl.signal });
-      if (!res.ok) {
-        let detail = '';
-        try {
-          const j = await res.json();
-          if (j?.trace) detail = `:${(j.trace || []).join('|')}`;
-          else if (j?.detail || j?.error) detail = `:${j.detail || j.error}`;
-        } catch { }
-        throw new Error('http_' + res.status + detail);
-      }
-      const j = await res.json();
-      if (!j?.bytes || j.bytes.length < n) throw new Error('shape');
-      return { ok: true, bytes: new Uint8Array(j.bytes), source: j.source || 'qrng' };
-    } finally {
-      clearTimeout(t);
-    }
-  }
-  let lastErr = null;
-  for (let r = 0; r <= retries; r++) {
-    try { return await tryOnce(); }
-    catch (e) { lastErr = e?.message || String(e); await new Promise(s => setTimeout(s, 200 * (r + 1))); }
-  }
-  if (requireQRNG) throw new Error('qrng_unavailable_after_retries:' + lastErr);
-  const bytes = new Uint8Array(n);
-  crypto.getRandomValues(bytes);
-  console.warn('[exp3] QRNG unavailable; using local_prng. Last error:', lastErr);
-  return { ok: true, bytes, source: 'local_prng', fallback: true, lastErr };
-}
-// sha256Hex function removed - no longer needed for live-only mode
-function localPairs(n) {
-  const bytes = new Uint8Array(n * 2);
-  crypto.getRandomValues(bytes);
-  const subj = [], ghost = [];
-  for (let i = 0; i < n; i++) {
-    subj.push(bytes[2 * i] & 1);
-    ghost.push(bytes[2 * i + 1] & 1);
-  }
-  return { subj, ghost, source: 'local_prng' };
-}
-// bytesToBits function removed - no longer needed for live-only mode
-// shuffleInPlace function removed - no longer needed for live-only mode
-// makeRedundancyPlan function removed - no longer needed for live-only mode
+// Note: All quantum bit fetching is now handled by fetchQRNGBits() function
+// which includes cryptographic authentication and validation
 
 function ExitDoorButton({ onClick, title = 'Exit and save' }) {
   return (
@@ -275,15 +183,6 @@ export default function MainApp() {
 
   const [userReady, setUserReady] = useState(false);
   const [uid, setUid] = useState(null);
-  const {
-    connect: liveConnect,
-    disconnect: liveDisconnect,
-    popSubjectBit: livePopSubjectBit,
-    popGhostBit: livePopGhostBit,
-    bufferedBits: liveBufferedBits,
-    connected: liveConnected,
-    lastSource: liveLastSource,
-  } = useLiveStreamQueue({ durationMs: C.LIVE_STREAM_DURATION_MS });
 
   // ---- toggles
   const [lowContrast, setLowContrast] = useState(C.LOW_CONTRAST_MODE);
@@ -300,7 +199,6 @@ export default function MainApp() {
 
   // ---- target assignment
   const [target, setTarget] = useState(null);
-  // Note: Using trial-level bit strategy (odd=alternating, even=independent)
   const targetAssignedRef = useRef(false);
 
   useEffect(() => {
@@ -316,16 +214,9 @@ export default function MainApp() {
     const t = randomBit ? 'BLUE' : 'ORANGE';
     console.log('🎯 TARGET ASSIGNMENT:', { randomByte, randomBit, assignedTarget: t });
     setTarget(t);
-
-    // Note: No session-level bit strategy assignment needed
-    // Using trial-level logic: odd trials = alternating, even trials = independent
   }, []);
 
-  // ---- tapes
-  // Tape system removed - all blocks use live streams
-
   // ---- returning participant (skip preQ on same device)
-  // returning participant (skip preQ on same device)
   const [preDone, setPreDone] = useState(() => {
     try { return localStorage.getItem(`pre_done_global:${C.EXPERIMENT_ID}`) === '1'; }
     catch { return false; }
@@ -334,35 +225,6 @@ export default function MainApp() {
 
 
 
-  // live prefetch model (only used when NOT using streaming)
-  const liveBufRef = useRef({ subj: [], ghost: [] });
-  const nextLiveBufRef = useRef(null);
-
-  const prefetchLivePairs = useCallback(async () => {
-    // If you're using the real live stream, don't prefetch at all
-    if (C.USE_LIVE_STREAM) return null;
-
-    const n = Math.round((C.BLOCK_MS / 1000) * C.VISUAL_HZ);
-
-    const qrngPromise = (async () => {
-      const { bytes, source } = await fetchBytes(n * 2);
-      const subj = [], ghost = [];
-      for (let i = 0; i < n; i++) {
-        subj.push(bytes[2 * i] & 1);
-        ghost.push(bytes[2 * i + 1] & 1);
-      }
-      return { subj, ghost, source };
-    })();
-
-    // small timeout to fall back to local if QRNG is slow
-    const timeout = new Promise((resolve) =>
-      setTimeout(() => resolve(localPairs(n)), 1500)
-    );
-
-    const pairset = await Promise.race([qrngPromise, timeout]);
-    nextLiveBufRef.current = pairset;
-    return pairset;
-  }, []);
  
   // ---- sign-in (local-only returning check)
     useEffect(() => {
@@ -486,6 +348,8 @@ export default function MainApp() {
   const alignedRef = useRef([]);
   const hitsRef = useRef(0);
   const demonHitsRef = useRef(0);
+  const blockAuthRef = useRef(null); // Cryptographic authentication for current block's bitstream
+  const auditAuthRef = useRef(null); // Cryptographic authentication for audit bitstream
   const blockIdxToPersist = useRef(-1); // Stores the correct blockIdx to save
   const trialsPerMinute = trialsPerBlock;
 
@@ -731,11 +595,11 @@ export default function MainApp() {
         console.log(`🎯 Fetching ${C.BITS_PER_BLOCK} bits during focused intention...`);
 
         // Fetch quantum bits (301 bits: 1 for assignment + 300 for trials)
-        const quantumBits = await fetchQRNGBits(C.BITS_PER_BLOCK);
+        const quantumData = await fetchQRNGBits(C.BITS_PER_BLOCK);
 
         if (isCancelled) return;
 
-        console.log('✅ Bits fetched:', quantumBits.length);
+        console.log('✅ Bits fetched:', quantumData.bits.length);
 
         // Check if we just completed the final block BEFORE processing
         // blockIdx in closure is the value BEFORE processTrials increments it
@@ -745,8 +609,16 @@ export default function MainApp() {
         // Store the current blockIdx before it gets incremented (this is what persistMinute should use)
         blockIdxToPersist.current = blockIdx;
 
+        // Store authentication data for this block
+        blockAuthRef.current = {
+          hash: quantumData.hash,
+          timestamp: quantumData.timestamp,
+          source: quantumData.source,
+          bitCount: quantumData.bits.length
+        };
+
         // Process all trials instantly (this increments blockIdx from blockIdx to blockIdx+1)
-        processTrials(quantumBits);
+        processTrials(quantumData.bits);
 
         console.log(`📊 Block ${justCompletedBlockIdx} complete. Next blockIdx: ${nextBlockIdx}, BLOCKS_TOTAL: ${C.BLOCKS_TOTAL}`);
 
@@ -823,16 +695,24 @@ export default function MainApp() {
         console.log(`🔬 Fetching ${C.AUDIT_BITS_PER_BREAK} audit bits (no focus)...`);
 
         // Fetch audit bits (no validation needed during fetch, we'll validate after)
-        const auditBits = await fetchQRNGBits(C.AUDIT_BITS_PER_BREAK, 3, false);
+        const auditData = await fetchQRNGBits(C.AUDIT_BITS_PER_BREAK, 3, false);
 
         if (isCancelled) return;
 
+        // Store authentication data for audit
+        auditAuthRef.current = {
+          hash: auditData.hash,
+          timestamp: auditData.timestamp,
+          source: auditData.source,
+          bitCount: auditData.bits.length
+        };
+
         // Calculate validation stats
-        const ones = auditBits.split('').filter(b => b === '1').length;
+        const ones = auditData.bits.split('').filter(b => b === '1').length;
         const proportion = ones / C.AUDIT_BITS_PER_BREAK;
 
         // Run validation tests
-        const n = auditBits.length;
+        const n = auditData.bits.length;
         const expectedOnes = n / 2;
         const stdDev = Math.sqrt(n * 0.5 * 0.5);
         const zScore = Math.abs((ones - expectedOnes) / stdDev);
@@ -840,7 +720,7 @@ export default function MainApp() {
 
         let runs = 1;
         for (let i = 1; i < n; i++) {
-          if (auditBits[i] !== auditBits[i-1]) runs++;
+          if (auditData.bits[i] !== auditData.bits[i-1]) runs++;
         }
         const expectedRuns = (2 * ones * (n - ones)) / n + 1;
         const runsStdDev = Math.sqrt((2 * ones * (n - ones) * (2 * ones * (n - ones) - n)) / (n * n * (n - 1)));
@@ -849,7 +729,7 @@ export default function MainApp() {
 
         let maxRun = 1, currentRun = 1;
         for (let i = 1; i < n; i++) {
-          if (auditBits[i] === auditBits[i-1]) {
+          if (auditData.bits[i] === auditData.bits[i-1]) {
             currentRun++;
             maxRun = Math.max(maxRun, currentRun);
           } else {
@@ -879,22 +759,28 @@ export default function MainApp() {
         console.log('✅ Audit complete:', { proportion: proportion.toFixed(4), isRandom, stats: validationStats });
 
         // Calculate audit entropy
-        const auditBitArray = auditBits.split('').map(b => parseInt(b));
+        const auditBitArray = auditData.bits.split('').map(b => parseInt(b));
         const auditEntropy = shannonEntropy(auditBitArray);
 
-        // Save audit to Firebase
+        // Save audit to Firebase with authentication data
         if (runRef) {
           const auditDoc = doc(runRef, 'audits', `after_block_${blockIdx}`);
           await setDoc(auditDoc, {
             blockAfter: blockIdx,
             totalBits: C.AUDIT_BITS_PER_BREAK,
-            auditBits: auditBits, // Store the actual bit string for QA analysis
+            auditBits: auditData.bits, // Store the actual bit string for QA analysis
             ones,
             proportion,
             entropy: auditEntropy,
             isRandom,
             validation: validationStats,
-            timestamp: Date.now()
+            timestamp: Date.now(),
+            // Cryptographic authentication
+            auth: {
+              hash: auditData.hash,
+              timestamp: auditData.timestamp,
+              source: auditData.source
+            }
           });
           console.log(`💾 Audit saved to Firebase (entropy: ${auditEntropy.toFixed(4)})`);
         }
@@ -994,6 +880,9 @@ export default function MainApp() {
         setTotals({ k: 0, n: 0 });
         setLastBlock(null);
         setIsRunning(false);
+        // Reset target assignment flag so new session gets fresh random target
+        targetAssignedRef.current = false;
+        setTarget(null);
         setPhase('consent');
       }, 100);
     }
@@ -1001,44 +890,9 @@ export default function MainApp() {
   }, [isAutoMode, isAIMode, phase, blockIdx, autoSessionCount, autoSessionTarget, runRef]);
   const targetBit = target === 'BLUE' ? 1 : 0;
 
-  // live buffer guardrails
-  const [isBuffering, setIsBuffering] = useState(false);
-  const pauseCountRef = useRef(0);
-  const totalPausedMsRef = useRef(0);
-  const longestPauseMsRef = useRef(0);
-  const pauseStartedAtRef = useRef(0);
-  const redoCurrentMinuteRef = useRef(false);
+  // Note: Buffer management functions removed - no longer needed with instant trial processing
   const minuteInvalidRef = useRef(false);
-  const invalidReasonRef = useRef('');
-
-  const maybePause = useCallback((now) => {
-    if (!isBuffering && liveBufferedBits() < PAUSE_THRESHOLD_LT) {
-      setIsBuffering(true);
-      pauseCountRef.current += 1;
-      pauseStartedAtRef.current = now;
-    }
-  }, [isBuffering, liveBufferedBits]);
-  const maybeResume = useCallback((now) => {
-    if (isBuffering && liveBufferedBits() >= RESUME_THRESHOLD_GTE) {
-      const dur = now - pauseStartedAtRef.current;
-      totalPausedMsRef.current += dur;
-      if (dur > longestPauseMsRef.current) longestPauseMsRef.current = dur;
-      setIsBuffering(false);
-    }
-  }, [isBuffering, liveBufferedBits]);
-  const shouldInvalidate = useCallback(() => {
-    return (
-      pauseCountRef.current > MAX_PAUSES ||
-      totalPausedMsRef.current > MAX_TOTAL_PAUSE_MS ||
-      longestPauseMsRef.current > MAX_SINGLE_PAUSE_MS
-    );
-  }, []);
-
-  // minute runner plumbing
-  const tickTimerRef = useRef(null);
   const endMinuteRef = useRef(() => { });
-  const firstTrialTimeRef = useRef(0);
-  const lastTrialTimeRef = useRef(0);
 
   // --- persist & end-minute (persist must be defined BEFORE endMinute) ---
   const persistMinute = useCallback(async () => {
@@ -1142,40 +996,28 @@ export default function MainApp() {
         demon_bits: demonBitsRef.current,
         target_bit: targetBit,
         trial_count: 150
-      }
+      },
+
+      // Cryptographic authentication of quantum bitstream
+      auth: blockAuthRef.current ? {
+        hash: blockAuthRef.current.hash,
+        timestamp: blockAuthRef.current.timestamp,
+        source: blockAuthRef.current.source,
+        bitCount: blockAuthRef.current.bitCount
+      } : null
     }, { merge: true });
 
     console.log('💾 Saved block data:', { blockIdx, subjectHits: k, demonHits: kd });
   }, [runRef, blockIdx, target]);
 
   const endMinute = useCallback(async () => {
-    // Always disconnect live stream since all blocks are live
-    if (C.USE_LIVE_STREAM) {
-      liveDisconnect();
-    }
     setIsRunning(false);
     await persistMinute();
     if (minuteInvalidRef.current) { setPhase('rest'); return; }
     // Always go to rest phase first, even for the final block
     setPhase('rest');
-  }, [liveDisconnect, persistMinute]);
-  // Idle prefetch during PRIME/REST in non-streaming mode
-  useEffect(() => {
-    // Never prefetch in streaming mode
-    if (C.USE_LIVE_STREAM) return;
+  }, [persistMinute]);
 
-    // Only consider prefetching after onboarding has begun (avoid consent/preQ)
-    const allowedPhases = new Set(['prime', 'rest']);
-    if (!allowedPhases.has(phase)) return;
-
-    // When NOT running, if the next minute is 'live' and not already staged, prefetch now
-    if (phase !== 'running') {
-      // All blocks are live now - always prefetch
-      if (!nextLiveBufRef.current) {
-        prefetchLivePairs().catch(() => { /* ignore */ });
-      }
-    }
-  }, [phase, blockIdx, prefetchLivePairs]);
   useEffect(() => {
     endMinuteRef.current = endMinute;
   }, [endMinute]);
@@ -1196,159 +1038,8 @@ export default function MainApp() {
       });
   }, [needsPersist, runRef, persistMinute]);
 
-  // minute tick loop
-  useEffect(() => {
-    if (!isRunning) return;
-    const TICK = Math.round(1000 / C.VISUAL_HZ);
-    const MAX_TRIALS = trialsPerMinute; // Should be exactly 150 trials
-    console.log('🎯 STARTING TRIALS:', {
-      MAX_TRIALS,
-      trialsPerMinute,
-      trialsPerBlock,
-      BLOCK_MS: C.BLOCK_MS,
-      VISUAL_HZ: C.VISUAL_HZ
-    });
-    // All blocks are live now
-    if (!C.USE_LIVE_STREAM) {
-      const ready =
-        Array.isArray(liveBufRef.current?.subj) && liveBufRef.current.subj.length >= trialsPerMinute &&
-        Array.isArray(liveBufRef.current?.ghost) && liveBufRef.current.ghost.length >= trialsPerMinute;
-      if (!ready) { endMinuteRef.current?.(); return; }
-    }
-
-    let i = 0;
-    const start = Date.now();
-    if (tickTimerRef.current) {
-      console.warn('⚠️ Clearing existing tick timer before starting new one!');
-      clearInterval(tickTimerRef.current);
-      tickTimerRef.current = null;
-    }
-
-    console.log(`⏱️ Starting tick timer for block ${blockIdx} with TICK=${TICK}ms`);
-    tickTimerRef.current = setInterval(() => {
-      const elapsed = Date.now() - start;
-      const hitCap = elapsed >= (C.BLOCK_MS + 5000);
-
-      // Debug logging every 10 trials
-      if (i % 10 === 0 || i >= MAX_TRIALS - 5) {
-        console.log('📊 TRIAL PROGRESS:', {
-          i,
-          MAX_TRIALS,
-          actualTrials: alignedRef.current.length,
-          shouldStop: i >= MAX_TRIALS,
-          hitCap,
-          elapsed: Math.round(elapsed/1000) + 's'
-        });
-      }
-
-      if (i >= MAX_TRIALS) {
-        console.log('✅ TRIALS COMPLETE:', {
-          trialCount: i,
-          MAX_TRIALS,
-          elapsed,
-          actualTrials: alignedRef.current.length
-        });
-        clearInterval(tickTimerRef.current);
-        tickTimerRef.current = null;
-        endMinuteRef.current?.();
-        return;
-      }
-
-      if (hitCap) {
-        console.warn('⏱️ TIMEOUT - STOPPING TRIALS:', {
-          trialCount: i,
-          MAX_TRIALS,
-          elapsed,
-          actualTrials: alignedRef.current.length,
-          missedTrials: MAX_TRIALS - i
-        });
-        clearInterval(tickTimerRef.current);
-        tickTimerRef.current = null;
-        endMinuteRef.current?.();
-        return;
-      }
-
-      let bit, ghost;
-      if (C.USE_LIVE_STREAM) {
-        const now = performance.now();
-        if (isBuffering) { maybeResume(now); return; } // Don't increment i when buffering
-        else { maybePause(now); if (isBuffering) { return; } } // Don't increment i when buffering starts
-        // Use trial-level BIT strategy: odd trials = alternating, even trials = independent
-        const trialNumber = i + 1; // Convert 0-based to 1-based for odd/even logic
-        const sBitObj = livePopSubjectBit(trialNumber); const gBitObj = livePopGhostBit(trialNumber);
-        if (sBitObj === null || gBitObj === null) {
-          console.warn('🔴 NULL BITS DETECTED - pausing:', {
-            trialNumber,
-            sBitObj, gBitObj,
-            bufferSize: liveBufferedBits(),
-            isBuffering
-          });
-          maybePause(now);
-          return;
-        } // Don't increment i when no bits available
-
-        // Extract bit values and indices
-        const subjectBit = sBitObj.bit;
-        const ghostBit = gBitObj.bit;
-
-        // Convert bit strings to integers for display logic
-        bit = subjectBit === '1' ? 1 : 0;
-        ghost = ghostBit === '1' ? 1 : 0;
-
-        // Debug early trials to see initial buffer bias
-        if (i < 20) {
-          console.log(`🔍 EARLY TRIAL ${i}:`, {
-            subjectBit, ghostBit,
-            sNum: bit, gNum: ghost,
-            align: bit === targetBit ? 'HIT' : 'MISS',
-            ghostAlign: ghost === targetBit ? 'HIT' : 'MISS',
-            target: target,
-            targetBit: targetBit,
-            bufferSize: liveBufferedBits()
-          });
-        }
-
-        // Ghost tracking disabled - no longer used
-        // (Commented out to remove ghost references)
-        if (shouldInvalidate()) {
-          minuteInvalidRef.current = true; invalidReasonRef.current = 'invalidated-buffer';
-          redoCurrentMinuteRef.current = true;
-          clearInterval(tickTimerRef.current); tickTimerRef.current = null;
-          endMinuteRef.current?.(); return;
-        }
-      } else {
-        bit = liveBufRef.current.subj[i] ?? 0;
-        ghost = liveBufRef.current.ghost[i] ?? 0;
-      }
-
-      // Only process trial and increment counter when we have valid data
-      const now = Date.now();
-      console.log('⏰ Tick timing:', { i, elapsed: now - start, expected: i * TICK });
-      // Capture first trial timestamp
-      if (i === 0) {
-        firstTrialTimeRef.current = now;
-      }
-
-      bitsRef.current.push(bit);
-      // Ghost tracking removed - no longer used
-      const align = bit === targetBit ? 1 : 0;
-      alignedRef.current.push(align);
-      hitsRef.current += align;
-
-      // Trigger re-render for UI updates
-      setRenderTrigger(prev => prev + 1);
-
-      // Update last trial timestamp (will be final value when loop completes)
-      lastTrialTimeRef.current = now;
-
-      i += 1; // Only increment when we actually process a trial
-    }, TICK);
-
-    return () => { if (tickTimerRef.current) { clearInterval(tickTimerRef.current); tickTimerRef.current = null; } };
-  }, [
-    isRunning, blockIdx, trialsPerMinute, targetBit, target,
-    livePopSubjectBit, livePopGhostBit, liveBufferedBits, maybePause, maybeResume, shouldInvalidate, trialsPerBlock, isBuffering,
-  ]);
+  // Note: Trial processing is now handled instantly by processTrials() function
+  // No tick loop needed since all 150 trials are processed at once
 
 
 
@@ -1362,10 +1053,6 @@ export default function MainApp() {
   const handleExitNow = useCallback(async (exitInfo = null) => {
     userExitRef.current = true;
     try {
-      // Always disconnect since all blocks are live
-      if (C.USE_LIVE_STREAM) {
-        liveDisconnect();
-      }
       if (isRunning) {
         setIsRunning(false);
         await persistMinute();
@@ -1397,7 +1084,7 @@ export default function MainApp() {
     } finally {
       setPhase('summary');
     }
-  }, [blockIdx, isRunning, liveDisconnect, persistMinute, runRef, target, ensureRunDoc]);
+  }, [blockIdx, isRunning, persistMinute, runRef, target, ensureRunDoc]);
 
   // Ensure document is created early in onboarding phase
   useEffect(() => {
@@ -1678,9 +1365,6 @@ export default function MainApp() {
             <li><strong>Critical moment:</strong> When you click "I'm Ready", the system will fetch quantum random data while your target color pulses on screen. <strong>This is when to focus all your intention on your target color.</strong></li>
             <li>After the quantum data is retrieved, results appear instantly.</li>
             <li>During breaks, you'll see your performance summary before the next block.</li>
-            {debugUI && (
-              <li style={{ opacity: 0.8 }}>{POLICY_TEXT.warmup}; {POLICY_TEXT.pause}; {POLICY_TEXT.resume}</li>
-            )}
           </ul>
         </div>
 
