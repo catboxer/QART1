@@ -4,6 +4,7 @@ import { initializeApp, getApp, getApps } from 'firebase/app';
 import {
   getAuth,
   setPersistence,
+  browserLocalPersistence,
   browserSessionPersistence,
   inMemoryPersistence,
   signInWithEmailAndPassword,
@@ -34,16 +35,25 @@ const app = getApps().length
 const authInstance = getAuth(app);
 const dbInstance = getFirestore(app);
 
-// 4) Session (clears on browser close). Fallback: in-memory (clears on refresh).
+// 4) Local persistence (survives browser close). Fallback: session, then in-memory.
 export const persistenceReady = (async () => {
   try {
-    await setPersistence(authInstance, browserSessionPersistence);
+    await setPersistence(authInstance, browserLocalPersistence);
+    console.log('✅ Using local persistence - anonymous user will persist across sessions');
   } catch (e) {
     console.warn(
-      'Session persistence not available; falling back to in-memory.',
+      'Local persistence not available; falling back to session persistence.',
       e
     );
-    await setPersistence(authInstance, inMemoryPersistence);
+    try {
+      await setPersistence(authInstance, browserSessionPersistence);
+    } catch (e2) {
+      console.warn(
+        'Session persistence not available; falling back to in-memory.',
+        e2
+      );
+      await setPersistence(authInstance, inMemoryPersistence);
+    }
   }
 })();
 
