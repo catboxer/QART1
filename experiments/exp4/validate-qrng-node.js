@@ -210,10 +210,58 @@ function testPositionalBias(bits) {
   return { test: 'PositionalBias', pass: !anyFailed, positions: results };
 }
 
-// Test 5: Autocorrelation Test (check for periodic patterns)
+// Test 5: Byte-Level Bit Position Test (catches LFDR-style bugs)
+function testByteLevelBias(bits) {
+  console.log('\n═══════════════════════════════════════════════════');
+  console.log('TEST 5: BYTE-LEVEL BIT POSITION TEST');
+  console.log('═══════════════════════════════════════════════════');
+  console.log('Testing bit positions 1-8 within each byte');
+  console.log('(This catches bugs like LFDR\'s 4th/8th bit bug)\n');
+
+  // Group bits into bytes
+  const numBytes = Math.floor(bits.length / 8);
+  const results = [];
+  let anyFailed = false;
+
+  for (let bitPos = 0; bitPos < 8; bitPos++) {
+    let ones = 0;
+    let count = 0;
+
+    // Extract bit at position bitPos from each byte
+    for (let byteIdx = 0; byteIdx < numBytes; byteIdx++) {
+      const bitIdx = byteIdx * 8 + bitPos;
+      if (bits[bitIdx] === '1') ones++;
+      count++;
+    }
+
+    const proportion = ones / count;
+    const expected = count / 2;
+    const stdDev = Math.sqrt(count * 0.5 * 0.5);
+    const z = zScore(ones, expected, stdDev);
+    const p = twoSidedP(z);
+
+    const pass = p > 0.01; // 99% confidence
+
+    // Show status for each bit position
+    const status = !pass ? '❌ FAIL' : (Math.abs(proportion - 0.5) > 0.05 ? '⚠️  WARN' : '✅ PASS');
+    console.log(`  Bit ${bitPos + 1}: ${ones.toString().padStart(5)}/${count} (${(proportion * 100).toFixed(2)}%) - Z=${z.toFixed(2).padStart(6)}, p=${p.toFixed(4)} ${status}`);
+
+    if (!pass) {
+      anyFailed = true;
+    }
+
+    results.push({ bitPos: bitPos + 1, ones, count, proportion, z, p, pass });
+  }
+
+  console.log(`\n  Result: ${!anyFailed ? '✅ PASS - All byte-level positions look random' : '❌ FAIL - Some positions show bias'}`);
+
+  return { test: 'ByteLevelBias', pass: !anyFailed, positions: results };
+}
+
+// Test 6: Autocorrelation Test (check for periodic patterns)
 function testAutocorrelation(bits, maxLag = 16) {
   console.log('\n═══════════════════════════════════════════════════');
-  console.log('TEST 5: AUTOCORRELATION TEST (Periodic Patterns)');
+  console.log('TEST 6: AUTOCORRELATION TEST (Periodic Patterns)');
   console.log('═══════════════════════════════════════════════════');
   console.log(`Testing lags 1-${maxLag}`);
 
@@ -278,6 +326,7 @@ async function validateQRNG() {
     results.push(testRuns(bits));
     results.push(testLongestRun(bits));
     results.push(testPositionalBias(bits));
+    results.push(testByteLevelBias(bits));
     results.push(testAutocorrelation(bits));
 
     // Summary
