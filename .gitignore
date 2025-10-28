@@ -36,7 +36,7 @@ experiments/*/node_modules/
 experiments/*/dist/
 experiments/*/build/
 .env
-# /experiments/exp0/
-# /experiments/exp3/
-# /experiments/exp4/
+/experiments/exp0/
+/experiments/exp3/
+
 
