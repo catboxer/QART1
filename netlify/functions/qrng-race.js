@@ -205,9 +205,8 @@ async function fromOutshift(n, timeoutMs) {
       body: JSON.stringify({
         // per docs: results come base64-encoded
         encoding: 'base64',
-        // ask for decimal; include both singular/plural keys to be permissive
+        // ask for decimal
         format: 'decimal',
-        formats: ['decimal'],
         bits_per_block: 8,
         number_of_blocks: n,
       }),
@@ -215,7 +214,11 @@ async function fromOutshift(n, timeoutMs) {
     timeoutMs
   );
 
-  if (!res.ok) throw new Error(`outshift_http_${res.status}`);
+  if (!res.ok) {
+    const errorText = await res.text();
+    console.error(`Outshift error ${res.status}:`, errorText);
+    throw new Error(`outshift_http_${res.status}: ${errorText}`);
+  }
 
   // Try to parse; if non-JSON, throw
   const j = await res.json();
@@ -331,11 +334,20 @@ async function sequentialFallback(n) {
         circ.openUntil = 0;
         return out;
       } catch (e) {
+        const errMsg = String(e?.message || e);
+
+        // For 429 rate limit errors, immediately fail without retry
+        // Quota exhausted, so switch to next provider immediately
+        if (errMsg.includes('_429')) {
+          errors.push(`${tag}:${errMsg}`);
+          return null; // Skip to next provider
+        }
+
         circ.fail += 1;
         if (circ.fail >= CB_FAIL_THRESHOLD) {
           circ.openUntil = Date.now() + CB_OPEN_MS;
         }
-        errors.push(`${tag}:${e?.message || e}`);
+        errors.push(`${tag}:${errMsg}`);
         if (attempt < retries) {
           await sleep(RETRY_DELAY_MS);
           continue;
@@ -356,104 +368,21 @@ async function sequentialFallback(n) {
     if (r1) return r1;
   }
 
+  // Fall back to LFDR (validated and passing all tests as of 2025-10-27)
   const r2 = await tryProvider('lfdr', fromLFDR, LFDR_TIMEOUT_MS, 1);
   if (r2) return r2;
 
-  const r3 = await tryProvider('anu', fromANU, ANU_TIMEOUT_MS, 0);
-  if (r3) return r3;
+  // ANU not yet validated, keeping commented out
+  // const r3 = await tryProvider('anu', fromANU, ANU_TIMEOUT_MS, 0);
+  // if (r3) return r3;
 
   throw new Error(errors.join('; '));
 }
-// ---- race-first, then fallback (keeps circuit breaker + retries) ----
+// ---- Sequential fallback to eliminate racing-induced correlations ----
 async function raceFirstThenFallback(n) {
-  // Only Outshift + LFDR race. ANU is emergency-only via sequentialFallback.
-  const eligible = [];
-  if (process.env.QRNG_OUTSHIFT_API_KEY && canUse('outshift'))
-    eligible.push('outshift');
-  if (canUse('lfdr')) eligible.push('lfdr');
-
-  // If nothing can race (circuits open), fall back to sequential (will try ANU last)
-  if (eligible.length === 0) {
-    return sequentialFallback(n);
-  }
-
-  // Weighted shuffle so Outshift usually leads, but LFDR leads sometimes too
-  const weights = { outshift: 5, lfdr: 3 }; // tune as you like
-  const bag = [];
-  for (const tag of eligible)
-    for (let i = 0; i < (weights[tag] || 1); i++) bag.push(tag);
-
-  const order = [];
-  while (bag.length) {
-    const idx = crypto.randomInt(0, bag.length);
-    const pick = bag.splice(idx, 1)[0];
-    if (!order.includes(pick)) order.push(pick);
-  }
-
-  // Stagger starts to avoid paying twice on healthy runs
-  const racers = [];
-  const step = 300; // ms between starts
-  for (let i = 0; i < order.length; i++) {
-    const tag = order[i];
-    const delayMs = i * step + crypto.randomInt(0, 40); // small jitter
-    if (tag === 'outshift') {
-      racers.push(
-        (async () => {
-          await sleep(delayMs);
-          return callProvider(
-            'outshift',
-            fromOutshift,
-            OUTSHIFT_TIMEOUT_MS,
-            1
-          );
-        })()
-      );
-    } else if (tag === 'lfdr') {
-      racers.push(
-        (async () => {
-          await sleep(delayMs);
-          return callProvider('lfdr', fromLFDR, LFDR_TIMEOUT_MS, 1);
-        })()
-      );
-    }
-  }
-
-  try {
-    // First successful provider wins
-    return await Promise.any(racers);
-  } catch (_) {
-    // If both racers fail, fall back to careful sequential (Outshift -> LFDR -> ANU)
-    return sequentialFallback(n);
-  }
-
-  // ---- helpers scoped to this strategy ----
-  function canUse(tag) {
-    const circ = circuits[tag];
-    return Date.now() >= circ.openUntil;
-  }
-
-  async function callProvider(tag, fn, timeoutMs, retries = 1) {
-    const circ = circuits[tag];
-    for (
-      let attempt = 0;
-      attempt < 1 + Math.max(0, retries);
-      attempt++
-    ) {
-      try {
-        const out = await fn(n, timeoutMs);
-        circ.fail = 0;
-        circ.openUntil = 0;
-        return out;
-      } catch (e) {
-        circ.fail += 1;
-        if (circ.fail >= CB_FAIL_THRESHOLD) {
-          circ.openUntil = Date.now() + CB_OPEN_MS;
-        }
-        if (attempt < retries) await sleep(RETRY_DELAY_MS);
-      }
-    }
-    throw new Error(`${tag}_failed`);
-  }
+  // Use deterministic sequential order to avoid bias from racing
+  // Try Outshift first (usually faster), then LFDR, then ANU
+  return sequentialFallback(n);
 }
 
 // ---------------- server-side probe ----------------
