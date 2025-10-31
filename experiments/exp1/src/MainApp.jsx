@@ -37,6 +37,31 @@ const calcTotalMatches = (trialsCount) =>
   Math.ceil(trialsCount / MATCH_SIZE);
 const toSymIdx = (b) => ((b >>> 0) & 0xff) % 5; // 0..4
 
+// Shannon entropy calculation for bit sequences
+function shannonEntropy(bits) {
+  if (!bits || bits.length === 0) return 0;
+  const ones = bits.filter(b => b === 1).length;
+  const zeros = bits.length - ones;
+  const p1 = ones / bits.length;
+  const p0 = zeros / bits.length;
+
+  let entropy = 0;
+  if (p1 > 0) entropy -= p1 * Math.log2(p1);
+  if (p0 > 0) entropy -= p0 * Math.log2(p0);
+
+  return entropy; // 0 to 1 (for binary)
+}
+
+// Convert byte to array of 8 bits
+function byteToBits(byte) {
+  const b = (byte >>> 0) & 0xff;
+  const bits = [];
+  for (let i = 7; i >= 0; i--) {
+    bits.push((b >> i) & 1);
+  }
+  return bits;
+}
+
 /* =========================
    Zener Icons (5 symbols)
    ========================= */
@@ -1270,10 +1295,10 @@ function MainApp() {
     // NEW: reset the gamified match counters/banner
     setMatchSummary(null);
 
-    const parentId = await ensureRunDoc();
+    await ensureRunDoc();
 
     setStep('trials');
-    await prepareTrial(0, parentId, blockId);
+    await prepareTrial(0, blockId);
   };
   // Decide Single vs Redundant for this trial, by block, with a 50/50 split of trials in the block.
   // We also keep the split on round boundaries (multiples of MATCH_SIZE).
@@ -1349,8 +1374,6 @@ function MainApp() {
     // correct: did the ghost pick the actual target?
     const demon_hit =
       resolvedGhostIndex === resolvedCorrectIndex ? 1 : 0;
-    const selectedLabel =
-      choiceOptions[selectedIndex]?.id ?? String(selectedIndex);
 
     const optionsIds = choiceOptions.map((o) => o.id);
     const commitHash = tapesRef.current[blockId]?.hashHex ?? null;
@@ -1446,27 +1469,6 @@ function MainApp() {
     const updatedTrials = [...trialResults, enrichedRow];
     setTrialResults(updatedTrials);
 
-    // Calculate and log running percentages for this block
-    const allRows = updatedTrials.filter(t => t.block_type === blockId);
-    const validRows = allRows.filter(t =>
-      t.target_index_0based !== null && t.target_index_0based !== undefined &&
-      t.selected_index !== null && t.selected_index !== undefined &&
-      t.ghost_index_0based !== null && t.ghost_index_0based !== undefined
-    );
-    // Calculate percentages before and after filtering
-    if (allRows.length > 0) {
-      const allSubjectHits = allRows.reduce((sum, t) => sum + (t.subject_hit || 0), 0);
-      const allDemonHits = allRows.reduce((sum, t) => sum + (t.ghost_hit || 0), 0);
-      const allSubjectPct = (allSubjectHits / allRows.length * 100);
-      const allDemonPct = (allDemonHits / allRows.length * 100);
-    }
-    if (validRows.length > 0) {
-      const validSubjectHits = validRows.reduce((sum, t) => sum + (t.subject_hit || 0), 0);
-      const validDemonHits = validRows.reduce((sum, t) => sum + (t.ghost_hit || 0), 0);
-      const validSubjectPct = (validSubjectHits / validRows.length * 100);
-      const validDemonPct = (validDemonHits / validRows.length * 100);
-    }
-
     // console.log('[LOG GUARD]', { exp1DocId, sealedEnvelopeId });
 
     // Append-only Firestore log (skip if no sealed envelope — CL doesn't have one)
@@ -1478,12 +1480,6 @@ function MainApp() {
           ? logRow.target_index_0based
           : Number.isFinite(currentTrial?.targetIndex) // <-- your local correct index
             ? currentTrial.targetIndex
-            : null;
-
-        const optionsArr = Array.isArray(logRow?.options)
-          ? logRow.options
-          : Array.isArray(currentTrial?.options)
-            ? currentTrial.options
             : null;
 
         // Variables already calculated above in logRow section
@@ -1642,7 +1638,6 @@ function MainApp() {
 
   async function prepareTrial(
     nextTrialIndex = 0,
-    parentId = exp1DocId,
     activeBlockId = currentBlockId
   ) {
     const myRunId = ++prepRunIdRef.current; // mark this invocation; newer runs cancel older ones
@@ -2205,6 +2200,49 @@ function MainApp() {
     // NEW: client-local minimal trials
     const clTrialsMin = clTrials.map(toMinimalTrial);
 
+    // Calculate entropy for each block
+    const calculateBlockEntropy = (trials) => {
+      const subjectBits = [];
+      const ghostBits = [];
+      let hits = 0;
+      let ghostHits = 0;
+
+      trials.forEach(t => {
+        // Convert bytes to bits
+        if (typeof t.raw_byte === 'number') {
+          subjectBits.push(...byteToBits(t.raw_byte));
+        }
+        if (typeof t.ghost_raw_byte === 'number') {
+          ghostBits.push(...byteToBits(t.ghost_raw_byte));
+        }
+        // Count hits for performance correlation
+        if (t.subject_hit === 1 || t.matched === 1) hits++;
+        if (t.ghost_hit === 1) ghostHits++;
+      });
+
+      const subjectEntropy = subjectBits.length > 0 ? shannonEntropy(subjectBits) : null;
+      const ghostEntropy = ghostBits.length > 0 ? shannonEntropy(ghostBits) : null;
+      const avgEntropy = (subjectEntropy !== null && ghostEntropy !== null)
+        ? (subjectEntropy + ghostEntropy) / 2
+        : null;
+
+      const hitRate = trials.length > 0 ? hits / trials.length : 0;
+      const ghostHitRate = trials.length > 0 ? ghostHits / trials.length : 0;
+
+      return {
+        subject_entropy: subjectEntropy,
+        ghost_entropy: ghostEntropy,
+        avg_entropy: avgEntropy,
+        hit_rate: hitRate,
+        ghost_hit_rate: ghostHitRate,
+        total_bits: subjectBits.length,
+      };
+    };
+
+    const fsEntropy = calculateBlockEntropy(fsTrialsMin);
+    const slEntropy = calculateBlockEntropy(slTrialsMin);
+    const clEntropy = calculateBlockEntropy(clTrialsMin);
+
     try {
       const existingDocId = exp1DocId || cachedDocIdRef.current;
       if (!existingDocId) {
@@ -2239,6 +2277,10 @@ function MainApp() {
           full_stack_trials: fsTrialsMin,
           spoon_love_trials: slTrialsMin,
           client_local_trials: clTrialsMin,
+          // Entropy tracking
+          full_stack_entropy: fsEntropy,
+          spoon_love_entropy: slEntropy,
+          client_local_entropy: clEntropy,
         },
         { merge: true }
       );

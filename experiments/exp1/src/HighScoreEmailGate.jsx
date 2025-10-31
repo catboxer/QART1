@@ -95,7 +95,7 @@ export default function HighScoreEmailGate({
         meetsThreshold
       });
     }
-  }, [step, percent, cutoff, pValue, experiment]);
+  }, [step, percent, cutoff, pValue, experiment, finalPercent, spoonLoveStats, fullStackStats]);
 
   if (!show) return null;
 
