@@ -662,17 +662,6 @@ function MainApp() {
             primary_pos: primaryIsFirst ? 1 : 2,
           };
 
-          if (process.env.NODE_ENV !== 'production') {
-            console.log('[PRNG pair]', {
-              trial: trialNum,
-              primary_pos: rng.primary_pos,
-              primary_raw: rng.rawByte,
-              ghost_raw: rng.ghost_rawByte,
-              primary_label: rng.qrng_code === 2 ? 'RIGHT' : 'LEFT',
-              ghost_label:
-                rng.ghost_qrng_code === 2 ? 'RIGHT' : 'LEFT',
-            });
-          }
         } catch (e) {
           alert(
             'Network hiccup—no PRNG value. Please press once again.'
@@ -711,17 +700,6 @@ function MainApp() {
             primary_pos: primaryIsFirst ? 1 : 2,
           };
 
-          if (process.env.NODE_ENV !== 'production') {
-            console.log('[QRNG pair]', {
-              trial: trialNum,
-              primary_pos: rng.primary_pos,
-              primary_raw: rng.rawByte,
-              ghost_raw: rng.ghost_rawByte,
-              primary_label: rng.qrng_code === 2 ? 'RIGHT' : 'LEFT',
-              ghost_label:
-                rng.ghost_qrng_code === 2 ? 'RIGHT' : 'LEFT',
-            });
-          }
         } catch (e) {
           alert(
             'Network hiccup—no quantum value. Please press once again.'
@@ -1326,7 +1304,6 @@ function MainApp() {
           full_stack_trials: fsTrialsMin,
           spoon_love_trials: slTrialsMin,
         });
-        console.log('WROTE details/trialDetails for', mainDocRef.id);
       } catch (e) {
         console.error('DETAILS WRITE FAILED', e);
         devNotify('Details write failed. See console for details.');

@@ -108,5 +108,4 @@ if (typeof window !== 'undefined') {
       return t.signInProvider || null; // "password", "anonymous", etc.
     },
   };
-  // console.log('[FBDEBUG] projectId:', window.__FBDEBUG__.projectId);
 }

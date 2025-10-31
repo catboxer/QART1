@@ -105,8 +105,6 @@ export async function fetchQRNGBits(nBits, retries = 3, validateGhost = false) {
 
   // Handle test mode with crypto.getRandomValues
   if (source === 'crypto-test') {
-    console.log(`🧪 TEST MODE: Generating ${nBits} bits using crypto.getRandomValues (for development only)`);
-
     const nBytes = Math.ceil(nBits / 8);
     const randomBytes = new Uint8Array(nBytes);
     crypto.getRandomValues(randomBytes);
@@ -120,9 +118,6 @@ export async function fetchQRNGBits(nBits, retries = 3, validateGhost = false) {
     const hash = await hashBitstream(result);
     const timestamp = new Date().toISOString();
 
-    console.log(`✅ Generated ${result.length} test bits`);
-    console.log(`🔐 Bitstream authenticated: SHA-256 = ${hash.slice(0, 16)}...`);
-
     return {
       bits: result,
       hash,
@@ -132,11 +127,6 @@ export async function fetchQRNGBits(nBits, retries = 3, validateGhost = false) {
   }
 
   const endpoint = source === 'random-org' ? 'random-org-proxy' : 'qrng-race';
-
-  console.log(`🎲 Fetching ${nBits} bits from ${source}...`);
-
-  let totalBitsRequested = 0; // Track total bits consumed including retries
-  let totalBitsWasted = 0; // Track bits requested but not used (byte alignment waste)
 
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
@@ -148,10 +138,6 @@ export async function fetchQRNGBits(nBits, retries = 3, validateGhost = false) {
       let remaining = nBytes;
       while (remaining > 0) {
         const chunk = Math.min(MAX_CHUNK, remaining);
-        console.log(`📡 Fetching chunk: ${chunk} bytes (${remaining} bytes remaining) [Attempt ${attempt}/${retries}] via ${endpoint}`);
-
-        const bitsInThisChunk = chunk * 8;
-        totalBitsRequested += bitsInThisChunk; // Track actual bits requested from QRNG
 
         const response = await fetch(`/.netlify/functions/${endpoint}?n=${chunk}`);
         if (!response.ok) {
@@ -192,30 +178,19 @@ export async function fetchQRNGBits(nBits, retries = 3, validateGhost = false) {
 
       const result = allBits.slice(0, nBits);
 
-      // Calculate waste from byte alignment
-      totalBitsWasted = totalBitsRequested - result.length;
-
       // Validate randomness if requested (for ghost tape)
       if (validateGhost && nBits > 1000) {
         const validation = validateRandomness(result);
-        console.log('🔬 Randomness validation:', validation.stats);
 
         if (!validation.isRandom) {
           console.warn('⚠️ Ghost tape failed randomness tests - refetching...');
           throw new Error('Failed randomness validation');
         }
-
-        console.log('✅ Ghost tape passed randomness validation');
       }
 
       // Compute cryptographic hash for authentication
       const hash = await hashBitstream(result);
       const timestamp = new Date().toISOString();
-
-      const efficiency = ((result.length / totalBitsRequested) * 100).toFixed(1);
-      console.log(`✅ Successfully fetched ${result.length} bits from QRNG (source: ${nBytes > MAX_CHUNK ? 'chunked' : 'single'})`);
-      console.log(`📊 QRNG consumption: ${totalBitsRequested} bits requested, ${result.length} used, ${totalBitsWasted} wasted (${efficiency}% efficiency${attempt > 1 ? ', had ' + (attempt - 1) + ' retry(s)' : ''})`);
-      console.log(`🔐 Bitstream authenticated: SHA-256 = ${hash.slice(0, 16)}...`);
 
       return {
         bits: result,
@@ -233,13 +208,11 @@ export async function fetchQRNGBits(nBits, retries = 3, validateGhost = false) {
       if (isNonRetryable || attempt === retries) {
         // Final attempt failed or non-retryable error
         console.error(`❌ ${isNonRetryable ? 'Non-retryable error' : 'All retry attempts exhausted'}`);
-        console.error(`📊 Total QRNG bits consumed (including retries): ${totalBitsRequested}`);
         throw error;
       }
 
       // Wait before retrying (exponential backoff)
       const delayMs = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
-      console.log(`⏳ Retrying in ${delayMs}ms...`);
       await new Promise(resolve => setTimeout(resolve, delayMs));
     }
   }
