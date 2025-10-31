@@ -59,17 +59,6 @@ export default function HighScoreEmailGate({
   const [show, setShow] = useState(false);
 
   useEffect(() => {
-    console.log('🚪 HighScoreEmailGate useEffect:', {
-      step,
-      percent,
-      cutoff,
-      experiment,
-      finalPercent,
-      pValue,
-      spoonLoveStats: spoonLoveStats?.userPercent,
-      fullStackStats: fullStackStats?.userPercent
-    });
-
     const shouldTrigger = (step === "done" || step === "final-results");
 
     // Use statistical significance for this experiment
@@ -78,22 +67,9 @@ export default function HighScoreEmailGate({
     const meetsThreshold = isSignificant || (typeof percent === "number" && percent >= cutoff);
 
     if (shouldTrigger && meetsThreshold) {
-      console.log('✅ Should show email modal:', isSignificant ? `p-value ${pValue} ≤ ${threshold}` : `percent ${percent} >= ${cutoff}`);
       setShow(true);
     } else if (!shouldTrigger) {
       setShow(false);
-    } else {
-      console.log('❌ Not showing email modal:', {
-        stepShouldTrigger: shouldTrigger,
-        stepValue: step,
-        experiment,
-        pValue,
-        isSignificant,
-        percentIsNumber: typeof percent === "number",
-        percentValue: percent,
-        cutoffValue: cutoff,
-        meetsThreshold
-      });
     }
   }, [step, percent, cutoff, pValue, experiment, finalPercent, spoonLoveStats, fullStackStats]);
 

@@ -1167,11 +1167,6 @@ function MainApp() {
         ? payload.envelopes
         : [];
       const total = totalWanted;
-      // console.log(
-      //   `[${blockId}] batch size:`,
-      //   envs.length,
-      //   envs.slice(0, 3)
-      // );
 
       // Merge into cache deterministically (fill holes only)
       const prevBlock = assignmentCache?.[blockId] || {};
@@ -1469,7 +1464,6 @@ function MainApp() {
     const updatedTrials = [...trialResults, enrichedRow];
     setTrialResults(updatedTrials);
 
-    // console.log('[LOG GUARD]', { exp1DocId, sealedEnvelopeId });
 
     // Append-only Firestore log (skip if no sealed envelope — CL doesn't have one)
     if (exp1DocId) {
@@ -2285,7 +2279,6 @@ function MainApp() {
         { merge: true }
       );
 
-      // console.log('Saved run', mainDocId);
     } catch (e) {
       console.error('MAIN SAVE FAILED', e);
       const msg = (e && (e.message || e.code)) || String(e);

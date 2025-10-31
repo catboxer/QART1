@@ -123,7 +123,8 @@ export function useLiveStreamQueue(
       disconnect();
     });
 
-    es.onerror = () => {
+    es.onerror = (err) => {
+      console.error("❌ EventSource error:", err, "ReadyState:", es.readyState);
       disconnect();
     };
   }, [durationMs, disconnect]);

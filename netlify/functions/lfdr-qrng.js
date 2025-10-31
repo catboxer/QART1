@@ -20,7 +20,7 @@ exports.handler = async function (event, context) {
 
   try {
     const url = `https://lfdr.de/qrng_api/qrng?length=1&format=BINARY`;
-    console.log('LFDR upstream URL:', url);
+    // console.log('LFDR upstream URL:', url);
     const res = await fetch(url, {
       cache: 'no-store',
       headers: {
