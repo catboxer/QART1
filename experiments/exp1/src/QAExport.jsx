@@ -15,6 +15,688 @@ import { signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { twoPropZ, twoSidedP, normalCdf } from './stats';
 import { config } from './config.js';
 
+
+/* ---------------- CIR²S Analysis Functions ---------------- */
+// Helper functions
+function computeEntropy(bytes) {
+  if (bytes.length === 0) return 0;
+  const counts = new Array(256).fill(0);
+  bytes.forEach(b => counts[b]++);
+  const total = bytes.length;
+  let entropy = 0;
+  for (const count of counts) {
+    if (count > 0) {
+      const p = count / total;
+      entropy -= p * Math.log2(p);
+    }
+  }
+  return entropy;
+}
+
+function computeAutocorrelation(bytes, maxLag = 10) {
+  const n = bytes.length;
+  if (n <= 1) return [];
+  const mean = bytes.reduce((a, b) => a + b, 0) / n;
+  const autocorr = [];
+
+  for (let lag = 0; lag <= maxLag; lag++) {
+    let sum = 0;
+    let count = 0;
+    for (let i = 0; i < n - lag; i++) {
+      sum += (bytes[i] - mean) * (bytes[i + lag] - mean);
+      count++;
+    }
+    const correlation = count > 0 ? sum / count : 0;
+    autocorr.push({ lag, correlation, count });
+  }
+  return autocorr;
+}
+
+// 4. Coherence by Redundancy Analysis
+function analyzeCoherenceByRedundancy(trials) {
+  const redundant = trials.filter(t => t.redundancy_mode === 'redundant');
+  const single = trials.filter(t => t.redundancy_mode === 'single');
+
+  const analyzeGroup = (group, label) => {
+    if (group.length === 0) return null;
+
+    const bytes = group.map(t => t.raw_byte).filter(b => Number.isFinite(b));
+    const hits = group.reduce((a, t) => a + (t.subject_hit === 1 ? 1 : 0), 0);
+
+    return {
+      label,
+      count: group.length,
+      hit_rate: hits / group.length,
+      entropy: computeEntropy(bytes),
+      autocorr: computeAutocorrelation(bytes, 5),
+      mean_byte: bytes.length > 0 ? bytes.reduce((a, b) => a + b, 0) / bytes.length : 0
+    };
+  };
+
+  return {
+    redundant: analyzeGroup(redundant, 'Redundant'),
+    single: analyzeGroup(single, 'Single')
+  };
+}
+
+// 5. RNG Source Analysis
+function analyzeByRNGSource(trials) {
+  const sourceMap = new Map();
+
+  trials.forEach(t => {
+    const source = t.rng_source || 'unknown';
+    if (!sourceMap.has(source)) {
+      sourceMap.set(source, []);
+    }
+    sourceMap.get(source).push(t);
+  });
+
+  const results = Array.from(sourceMap.entries()).map(([source, trials]) => {
+    const bytes = trials.map(t => t.raw_byte).filter(b => Number.isFinite(b));
+    const hits = trials.reduce((a, t) => a + (t.subject_hit === 1 ? 1 : 0), 0);
+
+    return {
+      source,
+      count: trials.length,
+      hit_rate: hits / trials.length,
+      entropy: computeEntropy(bytes),
+      autocorr: computeAutocorrelation(bytes, 5),
+      variance: bytes.length > 0 ? computeVariance(bytes) : 0
+    };
+  });
+
+  return results.sort((a, b) => b.count - a.count);
+}
+
+function computeVariance(values) {
+  if (values.length === 0) return 0;
+  const mean = values.reduce((a, b) => a + b, 0) / values.length;
+  return values.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / values.length;
+}
+
+// 6. Sequential Dependency Analysis
+function analyzeSequentialDependency(trials) {
+  const maxLag = 5;
+  const results = [];
+
+  for (let lag = 1; lag <= maxLag; lag++) {
+    let correlations = 0;
+    let count = 0;
+
+    for (let i = 0; i < trials.length - lag; i++) {
+      const current = trials[i].subject_hit === 1 ? 1 : 0;
+      const future = trials[i + lag].subject_hit === 1 ? 1 : 0;
+
+      correlations += current * future;
+      count++;
+    }
+
+    const correlation = count > 0 ? correlations / count : 0;
+    const expected = 0.04; // 20% * 20% for independent trials
+
+    results.push({
+      lag,
+      correlation,
+      expected,
+      deviation: correlation - expected,
+      count
+    });
+  }
+
+  return results;
+}
+
+// 7. Target Selection Bias Analysis
+function analyzeTargetSelectionBias(trials) {
+  const symbolCounts = {};
+  const totalTrials = trials.length;
+
+  trials.forEach(t => {
+    if (t.target_symbol_id) {
+      symbolCounts[t.target_symbol_id] = (symbolCounts[t.target_symbol_id] || 0) + 1;
+    }
+  });
+
+  const expected = totalTrials / 5; // 20% each for 5 symbols
+  const results = Object.entries(symbolCounts).map(([symbol, count]) => ({
+    symbol,
+    count,
+    percentage: (count / totalTrials) * 100,
+    expected_percentage: 20,
+    deviation: ((count / totalTrials) * 100) - 20,
+    z_score: (count - expected) / Math.sqrt(expected * 0.8) // binomial z-score
+  }));
+
+  return results.sort((a, b) => b.deviation - a.deviation);
+}
+
+// 8. Hit Clustering Analysis
+function analyzeHitClustering(trials) {
+  const hits = trials.map(t => t.subject_hit === 1 ? 1 : 0);
+  const streaks = [];
+  let currentStreak = 0;
+  let currentType = null;
+
+  hits.forEach(hit => {
+    if (hit === currentType) {
+      currentStreak++;
+    } else {
+      if (currentStreak > 0) {
+        streaks.push({ type: currentType, length: currentStreak });
+      }
+      currentType = hit;
+      currentStreak = 1;
+    }
+  });
+
+  if (currentStreak > 0) {
+    streaks.push({ type: currentType, length: currentStreak });
+  }
+
+  const hitStreaks = streaks.filter(s => s.type === 1);
+  const missStreaks = streaks.filter(s => s.type === 0);
+
+  const longestHitStreak = hitStreaks.length > 0 ? Math.max(...hitStreaks.map(s => s.length)) : 0;
+  const longestMissStreak = missStreaks.length > 0 ? Math.max(...missStreaks.map(s => s.length)) : 0;
+
+  return {
+    hit_streaks: hitStreaks,
+    miss_streaks: missStreaks,
+    longest_hit_streak: longestHitStreak,
+    longest_miss_streak: longestMissStreak,
+    avg_hit_streak: hitStreaks.length > 0 ? hitStreaks.reduce((a, s) => a + s.length, 0) / hitStreaks.length : 0,
+    avg_miss_streak: missStreaks.length > 0 ? missStreaks.reduce((a, s) => a + s.length, 0) / missStreaks.length : 0,
+    total_streaks: streaks.length
+  };
+}
+
+// Binaural Beats Effect Analysis
+function analyzeBinauralBeatsEffect(rows) {
+  // Group sessions by binaural beats usage
+  const sessions = rows.reduce((acc, row) => {
+    if (!row.session_id) return acc;
+    if (!acc[row.session_id]) {
+      acc[row.session_id] = {
+        trials: [],
+        binaural_beats: row.binaural_beats || 'No'
+      };
+    }
+    acc[row.session_id].trials.push(row);
+    return acc;
+  }, {});
+
+  // Categorize sessions
+  const withBeats = [];
+  const withoutBeats = [];
+
+  Object.values(sessions).forEach(session => {
+    const trials = session.trials.filter(t => t.subject_hit !== null);
+    if (trials.length === 0) return;
+
+    const hits = trials.reduce((sum, t) => sum + (t.subject_hit || 0), 0);
+    const hitRate = hits / trials.length;
+
+    const sessionData = {
+      trials: trials.length,
+      hits,
+      hitRate,
+      binaural: session.binaural_beats
+    };
+
+    if (session.binaural_beats === 'No' || session.binaural_beats === 'What are binaural beats?') {
+      withoutBeats.push(sessionData);
+    } else {
+      withBeats.push(sessionData);
+    }
+  });
+
+  // Calculate statistics
+  const calcStats = (group) => {
+    if (group.length === 0) return { count: 0, avgHitRate: 0, totalTrials: 0, totalHits: 0 };
+    const totalTrials = group.reduce((sum, s) => sum + s.trials, 0);
+    const totalHits = group.reduce((sum, s) => sum + s.hits, 0);
+    return {
+      count: group.length,
+      avgHitRate: totalHits / totalTrials,
+      totalTrials,
+      totalHits
+    };
+  };
+
+  const beatsStats = calcStats(withBeats);
+  const noBeatsStats = calcStats(withoutBeats);
+
+  // Calculate significance if both groups have data
+  let zScore = null;
+  let pValue = null;
+  if (beatsStats.count > 0 && noBeatsStats.count > 0) {
+    if (beatsStats.totalTrials > 0 && noBeatsStats.totalTrials > 0) {
+      zScore = twoPropZ(beatsStats.totalHits, beatsStats.totalTrials, noBeatsStats.totalHits, noBeatsStats.totalTrials);
+      pValue = twoSidedP(zScore);
+    }
+  }
+
+  return {
+    withBeats: beatsStats,
+    withoutBeats: noBeatsStats,
+    difference: beatsStats.avgHitRate - noBeatsStats.avgHitRate,
+    zScore,
+    pValue
+  };
+}
+
+// Enhanced Response Time vs Accuracy Analysis
+function analyzeResponseTimeAccuracy(trials) {
+  const timingData = trials
+    .filter(t => Number.isFinite(t.response_time_ms) && t.subject_hit !== null)
+    .map(t => ({
+      responseTime: t.response_time_ms,
+      hit: t.subject_hit === 1 ? 1 : 0
+    }));
+
+  if (timingData.length === 0) {
+    return { error: 'No timing data available' };
+  }
+
+  // Split into fast/medium/slow terciles
+  const sorted = [...timingData].sort((a, b) => a.responseTime - b.responseTime);
+  const tercileSize = Math.floor(sorted.length / 3);
+
+  const fast = sorted.slice(0, tercileSize);
+  const medium = sorted.slice(tercileSize, tercileSize * 2);
+  const slow = sorted.slice(tercileSize * 2);
+
+  const calcTercileStats = (group, label) => {
+    const hits = group.reduce((sum, t) => sum + t.hit, 0);
+    const hitRate = hits / group.length;
+    const avgTime = group.reduce((sum, t) => sum + t.responseTime, 0) / group.length;
+    return {
+      label,
+      count: group.length,
+      hits,
+      hitRate: hitRate,
+      hitRatePct: (hitRate * 100).toFixed(1),
+      avgTime: Math.round(avgTime)
+    };
+  };
+
+  const results = {
+    fast: calcTercileStats(fast, 'Fast'),
+    medium: calcTercileStats(medium, 'Medium'),
+    slow: calcTercileStats(slow, 'Slow'),
+    totalTrials: timingData.length
+  };
+
+  // Calculate correlation coefficient
+  const n = timingData.length;
+  const sumTime = timingData.reduce((sum, t) => sum + t.responseTime, 0);
+  const sumHit = timingData.reduce((sum, t) => sum + t.hit, 0);
+  const sumTimeHit = timingData.reduce((sum, t) => sum + (t.responseTime * t.hit), 0);
+  const sumTimeSq = timingData.reduce((sum, t) => sum + (t.responseTime * t.responseTime), 0);
+  const sumHitSq = timingData.reduce((sum, t) => sum + (t.hit * t.hit), 0);
+
+  const numerator = n * sumTimeHit - sumTime * sumHit;
+  const denominator = Math.sqrt((n * sumTimeSq - sumTime * sumTime) * (n * sumHitSq - sumHit * sumHit));
+
+  results.correlation = denominator !== 0 ? numerator / denominator : 0;
+  results.correlationDirection = results.correlation > 0 ? 'positive' : results.correlation < 0 ? 'negative' : 'none';
+
+  return results;
+}
+
+// 9. Response Timing vs Outcome Analysis
+function analyzeTimingOutcome(trials) {
+  const timingData = trials
+    .filter(t => Number.isFinite(t.response_time_ms))
+    .map(t => ({
+      bucket: Math.floor(t.response_time_ms / 100) * 100, // 100ms buckets
+      hit: t.subject_hit === 1 ? 1 : 0
+    }));
+
+  const bucketMap = new Map();
+  timingData.forEach(t => {
+    if (!bucketMap.has(t.bucket)) {
+      bucketMap.set(t.bucket, { hits: 0, total: 0 });
+    }
+    const data = bucketMap.get(t.bucket);
+    data.hits += t.hit;
+    data.total += 1;
+  });
+
+  const results = Array.from(bucketMap.entries())
+    .map(([bucket, data]) => ({
+      bucket_ms: bucket,
+      hit_rate: data.hits / data.total,
+      count: data.total,
+      hits: data.hits
+    }))
+    .sort((a, b) => a.bucket_ms - b.bucket_ms);
+
+  return results;
+}
+
+// 10. Trial Position Effects Analysis
+function analyzeTrialPositionEffects(trials) {
+  const totalTrials = trials.length;
+  const binSize = Math.max(5, Math.floor(totalTrials / 10)); // 10 bins minimum
+  const results = [];
+
+  for (let i = 0; i < totalTrials; i += binSize) {
+    const binTrials = trials.slice(i, i + binSize);
+    const hits = binTrials.reduce((a, t) => a + (t.subject_hit === 1 ? 1 : 0), 0);
+
+    results.push({
+      position_start: i + 1,
+      position_end: Math.min(i + binSize, totalTrials),
+      hit_rate: hits / binTrials.length,
+      count: binTrials.length,
+      hits
+    });
+  }
+
+  return results;
+}
+
+// Block-Specific Analysis Panel Component
+function BlockSpecificAnalysisPanel({ trials, title = 'Block-Specific Analysis' }) {
+  if (!Array.isArray(trials) || trials.length === 0) return null;
+
+  const hits = trials.filter(t => t.matched === 1).length;
+  const total = trials.length;
+  const hitRate = total > 0 ? hits / total : 0;
+
+  // Basic block statistics only
+  const redundant = trials.filter(t => t.redundancy_mode === 'redundant');
+  const single = trials.filter(t => t.redundancy_mode === 'single');
+
+  const redundantHits = redundant.filter(t => t.matched === 1).length;
+  const singleHits = single.filter(t => t.matched === 1).length;
+
+  const redundantRate = redundant.length > 0 ? redundantHits / redundant.length : 0;
+  const singleRate = single.length > 0 ? singleHits / single.length : 0;
+
+  // Debug output
+  const blockTypes = [...new Set(trials.map(t => t.block_type))];
+
+  return (
+    <div style={{ border: '1px solid #ddd', padding: 16, marginTop: 16, borderRadius: 8, background: '#f9f9f9' }}>
+      <h4 style={{ marginTop: 0 }}>{title}</h4>
+      <div style={{ fontSize: 12, color: '#666', marginBottom: 8 }}>
+        Block types in data: {blockTypes.join(', ')} | Sessions: {trials.length > 0 ? [...new Set(trials.map(t => t.session_id))].length : 0}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+        <div>
+          <div><strong>Overall Performance:</strong></div>
+          <div>Trials: {total}</div>
+          <div>Hits: {hits}</div>
+          <div>Hit Rate: {(hitRate * 100).toFixed(1)}%</div>
+        </div>
+        <div>
+          <div><strong>By Condition:</strong></div>
+          <div>Single: {singleHits}/{single.length} ({(singleRate * 100).toFixed(1)}%)</div>
+          <div>Redundant: {redundantHits}/{redundant.length} ({(redundantRate * 100).toFixed(1)}%)</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Complete Analysis Panel Component
+function CompletePSIAnalysisPanel({ trials, title = 'Complete PSI Signatures' }) {
+  if (!Array.isArray(trials) || trials.length === 0) return null;
+
+  const coherenceAnalysis = analyzeCoherenceByRedundancy(trials);
+  const sourceAnalysis = analyzeByRNGSource(trials);
+  const sequentialAnalysis = analyzeSequentialDependency(trials);
+  const targetBiasAnalysis = analyzeTargetSelectionBias(trials);
+  const clusteringAnalysis = analyzeHitClustering(trials);
+  const timingAnalysis = analyzeTimingOutcome(trials);
+  const positionAnalysis = analyzeTrialPositionEffects(trials);
+  const binauralAnalysis = analyzeBinauralBeatsEffect(trials);
+  const responseTimeAnalysis = analyzeResponseTimeAccuracy(trials);
+
+  return (
+    <details style={{ marginTop: 12 }}>
+      <summary>{title}</summary>
+
+      <div style={{ marginTop: 8, display: 'grid', gap: 16 }}>
+
+        {/* Coherence by Redundancy */}
+        <div>
+          <h4>Redundancy vs Single Flash Analysis</h4>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 8 }}>
+            {[coherenceAnalysis.single, coherenceAnalysis.redundant].filter(Boolean).map(group => (
+              <div key={group.label} style={{ border: '1px solid #eee', padding: 12, borderRadius: 4, background: '#fafafa' }}>
+                <div style={{ fontWeight: 'bold', marginBottom: 4 }}>{group.label}</div>
+                <div style={{ fontSize: 13, lineHeight: 1.4 }}>
+                  <div>Trials: {group.count}</div>
+                  <div>Hit Rate: {(group.hit_rate * 100).toFixed(1)}%</div>
+                  <div>Entropy: {group.entropy.toFixed(3)} bits</div>
+                  <div>Autocorr(1): {group.autocorr[1]?.correlation.toFixed(4) || 'N/A'}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* RNG Source Comparison */}
+        <div>
+          <h4>RNG Source Analysis</h4>
+          {sourceAnalysis.length > 0 ? (
+            <table style={{ borderCollapse: 'collapse', marginTop: 4 }}>
+              <thead>
+                <tr>
+                  <th style={{ padding: '4px 8px', textAlign: 'left', borderBottom: '1px solid #eee' }}>Source</th>
+                  <th style={{ padding: '4px 8px', textAlign: 'right', borderBottom: '1px solid #eee' }}>Count</th>
+                  <th style={{ padding: '4px 8px', textAlign: 'right', borderBottom: '1px solid #eee' }}>Hit Rate</th>
+                  <th style={{ padding: '4px 8px', textAlign: 'right', borderBottom: '1px solid #eee' }}>Entropy</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sourceAnalysis.map(row => (
+                  <tr key={row.source}>
+                    <td style={{ padding: '4px 8px' }}>{row.source}</td>
+                    <td style={{ padding: '4px 8px', textAlign: 'right' }}>{row.count}</td>
+                    <td style={{ padding: '4px 8px', textAlign: 'right' }}>{(row.hit_rate * 100).toFixed(1)}%</td>
+                    <td style={{ padding: '4px 8px', textAlign: 'right' }}>{row.entropy.toFixed(3)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <div style={{ color: '#666' }}>No RNG source data available</div>
+          )}
+        </div>
+
+        {/* Sequential Dependencies */}
+        <div>
+          <h4>Sequential Dependencies (Trial-to-Trial Correlations)</h4>
+          <table style={{ borderCollapse: 'collapse', marginTop: 4 }}>
+            <thead>
+              <tr>
+                <th style={{ padding: '4px 8px', textAlign: 'left', borderBottom: '1px solid #eee' }}>Lag</th>
+                <th style={{ padding: '4px 8px', textAlign: 'right', borderBottom: '1px solid #eee' }}>Correlation</th>
+                <th style={{ padding: '4px 8px', textAlign: 'right', borderBottom: '1px solid #eee' }}>Expected</th>
+                <th style={{ padding: '4px 8px', textAlign: 'right', borderBottom: '1px solid #eee' }}>Deviation</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sequentialAnalysis.map(row => (
+                <tr key={row.lag}>
+                  <td style={{ padding: '4px 8px' }}>{row.lag}</td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>{row.correlation.toFixed(4)}</td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>{row.expected.toFixed(4)}</td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>{row.deviation.toFixed(4)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Target Selection Bias */}
+        <div>
+          <h4>Target Selection Bias</h4>
+          <table style={{ borderCollapse: 'collapse', marginTop: 4 }}>
+            <thead>
+              <tr>
+                <th style={{ padding: '4px 8px', textAlign: 'left', borderBottom: '1px solid #eee' }}>Symbol</th>
+                <th style={{ padding: '4px 8px', textAlign: 'right', borderBottom: '1px solid #eee' }}>Count</th>
+                <th style={{ padding: '4px 8px', textAlign: 'right', borderBottom: '1px solid #eee' }}>Percentage</th>
+                <th style={{ padding: '4px 8px', textAlign: 'right', borderBottom: '1px solid #eee' }}>Deviation</th>
+              </tr>
+            </thead>
+            <tbody>
+              {targetBiasAnalysis.map(row => (
+                <tr key={row.symbol}>
+                  <td style={{ padding: '4px 8px' }}>{row.symbol}</td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>{row.count}</td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>{row.percentage.toFixed(1)}%</td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>{row.deviation.toFixed(1)}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Hit Clustering */}
+        <div>
+          <h4>Hit Clustering Analysis</h4>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <strong>Hit Streaks:</strong>
+              <div>Longest: {clusteringAnalysis.longest_hit_streak}</div>
+              <div>Average: {clusteringAnalysis.avg_hit_streak.toFixed(1)}</div>
+              <div>Count: {clusteringAnalysis.hit_streaks.length}</div>
+            </div>
+            <div>
+              <strong>Miss Streaks:</strong>
+              <div>Longest: {clusteringAnalysis.longest_miss_streak}</div>
+              <div>Average: {clusteringAnalysis.avg_miss_streak.toFixed(1)}</div>
+              <div>Count: {clusteringAnalysis.miss_streaks.length}</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Timing vs Outcome */}
+        <div>
+          <h4>Response Timing vs Hit Rate</h4>
+          {timingAnalysis.length > 0 ? (
+            <table style={{ borderCollapse: 'collapse', marginTop: 4 }}>
+              <thead>
+                <tr>
+                  <th style={{ padding: '4px 8px', textAlign: 'left', borderBottom: '1px solid #eee' }}>Timing (ms)</th>
+                  <th style={{ padding: '4px 8px', textAlign: 'right', borderBottom: '1px solid #eee' }}>Count</th>
+                  <th style={{ padding: '4px 8px', textAlign: 'right', borderBottom: '1px solid #eee' }}>Hit Rate</th>
+                </tr>
+              </thead>
+              <tbody>
+                {timingAnalysis.slice(0, 10).map(row => (
+                  <tr key={row.bucket_ms}>
+                    <td style={{ padding: '4px 8px' }}>{row.bucket_ms}</td>
+                    <td style={{ padding: '4px 8px', textAlign: 'right' }}>{row.count}</td>
+                    <td style={{ padding: '4px 8px', textAlign: 'right' }}>{(row.hit_rate * 100).toFixed(1)}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <div style={{ color: '#666' }}>No timing data available</div>
+          )}
+        </div>
+
+        {/* Trial Position Effects */}
+        <div>
+          <h4>Trial Position Effects</h4>
+          <table style={{ borderCollapse: 'collapse', marginTop: 4 }}>
+            <thead>
+              <tr>
+                <th style={{ padding: '4px 8px', textAlign: 'left', borderBottom: '1px solid #eee' }}>Position</th>
+                <th style={{ padding: '4px 8px', textAlign: 'right', borderBottom: '1px solid #eee' }}>Count</th>
+                <th style={{ padding: '4px 8px', textAlign: 'right', borderBottom: '1px solid #eee' }}>Hit Rate</th>
+              </tr>
+            </thead>
+            <tbody>
+              {positionAnalysis.map((row, idx) => (
+                <tr key={idx}>
+                  <td style={{ padding: '4px 8px' }}>{row.position_start}-{row.position_end}</td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>{row.count}</td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>{(row.hit_rate * 100).toFixed(1)}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Binaural Beats Effect Analysis */}
+        <div>
+          <h4>Binaural Beats Effect Analysis</h4>
+          {binauralAnalysis.withBeats.count > 0 || binauralAnalysis.withoutBeats.count > 0 ? (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 8 }}>
+              <div>
+                <strong>With Binaural Beats:</strong>
+                <div>Sessions: {binauralAnalysis.withBeats.count}</div>
+                <div>Trials: {binauralAnalysis.withBeats.totalTrials}</div>
+                <div>Hit Rate: {(binauralAnalysis.withBeats.avgHitRate * 100).toFixed(1)}%</div>
+              </div>
+              <div>
+                <strong>Without Binaural Beats:</strong>
+                <div>Sessions: {binauralAnalysis.withoutBeats.count}</div>
+                <div>Trials: {binauralAnalysis.withoutBeats.totalTrials}</div>
+                <div>Hit Rate: {(binauralAnalysis.withoutBeats.avgHitRate * 100).toFixed(1)}%</div>
+              </div>
+            </div>
+          ) : (
+            <div style={{ color: '#666' }}>No binaural beats data available</div>
+          )}
+          {binauralAnalysis.pValue !== null && (
+            <div style={{ marginTop: 8, fontSize: 13 }}>
+              <strong>Difference:</strong> {(binauralAnalysis.difference * 100).toFixed(1)}%
+              {binauralAnalysis.pValue !== null && (
+                <span> (p = {binauralAnalysis.pValue.toFixed(4)})</span>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Response Time vs Accuracy Analysis */}
+        <div>
+          <h4>Response Time vs Accuracy</h4>
+          {!responseTimeAnalysis.error ? (
+            <div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginTop: 8 }}>
+                <div>
+                  <strong>{responseTimeAnalysis.fast.label} Responders:</strong>
+                  <div>Count: {responseTimeAnalysis.fast.count}</div>
+                  <div>Avg Time: {responseTimeAnalysis.fast.avgTime}ms</div>
+                  <div>Hit Rate: {responseTimeAnalysis.fast.hitRatePct}%</div>
+                </div>
+                <div>
+                  <strong>{responseTimeAnalysis.medium.label} Responders:</strong>
+                  <div>Count: {responseTimeAnalysis.medium.count}</div>
+                  <div>Avg Time: {responseTimeAnalysis.medium.avgTime}ms</div>
+                  <div>Hit Rate: {responseTimeAnalysis.medium.hitRatePct}%</div>
+                </div>
+                <div>
+                  <strong>{responseTimeAnalysis.slow.label} Responders:</strong>
+                  <div>Count: {responseTimeAnalysis.slow.count}</div>
+                  <div>Avg Time: {responseTimeAnalysis.slow.avgTime}ms</div>
+                  <div>Hit Rate: {responseTimeAnalysis.slow.hitRatePct}%</div>
+                </div>
+              </div>
+              <div style={{ marginTop: 8, fontSize: 13 }}>
+                <strong>Correlation:</strong> {responseTimeAnalysis.correlation.toFixed(3)}
+                ({responseTimeAnalysis.correlationDirection} correlation between response time and accuracy)
+              </div>
+            </div>
+          ) : (
+            <div style={{ color: '#666' }}>{responseTimeAnalysis.error}</div>
+          )}
+        </div>
+
+      </div>
+    </details>
+  );
+}
 /* ---------------- tiny chart helpers (no libs) ---------------- */
 function PBadge({ label, p }) {
   let tone = '#888';
@@ -313,10 +995,6 @@ function runRngSanityTest() {
     if (demon === target) qBugHits++;
   }
 
-  console.log('RNG sanity (expect ~20% when unbiased)');
-  console.log('Physical demon ~= ', pct(physHits));
-  console.log('Quantum (fixed) demon ~= ', pct(qFixedHits));
-  console.log('Quantum demon ~= ', pct(qBugHits));
 }
 
 /* ---------------- general stats over sessions (pooled) ---------------- */
@@ -344,10 +1022,40 @@ function computeStats(sessions, getTrials, sessionFilter) {
     let n10 = 0,
       n01 = 0;
 
+    // Helper function to get demon hit value (same logic as MainApp getDemonHit)
+    const getDemonHit = (r) => {
+      // Check for ghost_hit field first
+      if (typeof r.ghost_hit === 'number') return r.ghost_hit;
+
+      // Use ghost_index_0based and selected_index to calculate ghost hit
+      if (
+        typeof r.selected_index === 'number' &&
+        typeof r.ghost_index_0based === 'number'
+      ) {
+        return r.selected_index === r.ghost_index_0based ? 1 : 0;
+      }
+
+      // Fallback to old logic
+      if (
+        typeof r.selected_index === 'number' &&
+        typeof r.ghost_is_right === 'number'
+      ) {
+        const ghostIndex = r.ghost_is_right ? 1 : 0;
+        return r.selected_index === ghostIndex ? 1 : 0;
+      }
+      return null;
+    };
+
     for (let i = 0; i < N; i++) {
       const t = trials[i] || {};
       const p = Number(t.subject_hit) === 1 ? 1 : 0;
-      const g = Number(t.demon_hit) === 1 ? 1 : 0;
+      const ghostHitValue = getDemonHit(t);
+      const g = Number(ghostHitValue) === 1 ? 1 : 0;
+
+      // Debug: log first few trials to see actual values (remove when debugging complete)
+      if (i < 3) {
+      }
+
       hp += p;
       hg += g;
 
@@ -366,6 +1074,8 @@ function computeStats(sessions, getTrials, sessionFilter) {
 
     const pctP = (100 * hp) / N;
     const pctG = (100 * hg) / N;
+
+    // Debug logging for demon percentage investigation
 
     per.push({
       session_id: doc.session_id || `row_${idx}`,
@@ -525,7 +1235,7 @@ function computeStatsSessionWeighted(
     for (let i = 0; i < N; i++) {
       const t = trials[i] || {};
       const p = Number(t.subject_hit) === 1 ? 1 : 0;
-      const g = Number(t.demon_hit) === 1 ? 1 : 0;
+      const g = Number(t.ghost_hit) === 1 ? 1 : 0;
 
       hp += p;
       hg += g;
@@ -672,18 +1382,18 @@ const getClientLocalTrials = (doc) =>
 // Pull straight from config.trialsPerBlock, with simple numeric fallbacks
 const MIN_FULL_STACK = Number(
   config?.completerMin?.full_stack ??
-    config?.trialsPerBlock?.full_stack ??
-    20
+  config?.trialsPerBlock?.full_stack ??
+  20
 );
 const MIN_SPOON_LOVE = Number(
   config?.completerMin?.spoon_love ??
-    config?.trialsPerBlock?.spoon_love ??
-    20
+  config?.trialsPerBlock?.spoon_love ??
+  20
 );
 const MIN_CLIENT_LOCAL = Number(
   config?.completerMin?.client_local ??
-    config?.trialsPerBlock?.client_local ??
-    20
+  config?.trialsPerBlock?.client_local ??
+  20
 );
 
 function isCompleter(doc) {
@@ -895,15 +1605,15 @@ function PatternsPanel({ trials, title = 'Patterns' }) {
 
   // ---------- 4) Timing vs accuracy (optional) ----------
   const withBuckets = trials.filter((r) =>
-    Number.isFinite(r.press_bucket_ms)
+    Number.isFinite(r.response_time_ms)
   );
   let timingLine = null;
   if (withBuckets.length) {
     const sorted = [...withBuckets].sort(
-      (a, b) => a.press_bucket_ms - b.press_bucket_ms
+      (a, b) => a.response_time_ms - b.response_time_ms
     );
     const median =
-      sorted[Math.floor(sorted.length / 2)].press_bucket_ms;
+      sorted[Math.floor(sorted.length / 2)].response_time_ms;
     const acc = (arr) => {
       const n = arr.length;
       const k = arr.reduce(
@@ -913,14 +1623,13 @@ function PatternsPanel({ trials, title = 'Patterns' }) {
       return n ? ((100 * k) / n).toFixed(1) : '—';
     };
     const fast = withBuckets.filter(
-      (t) => t.press_bucket_ms <= median
+      (t) => t.response_time_ms <= median
     );
     const slow = withBuckets.filter(
-      (t) => t.press_bucket_ms > median
+      (t) => t.response_time_ms > median
     );
-    timingLine = `Fast: ${acc(fast)}%  |  Slow: ${acc(slow)}% (N=${
-      withBuckets.length
-    })`;
+    timingLine = `Fast: ${acc(fast)}%  |  Slow: ${acc(slow)}% (N=${withBuckets.length
+      })`;
   }
 
   return (
@@ -1006,6 +1715,262 @@ function PatternsPanel({ trials, title = 'Patterns' }) {
     </details>
   );
 }
+// ADD THESE THREE COMPONENTS RIGHT BEFORE "export default function QAExport() {"
+
+// Main Results Summary Component
+const MainResultsSummary = ({ reportPRNG, reportQRNG, reportCL }) => {
+  if (!reportPRNG || !reportQRNG || !reportCL ||
+      !reportPRNG.totals || !reportQRNG.totals || !reportCL.totals ||
+      reportPRNG.totals.pctPrimary == null || reportQRNG.totals.pctPrimary == null || reportCL.totals.pctPrimary == null) {
+    return (
+      <div style={{
+        marginTop: 16,
+        padding: '16px 20px',
+        border: '2px solid #e5e7eb',
+        borderRadius: 12,
+        background: '#f9fafb',
+        marginBottom: 24,
+        textAlign: 'center'
+      }}>
+        <h2 style={{ margin: '0 0 16px 0', fontSize: 24, color: '#1f2937' }}>
+          🎯 EXPERIMENT RESULTS SUMMARY
+        </h2>
+        <div style={{ fontSize: 16, color: '#6b7280' }}>
+          No data available
+        </div>
+      </div>
+    );
+  }
+
+  const getStatus = (report) => {
+    const pValue = report.tests.primaryVsChance.p;
+    const rate = report.totals.pctPrimary;
+
+    if (pValue < 0.05 && rate > 20) return { icon: '✓', color: '#22c55e', text: 'Significant' };
+    if (pValue < 0.05 && rate < 20) return { icon: '✗', color: '#ef4444', text: 'Significant Below' };
+    return { icon: '⚪', color: '#eab308', text: 'Not significant' };
+  };
+
+  const physicalStatus = getStatus(reportPRNG);
+  const quantumStatus = getStatus(reportQRNG);
+  const localStatus = getStatus(reportCL);
+
+  const bestPerformance = [
+    { name: 'Physical', rate: reportPRNG.totals.pctPrimary, significant: physicalStatus.icon === '✓' },
+    { name: 'Quantum', rate: reportQRNG.totals.pctPrimary, significant: quantumStatus.icon === '✓' },
+    { name: 'Local', rate: reportCL.totals.pctPrimary, significant: localStatus.icon === '✓' }
+  ].reduce((best, current) => current.rate > best.rate ? current : best);
+
+  const totalTrials = reportPRNG.totals.trials + reportQRNG.totals.trials + reportCL.totals.trials;
+
+  return (
+    <div style={{
+      marginTop: 16,
+      padding: '16px 20px',
+      border: '2px solid #e5e7eb',
+      borderRadius: 12,
+      background: '#f9fafb',
+      marginBottom: 24
+    }}>
+      <h2 style={{ margin: '0 0 16px 0', fontSize: 24, color: '#1f2937' }}>
+        🎯 EXPERIMENT RESULTS SUMMARY
+      </h2>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16, marginBottom: 16 }}>
+        <div style={{
+          padding: 12,
+          border: '1px solid #d1d5db',
+          borderRadius: 8,
+          background: '#fff',
+          textAlign: 'center'
+        }}>
+          <div style={{ fontSize: 14, color: '#6b7280', marginBottom: 4 }}>Physical RNG</div>
+          <div style={{ fontSize: 20, fontWeight: 'bold', color: physicalStatus.color }}>
+            {physicalStatus.icon} {reportPRNG.totals.pctPrimary.toFixed(1)}%
+          </div>
+          <div style={{ fontSize: 12, color: '#6b7280' }}>
+            vs 20% chance (p={reportPRNG.tests.primaryVsChance.p.toFixed(3)})
+          </div>
+        </div>
+
+        <div style={{
+          padding: 12,
+          border: '1px solid #d1d5db',
+          borderRadius: 8,
+          background: '#fff',
+          textAlign: 'center'
+        }}>
+          <div style={{ fontSize: 14, color: '#6b7280', marginBottom: 4 }}>Quantum RNG</div>
+          <div style={{ fontSize: 20, fontWeight: 'bold', color: quantumStatus.color }}>
+            {quantumStatus.icon} {reportQRNG.totals.pctPrimary.toFixed(1)}%
+          </div>
+          <div style={{ fontSize: 12, color: '#6b7280' }}>
+            vs 20% chance (p={reportQRNG.tests.primaryVsChance.p.toFixed(3)})
+          </div>
+        </div>
+
+        <div style={{
+          padding: 12,
+          border: '1px solid #d1d5db',
+          borderRadius: 8,
+          background: '#fff',
+          textAlign: 'center'
+        }}>
+          <div style={{ fontSize: 14, color: '#6b7280', marginBottom: 4 }}>Local RNG</div>
+          <div style={{ fontSize: 20, fontWeight: 'bold', color: localStatus.color }}>
+            {localStatus.icon} {reportCL.totals.pctPrimary.toFixed(1)}%
+          </div>
+          <div style={{ fontSize: 12, color: '#6b7280' }}>
+            vs 20% chance (p={reportCL.tests.primaryVsChance.p.toFixed(3)})
+          </div>
+        </div>
+      </div>
+
+      <div style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: '12px 16px',
+        background: '#e0f2fe',
+        borderRadius: 8,
+        border: '1px solid #0891b2'
+      }}>
+        <div>
+          <strong>📊 BEST PERFORMANCE:</strong> {bestPerformance.name} RNG
+          (+{(bestPerformance.rate - 20).toFixed(1)}% above chance)
+        </div>
+        <div>
+          <strong>🔬 TOTAL TRIALS:</strong> {totalTrials.toLocaleString()}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// RNG Validation Summary Component
+const RNGValidationSummary = ({ reportPRNG, reportQRNG, reportCL }) => {
+  const getValidationStatus = (report) => {
+    if (!report || !report.totals || !report.tests) {
+      return { icon: '⏳', status: 'No data available', color: '#6b7280' };
+    }
+
+    const demonRate = report.totals.pctGhost;
+    const demonP = report.tests.rngBiasGhost.p;
+
+    if (demonP < 0.05 && demonRate > 25) return { icon: '⚠️', status: 'WARNING: Demon unusually high', color: '#f59e0b' };
+    if (demonP < 0.05 && demonRate < 15) return { icon: '⚠️', status: 'WARNING: Demon unusually low', color: '#f59e0b' };
+    return { icon: '✓', status: 'RNG functioning normally', color: '#22c55e' };
+  };
+
+  const physicalStatus = getValidationStatus(reportPRNG);
+  const quantumStatus = getValidationStatus(reportQRNG);
+  const localStatus = getValidationStatus(reportCL);
+
+  const redFlags = [];
+  if (physicalStatus.icon === '⚠️') redFlags.push(`Physical: ${physicalStatus.status}`);
+  if (quantumStatus.icon === '⚠️') redFlags.push(`Quantum: ${quantumStatus.status}`);
+  if (localStatus.icon === '⚠️') redFlags.push(`Local: ${localStatus.status}`);
+
+  return (
+    <div style={{ marginTop: 16, marginBottom: 16 }}>
+      <h3 style={{ margin: '0 0 12px 0', fontSize: 18 }}>🔧 RNG SOURCE VALIDATION</h3>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 12 }}>
+        <div style={{
+          padding: 10,
+          border: `1px solid ${physicalStatus.color}`,
+          borderRadius: 6,
+          background: '#fff'
+        }}>
+          <div style={{ fontSize: 12, color: '#6b7280' }}>Physical RNG</div>
+          <div style={{ fontSize: 14, color: physicalStatus.color }}>
+            {physicalStatus.icon} Control: {reportPRNG?.totals?.pctGhost?.toFixed(1) ?? 'N/A'}%
+          </div>
+        </div>
+
+        <div style={{
+          padding: 10,
+          border: `1px solid ${quantumStatus.color}`,
+          borderRadius: 6,
+          background: '#fff'
+        }}>
+          <div style={{ fontSize: 12, color: '#6b7280' }}>Quantum RNG</div>
+          <div style={{ fontSize: 14, color: quantumStatus.color }}>
+            {quantumStatus.icon} Control: {reportQRNG?.totals?.pctGhost?.toFixed(1) ?? 'N/A'}%
+          </div>
+        </div>
+
+        <div style={{
+          padding: 10,
+          border: `1px solid ${localStatus.color}`,
+          borderRadius: 6,
+          background: '#fff'
+        }}>
+          <div style={{ fontSize: 12, color: '#6b7280' }}>Local RNG</div>
+          <div style={{ fontSize: 14, color: localStatus.color }}>
+            {localStatus.icon} Control: {reportCL?.totals?.pctGhost?.toFixed(1) ?? 'N/A'}%
+          </div>
+        </div>
+      </div>
+
+      {redFlags.length > 0 && (
+        <div style={{
+          padding: '8px 12px',
+          background: '#fef3c7',
+          border: '1px solid #f59e0b',
+          borderRadius: 6,
+          marginBottom: 8
+        }}>
+          <strong>⚠️ RED FLAGS DETECTED:</strong>
+          <ul style={{ margin: '4px 0 0 16px', padding: 0 }}>
+            {redFlags.map((flag, i) => <li key={i}>{flag}</li>)}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Metric Explanations Component
+const MetricExplanations = () => (
+  <details style={{ marginTop: 8, marginBottom: 16 }}>
+    <summary style={{ cursor: 'pointer', fontWeight: 'bold' }}>
+      📖 What Each Metric Means
+    </summary>
+    <div style={{ marginTop: 8, padding: 12, background: '#f9fafb', borderRadius: 6 }}>
+      <div style={{ display: 'grid', gap: 8 }}>
+        <div>
+          <strong>Hit Rate:</strong> % of correct guesses (expecting 20% by chance in 5-choice task)
+        </div>
+        <div>
+          <strong>P-value vs chance:</strong> Probability this result happened by luck (want &lt;0.05 for significance)
+        </div>
+        <div>
+          <strong>P-value vs control:</strong> Whether subject beat the control condition significantly
+        </div>
+        <div>
+          <strong>Control performance:</strong> How the "demon" (random baseline) performed - should be ~20%
+        </div>
+        <div>
+          <strong>Position bias:</strong> Whether certain card positions are picked more often than others
+        </div>
+        <div>
+          <strong>Streakiness:</strong> Whether hits/misses cluster together unnaturally
+        </div>
+      </div>
+
+      <div style={{ marginTop: 12, padding: 8, background: '#fee2e2', borderRadius: 4 }}>
+        <strong>🚨 Red Flags to Watch For:</strong>
+        <ul style={{ margin: '4px 0 0 16px', fontSize: 14 }}>
+          <li>Control performing much better or worse than 20%</li>
+          <li>Extreme position bias (&gt;40% in any position)</li>
+          <li>Very long streaks of hits/misses</li>
+          <li>P-values that flip dramatically with small data changes</li>
+        </ul>
+      </div>
+    </div>
+  </details>
+);
 
 /* ---------------------- COMPONENT ---------------------- */
 export default function QAExport() {
@@ -1027,9 +1992,8 @@ export default function QAExport() {
   const [qaDebug, setQaDebug] = useState(null);
 
   /* ==== NEW: mode/summary state ==== */
-  /* ==== NEW: mode/summary state ==== */
   const [mode, setMode] = useState('pooled'); // 'pooled' | 'completers' | 'sessionWeighted'
-  const [shuffleFilter, setShuffleFilter] = useState('all'); // 'all' | 'leaky' | 'strict'
+  const [binauralFilter, setBinauralFilter] = useState('all'); // 'all' | 'yes' | 'no'
   const [summary, setSummary] = useState({
     total: 0,
     completers: 0,
@@ -1140,16 +2104,16 @@ export default function QAExport() {
         reason: ok
           ? 'QA gate PASSED'
           : !qa?.enabled
-          ? 'QA disabled (admin/qa.enabled == false)'
-          : !untilOk
-          ? 'QA expired (admin/qa.until is in the past)'
-          : uidAllowed || emailAllowed
-          ? 'Unknown – should be OK'
-          : u?.email
-          ? `Your email ${u.email} is not in admin/qa.emails`
-          : u?.uid
-          ? `Your UID ${u.uid} is not in admin/qa.uids and no email present`
-          : 'Not signed in',
+            ? 'QA disabled (admin/qa.enabled == false)'
+            : !untilOk
+              ? 'QA expired (admin/qa.until is in the past)'
+              : uidAllowed || emailAllowed
+                ? 'Unknown – should be OK'
+                : u?.email
+                  ? `Your email ${u.email} is not in admin/qa.emails`
+                  : u?.uid
+                    ? `Your UID ${u.uid} is not in admin/qa.uids and no email present`
+                    : 'Not signed in',
         user: u ? { uid: u.uid, email: u.email || null } : null,
         qa: {
           enabled: !!qa?.enabled,
@@ -1166,9 +2130,9 @@ export default function QAExport() {
         reason: 'Error reading admin/qa: ' + (e?.message || e),
         user: auth.currentUser
           ? {
-              uid: auth.currentUser.uid,
-              email: auth.currentUser.email || null,
-            }
+            uid: auth.currentUser.uid,
+            email: auth.currentUser.email || null,
+          }
           : null,
         qa: null,
       });
@@ -1239,7 +2203,7 @@ export default function QAExport() {
   useEffect(() => {
     if (rows.length) buildReports(rows);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, shuffleFilter]);
+  }, [mode, binauralFilter]);
   // If trial arrays are not in the main doc, fetch them from the subcollection
   const hydrateTrialDetails = async (rows) => {
     const jobs = rows.map(async (d) => {
@@ -1277,168 +2241,13 @@ export default function QAExport() {
           if (!hasSl && Array.isArray(det.spoon_love_trials))
             d.spoon_love.trialResults = det.spoon_love_trials;
 
-          console.log('[Hydrated sample]', {
-            pickType:
-              typeof d.spoon_love?.trialResults?.[0]?.selected_index,
-            tgtType:
-              typeof d.spoon_love?.trialResults?.[0]
-                ?.target_index_0based,
-            row: d.spoon_love?.trialResults?.[0],
-          });
 
           if (!hasCl && Array.isArray(det.client_local_trials))
             d.client_local.trialResults = det.client_local_trials;
         }
 
-        // 🔁 Fallback: if any block still missing, synthesize from /logs
-        const needFs = !(
-          d?.full_stack?.trialResults &&
-          d.full_stack.trialResults.length
-        );
-        const needSl = !(
-          d?.spoon_love?.trialResults &&
-          d.spoon_love.trialResults.length
-        );
-        const needCl = !(
-          d?.client_local?.trialResults &&
-          d.client_local.trialResults.length
-        );
-
-        if (needFs || needSl || needCl) {
-          const logSnap = await getDocs(
-            collection(db, 'experiment1_responses', d.id, 'logs')
-          );
-          const logs = logSnap.docs.map((x) => x.data() || {});
-          // Infer shuffle_mode at the session level from logs (fallback-safe)
-          if (!d.shuffle_mode) {
-            const sm = logs.find(
-              (r) => typeof r.shuffle_mode === 'string'
-            )?.shuffle_mode;
-            if (sm) d.shuffle_mode = sm; // 'leaky' or 'strict'
-          }
-
-          // normalize block names:
-          // - accept suffixed names like "full_stack-Physical"
-          const normBlock = (v) => {
-            const s = String(v || '').toLowerCase();
-            if (s.startsWith('full_stack')) return 'full_stack';
-            if (s.startsWith('spoon_love')) return 'spoon_love';
-            if (s.startsWith('client_local')) return 'client_local';
-            return s;
-          };
-
-          // Coercers: turn numeric-looking strings into numbers
-          const toInt = (v) => {
-            if (v === null || v === undefined) return null;
-            if (typeof v === 'number' && Number.isFinite(v))
-              return v | 0;
-            if (typeof v === 'string') {
-              const n = parseInt(v, 10);
-              return Number.isNaN(n) ? null : n;
-            }
-            return null;
-          };
-          const toNum = (v) => {
-            if (v === null || v === undefined) return null;
-            const n = typeof v === 'number' ? v : Number(v);
-            return Number.isFinite(n) ? n : null;
-          };
-
-          const byBlock = (want) =>
-            logs
-              .filter(
-                (r) => normBlock(r.block_type ?? r.block) === want
-              )
-              .sort(
-                (a, b) =>
-                  (toInt(a.trial_index) ?? 0) -
-                  (toInt(b.trial_index) ?? 0)
-              )
-              .map((r) => {
-                // normalize indices (handle numbers or numeric strings)
-                const targetIdx =
-                  toInt(r.target_index_0based) ??
-                  toInt(r.target_index) ??
-                  toInt(r.correct_index);
-
-                const ghostIdx =
-                  toInt(r.ghost_index_0based) ?? toInt(r.demon_index);
-
-                const pickIdx =
-                  toInt(r.selected_index) ??
-                  toInt(r.subject_index_0based) ??
-                  toInt(r.subject_index);
-
-                // options may sometimes be a JSON string; parse if needed
-                let options = r.options;
-                if (
-                  !Array.isArray(options) &&
-                  typeof options === 'string'
-                ) {
-                  try {
-                    const parsed = JSON.parse(options);
-                    if (Array.isArray(parsed)) options = parsed;
-                  } catch {}
-                }
-
-                return {
-                  // core correctness
-                  subject_hit: toInt(r.subject_hit) === 1 ? 1 : 0,
-                  demon_hit: toInt(r.demon_hit) === 1 ? 1 : 0,
-                  matched: toInt(r.matched) === 1 ? 1 : 0,
-
-                  // indexing & ordering
-                  trial_index: toInt(r.trial_index),
-                  rng_source: r.rng_source ?? null,
-                  shuffle_mode: r.shuffle_mode ?? null,
-
-                  // targets (write BOTH names)
-                  target_index_0based: targetIdx,
-                  target_index: targetIdx,
-
-                  // demon/ghost index (optional)
-                  ghost_index_0based: ghostIdx,
-                  ghost_index: ghostIdx,
-
-                  // raw bytes (provenance)
-                  raw_byte:
-                    toInt(r.raw_byte) ?? toInt(r.subject_raw_byte),
-                  ghost_raw_byte:
-                    toInt(r.ghost_raw_byte) ??
-                    toInt(r.demon_raw_byte),
-
-                  // subject choice — normalize to selected_index
-                  selected_index: pickIdx,
-                  selected_id: r.selected_id ?? null,
-
-                  // UI context
-                  options: Array.isArray(options) ? options : null,
-
-                  // timing (used in Quantum timing split)
-                  press_bucket_ms: toNum(r.press_bucket_ms),
-                  press_start_ts: r.press_start_ts ?? null,
-
-                  // block label for grouping
-                  block_type: (
-                    r.block_type ??
-                    r.block ??
-                    ''
-                  ).toString(),
-                };
-              });
-
-          // assign synthesized trials where still needed
-          d.full_stack = d.full_stack || {};
-          d.spoon_love = d.spoon_love || {};
-          d.client_local = d.client_local || {};
-
-          if (needFs)
-            d.full_stack.trialResults = byBlock('full_stack');
-          if (needSl)
-            d.spoon_love.trialResults = byBlock('spoon_love');
-          if (needCl)
-            d.client_local.trialResults = byBlock('client_local');
-        }
+        // No longer needed: trialDetails now contains complete data including redundancy_mode
+        // All trial data comes from the /details/trialDetails subcollection
       } catch (_) {
         // ignore hydration errors for a single doc
       }
@@ -1515,11 +2324,6 @@ export default function QAExport() {
       setRows(all);
       setLastUpdated(new Date());
       buildReports(all);
-      console.log(
-        'FS sample',
-        rows.find((d) => d?.full_stack?.trialResults?.length)
-          ?.full_stack?.trialResults?.[0]
-      );
     } catch (e) {
       console.error(e);
       setError(`Fetch failed: ${e?.code || ''} ${e?.message || e}`);
@@ -1555,30 +2359,53 @@ export default function QAExport() {
           : 0,
       }));
     setSummary({ total, completers, nonCompleters, exitBreakdown });
-    // NEW: trial-level shuffle predicate
 
-    const sampleTrials = (all[0]?.full_stack?.trialResults || [])
-      .slice(0, 5)
-      .map((t) => ({ mode: t.shuffle_mode }));
-    console.log('sample trial modes:', sampleTrials);
-    // Read the session's shuffle once (doc field, then any trial as fallback)
-    const sessionShuffle = (d) =>
-      +(d?.shuffle_mode || '').toString().trim().toLowerCase();
+    // Helper to check binaural usage
+    const sessionBinaural = (d) => {
+      const response = d?.postResponses?.binaural_beats || '';
+      if (response === 'No' || response === 'What are binaural beats?') return 'no';
+      if (response.includes('Yes')) return 'yes';
+      return 'unknown';
+    };
 
-    // session filter per mode + shuffle
+    // session filter per mode + binaural
     const baseSessionFilter =
       mode === 'completers' ? (d) => isCompleter(d) : () => true;
-    const passesShuffleSession =
-      shuffleFilter === 'all'
+    const passesBinauralFilter =
+      binauralFilter === 'all'
         ? () => true
-        : (d) => sessionShuffle(d) === shuffleFilter;
+        : (d) => sessionBinaural(d) === binauralFilter;
     const combinedFilter = (d) =>
-      baseSessionFilter(d) && passesShuffleSession(d);
+      baseSessionFilter(d) && passesBinauralFilter(d);
 
     // trial extractors for each block
-    const getPRNG = (doc) => doc?.full_stack?.trialResults || [];
-    const getQRNG = (doc) => doc?.spoon_love?.trialResults || [];
-    const getCL = (doc) => doc?.client_local?.trialResults || [];
+    const getPRNG = (doc) => {
+      const all = doc?.full_stack?.trialResults || [];
+      const valid = all.filter(
+        (t) => t.target_index_0based !== null && t.target_index_0based !== undefined &&
+               t.selected_index !== null && t.selected_index !== undefined &&
+               t.ghost_index_0based !== null && t.ghost_index_0based !== undefined
+      );
+      return all; // Return unfiltered for now
+    };
+    const getQRNG = (doc) => {
+      const all = doc?.spoon_love?.trialResults || [];
+      const valid = all.filter(
+        (t) => t.target_index_0based !== null && t.target_index_0based !== undefined &&
+               t.selected_index !== null && t.selected_index !== undefined &&
+               t.ghost_index_0based !== null && t.ghost_index_0based !== undefined
+      );
+      return all; // Return unfiltered for now
+    };
+    const getCL = (doc) => {
+      const all = doc?.client_local?.trialResults || [];
+      const valid = all.filter(
+        (t) => t.target_index_0based !== null && t.target_index_0based !== undefined &&
+               t.selected_index !== null && t.selected_index !== undefined &&
+               t.ghost_index_0based !== null && t.ghost_index_0based !== undefined
+      );
+      return all; // Return unfiltered for now
+    };
     let rPRNG, rQRNG, rCL;
     if (mode === 'sessionWeighted') {
       rPRNG = computeStatsSessionWeighted(
@@ -1697,17 +2524,17 @@ export default function QAExport() {
     !report
       ? []
       : report.per.slice(0, 10).map((r) => ({
-          session: r.session_id || r.participant_id || '',
-          N: r.N,
-          primary_pct: r.pctPrimary ?? null,
-          ghost_pct: r.pctGhost ?? null,
-          delta: r.delta ?? null,
-          n10: r.n10,
-          n01: r.n01,
-          altOK: r.alternatingOK,
-          qrngOK: r.qrngOK,
-          warnings: r.warnings,
-        }));
+        session: r.session_id || r.participant_id || '',
+        N: r.N,
+        primary_pct: r.pctPrimary ?? null,
+        ghost_pct: r.pctGhost ?? null,
+        delta: r.delta ?? null,
+        n10: r.n10,
+        n01: r.n01,
+        altOK: r.alternatingOK,
+        qrngOK: r.qrngOK,
+        warnings: r.warnings,
+      }));
 
   const firstTenPRNG = useMemo(
     () => makeFirstTen(reportPRNG),
@@ -1738,53 +2565,54 @@ export default function QAExport() {
     }));
   }, [rows]);
 
-  /* ===== Histograms: % accuracy per run (by block) ===== */
-  const accuraciesFS = useMemo(() => {
-    return rows.map((d) => {
-      const trials = d?.full_stack?.trialResults || [];
-      const hits = trials.reduce(
-        (a, t) => a + (Number(t.subject_hit) === 1 ? 1 : 0),
-        0
-      );
-      return trials.length ? (100 * hits) / trials.length : null;
-    });
-  }, [rows]);
-
-  const accuraciesSL = useMemo(() => {
-    return rows.map((d) => {
-      const trials = d?.spoon_love?.trialResults || [];
-      const hits = trials.reduce(
-        (a, t) => a + (Number(t.subject_hit) === 1 ? 1 : 0),
-        0
-      );
-      return trials.length ? (100 * hits) / trials.length : null;
-    });
-  }, [rows]);
-
-  const accuraciesCL = useMemo(() => {
-    return rows.map((d) => {
-      const trials = d?.client_local?.trialResults || [];
-      const hits = trials.reduce(
-        (a, t) => a + (Number(t.subject_hit) === 1 ? 1 : 0),
-        0
-      );
-      return trials.length ? (100 * hits) / trials.length : null;
-    });
-  }, [rows]);
+  // Removed histogram calculations - not providing useful info
   // RNG randomness (ghost/demon vs 20%) by RNG source
   // Flatten trials across all sessions for each block (for PatternsPanel)
-  const trialsFSAll = useMemo(
-    () => rows.flatMap((d) => d?.full_stack?.trialResults || []),
-    [rows]
-  );
-  const trialsSLAll = useMemo(
-    () => rows.flatMap((d) => d?.spoon_love?.trialResults || []),
-    [rows]
-  );
-  const trialsCLAll = useMemo(
-    () => rows.flatMap((d) => d?.client_local?.trialResults || []),
-    [rows]
-  );
+  // Apply the same filtering logic as the statistical reports
+  const trialsFSAll = useMemo(() => {
+    const sessionBinaural = (d) => {
+      const response = d?.postResponses?.binaural_beats || '';
+      if (response === 'No' || response === 'What are binaural beats?') return 'no';
+      if (response.includes('Yes')) return 'yes';
+      return 'unknown';
+    };
+
+    const baseSessionFilter = mode === 'completers' ? (d) => isCompleter(d) : () => true;
+    const passesBinauralFilter = binauralFilter === 'all' ? () => true : (d) => sessionBinaural(d) === binauralFilter;
+    const combinedFilter = (d) => baseSessionFilter(d) && passesBinauralFilter(d);
+
+    return rows.filter(combinedFilter).flatMap((d) => d?.full_stack?.trialResults || []);
+  }, [rows, mode, binauralFilter]);
+
+  const trialsSLAll = useMemo(() => {
+    const sessionBinaural = (d) => {
+      const response = d?.postResponses?.binaural_beats || '';
+      if (response === 'No' || response === 'What are binaural beats?') return 'no';
+      if (response.includes('Yes')) return 'yes';
+      return 'unknown';
+    };
+
+    const baseSessionFilter = mode === 'completers' ? (d) => isCompleter(d) : () => true;
+    const passesBinauralFilter = binauralFilter === 'all' ? () => true : (d) => sessionBinaural(d) === binauralFilter;
+    const combinedFilter = (d) => baseSessionFilter(d) && passesBinauralFilter(d);
+
+    return rows.filter(combinedFilter).flatMap((d) => d?.spoon_love?.trialResults || []);
+  }, [rows, mode, binauralFilter]);
+
+  const trialsCLAll = useMemo(() => {
+    const sessionBinaural = (d) => {
+      const response = d?.postResponses?.binaural_beats || '';
+      if (response === 'No' || response === 'What are binaural beats?') return 'no';
+      if (response.includes('Yes')) return 'yes';
+      return 'unknown';
+    };
+
+    const baseSessionFilter = mode === 'completers' ? (d) => isCompleter(d) : () => true;
+    const passesBinauralFilter = binauralFilter === 'all' ? () => true : (d) => sessionBinaural(d) === binauralFilter;
+    const combinedFilter = (d) => baseSessionFilter(d) && passesBinauralFilter(d);
+
+    return rows.filter(combinedFilter).flatMap((d) => d?.client_local?.trialResults || []);
+  }, [rows, mode, binauralFilter]);
 
   const qrngGhostBySource = useMemo(() => {
     // Quantum block
@@ -1794,7 +2622,7 @@ export default function QAExport() {
       (d) => d?.spoon_love?.trialResults || []
     )) {
       const src = String(t?.rng_source ?? 'unknown');
-      const g = Number(t?.demon_hit) === 1 ? 1 : 0;
+      const g = Number(t?.ghost_hit) === 1 ? 1 : 0;
       const row = m.get(src) || { source: src, n: 0, k: 0 };
       row.n += 1;
       row.k += g;
@@ -1818,7 +2646,7 @@ export default function QAExport() {
       (d) => d?.full_stack?.trialResults || []
     )) {
       const src = String(t?.rng_source ?? 'unknown');
-      const g = Number(t?.demon_hit) === 1 ? 1 : 0;
+      const g = Number(t?.ghost_hit) === 1 ? 1 : 0;
 
       const row = m.get(src) || { source: src, n: 0, k: 0 };
       row.n += 1;
@@ -2426,7 +3254,7 @@ export default function QAExport() {
             </tr>
             <tr>
               <td style={{ padding: '6px 8px' }}>
-                <code>demon_hit</code>
+                <code>ghost_hit</code>
               </td>
               <td style={{ padding: '6px 8px' }}>Demon</td>
               <td style={{ padding: '6px 8px' }}>0/1</td>
@@ -2578,12 +3406,12 @@ export default function QAExport() {
             </tr>
             <tr>
               <td style={{ padding: '6px 8px' }}>
-                <code>press_bucket_ms</code>
+                <code>response_time_ms</code>
               </td>
               <td style={{ padding: '6px 8px' }}>Timing</td>
               <td style={{ padding: '6px 8px' }}>int</td>
               <td style={{ padding: '6px 8px' }}>
-                Rounded response-time bucket for the button press.
+                Response time in milliseconds from trial start to button press.
               </td>
             </tr>
             <tr>
@@ -2678,20 +3506,21 @@ export default function QAExport() {
         ))}
       </div>
 
-      {/* Row 2: Shuffle filter */}
+      {/* Row 2: Binaural filter */}
       <div
         style={{
           display: 'flex',
           gap: 8,
           alignItems: 'center',
           flexWrap: 'wrap',
+          marginTop: 8,
         }}
       >
-        <span style={{ fontSize: 12, color: '#555' }}>Shuffle:</span>
+        <span style={{ fontSize: 12, color: '#555' }}>Binaural beats:</span>
         {[
-          { id: 'all', label: 'All' },
-          { id: 'leaky', label: 'Leaky only' },
-          { id: 'strict', label: 'Strict only' },
+          { id: 'all', label: 'All sessions' },
+          { id: 'yes', label: 'Used binaural beats' },
+          { id: 'no', label: 'No binaural beats' },
         ].map((opt) => (
           <label
             key={opt.id}
@@ -2703,21 +3532,22 @@ export default function QAExport() {
               border: '1px solid #ddd',
               borderRadius: 16,
               background:
-                shuffleFilter === opt.id ? '#eef6ff' : '#fff',
+                binauralFilter === opt.id ? '#eef6ff' : '#fff',
               cursor: 'pointer',
             }}
           >
             <input
               type="radio"
-              name="shuffle"
+              name="binaural"
               value={opt.id}
-              checked={shuffleFilter === opt.id}
-              onChange={(e) => setShuffleFilter(e.target.value)}
+              checked={binauralFilter === opt.id}
+              onChange={(e) => setBinauralFilter(e.target.value)}
             />
             <span style={{ fontSize: 12 }}>{opt.label}</span>
           </label>
         ))}
       </div>
+
     </div>
   );
 
@@ -2748,8 +3578,8 @@ export default function QAExport() {
           {summary.nonCompleters} (
           {summary.total
             ? ((100 * summary.nonCompleters) / summary.total).toFixed(
-                1
-              )
+              1
+            )
             : '0.0'}
           %)
         </div>
@@ -3002,8 +3832,8 @@ export default function QAExport() {
               {toggling
                 ? 'Working…'
                 : qaStatus.enabled
-                ? 'Disable QA'
-                : 'Enable QA'}
+                  ? 'Disable QA'
+                  : 'Enable QA'}
             </button>
             {!canToggle && (
               <small style={{ color: '#666' }}>
@@ -3108,427 +3938,504 @@ export default function QAExport() {
         </p>
       ) : null}
 
-      {/* Sections */}
 
-      <Section
-        title="All Blocks (pooled)"
-        report={reportALL}
-        firstTen={firstTenALL}
-      />
-      <Section
-        title="Physical"
-        report={reportPRNG}
-        firstTen={firstTenPRNG}
-      />
-      <PatternsPanel
-        trials={trialsFSAll}
-        title="Patterns — Physical RNG"
+
+      {/* Main Results Summary at the top */}
+      <MainResultsSummary
+        reportPRNG={reportPRNG}
+        reportQRNG={reportQRNG}
+        reportCL={reportCL}
       />
 
-      <Section
-        title="Quantum"
-        report={reportQRNG}
-        firstTen={firstTenQRNG}
+      {/* RNG Validation Summary */}
+      <RNGValidationSummary
+        reportPRNG={reportPRNG}
+        reportQRNG={reportQRNG}
+        reportCL={reportCL}
       />
-      <PatternsPanel
-        trials={trialsSLAll}
-        title="Patterns — Quantum RNG"
-      />
-      <button
-        onClick={() => {
-          const arr = rows.flatMap(
-            (d) => d?.spoon_love?.trialResults || []
-          );
-          console.log(
-            'QUANTUM trial examples (first 3):',
-            arr
-              .slice(0, 3)
-              .map((r) => ({ keys: Object.keys(r), sample: r }))
-          );
-          alert(
-            'Opened console: View QUANTUM trial field names there.'
-          );
-        }}
-        style={{ margin: '6px 0' }}
-      >
-        Debug Quantum trial fields (console)
-      </button>
 
-      <Section
-        title="Local"
-        report={reportCL}
-        firstTen={firstTenCL}
-      />
-      <PatternsPanel
-        trials={trialsCLAll}
-        title="Patterns — Local RNG"
-      />
-      <button
-        onClick={() => {
-          const arr = rows.flatMap(
-            (d) => d?.client_local?.trialResults || []
-          );
-          console.log(
-            'LOCAL trial examples (first 3):',
-            arr
-              .slice(0, 3)
-              .map((r) => ({ keys: Object.keys(r), sample: r }))
-          );
-          alert(
-            'Opened console: View LOCAL trial field names there.'
-          );
-        }}
-        style={{ margin: '6px 0' }}
-      >
-        Debug Local trial fields (console)
-      </button>
+      {/* Metric explanations */}
+      <MetricExplanations />
 
-      {/* RNG randomness (ghost/demon vs chance p₀=20%) by RNG source */}
-      <details style={{ marginTop: 12 }}>
-        <summary>
-          Randomness checks — ghost vs chance (p₀=20%) by RNG
+      {/* REORGANIZED DETAILED SECTIONS - Group by RNG type */}
+
+      {/* Physical RNG Section */}
+      <div style={{ marginTop: 32 }}>
+        <h2 style={{
+          fontSize: 24,
+          margin: '0 0 16px 0',
+          padding: '8px 12px',
+          background: '#f3f4f6',
+          borderRadius: 6,
+          borderLeft: '4px solid #3b82f6'
+        }}>
+          Physical RNG (Baseline)
+        </h2>
+
+        <Section
+          title="Statistical Results"
+          report={reportPRNG}
+          firstTen={firstTenPRNG}
+        />
+
+        <PatternsPanel
+          trials={trialsFSAll}
+          title="Pattern Analysis"
+        />
+
+        <BlockSpecificAnalysisPanel
+          trials={trialsFSAll}
+          title="Physical RNG Block Analysis"
+        />
+      </div>
+
+      {/* Quantum RNG Section */}
+      <div style={{ marginTop: 32 }}>
+        <h2 style={{
+          fontSize: 24,
+          margin: '0 0 16px 0',
+          padding: '8px 12px',
+          background: '#f3f4f6',
+          borderRadius: 6,
+          borderLeft: '4px solid #8b5cf6'
+        }}>
+          Quantum RNG
+        </h2>
+
+        <Section
+          title="Statistical Results"
+          report={reportQRNG}
+          firstTen={firstTenQRNG}
+        />
+
+        <PatternsPanel
+          trials={trialsSLAll}
+          title="Pattern Analysis"
+        />
+
+        <BlockSpecificAnalysisPanel
+          trials={trialsSLAll}
+          title="Quantum RNG Block Analysis"
+        />
+
+        <button
+          onClick={() => {
+            const arr = rows.flatMap(
+              (d) => d?.spoon_love?.trialResults || []
+            );
+            alert(
+              'Opened console: View QUANTUM trial field names there.'
+            );
+          }}
+          style={{ margin: '6px 0' }}
+        >
+          Debug Quantum trial fields (console)
+        </button>
+      </div>
+
+      {/* Local RNG Section */}
+      <div style={{ marginTop: 32 }}>
+        <h2 style={{
+          fontSize: 24,
+          margin: '0 0 16px 0',
+          padding: '8px 12px',
+          background: '#f3f4f6',
+          borderRadius: 6,
+          borderLeft: '4px solid #10b981'
+        }}>
+          Local RNG
+        </h2>
+
+        <Section
+          title="Statistical Results"
+          report={reportCL}
+          firstTen={firstTenCL}
+        />
+
+        <PatternsPanel
+          trials={trialsCLAll}
+          title="Pattern Analysis"
+        />
+
+        <BlockSpecificAnalysisPanel
+          trials={trialsCLAll}
+          title="Local RNG Block Analysis"
+        />
+
+        <button
+          onClick={() => {
+            const arr = rows.flatMap(
+              (d) => d?.client_local?.trialResults || []
+            );
+            alert(
+              'Opened console: View LOCAL trial field names there.'
+            );
+          }}
+          style={{ margin: '6px 0' }}
+        >
+          Debug Local trial fields (console)
+        </button>
+      </div>
+
+      {/* Combined Analysis - Move to bottom */}
+      <div style={{ marginTop: 32 }}>
+        <h2 style={{
+          fontSize: 24,
+          margin: '0 0 16px 0',
+          padding: '8px 12px',
+          background: '#f3f4f6',
+          borderRadius: 6,
+          borderLeft: '4px solid #f59e0b'
+        }}>
+          All Blocks Combined
+        </h2>
+
+        <Section
+          title="Pooled Statistical Results"
+          report={reportALL}
+          firstTen={firstTenALL}
+        />
+
+        <CompletePSIAnalysisPanel
+          trials={[...trialsFSAll, ...trialsSLAll, ...trialsCLAll]}
+          title="Complete Technical Analysis - Pooled Across All Blocks"
+        />
+      </div>
+
+      {/* Move detailed analysis to collapsible sections at the bottom */}
+      <details style={{ marginTop: 24 }}>
+        <summary style={{ fontSize: 18, fontWeight: 'bold', cursor: 'pointer' }}>
+          Additional Analysis & Diagnostics
         </summary>
-        <div style={{ display: 'grid', gap: 12, marginTop: 8 }}>
-          <div>
-            <h4 style={{ margin: '6px 0' }}>Quantum</h4>
-            {qrngGhostBySource.length ? (
-              <table style={{ borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr>
-                    <th
-                      style={{
-                        textAlign: 'left',
-                        padding: '4px 8px',
-                      }}
-                    >
-                      RNG source
-                    </th>
-                    <th
-                      style={{
-                        textAlign: 'right',
-                        padding: '4px 8px',
-                      }}
-                    >
-                      Demon %
-                    </th>
-                    <th
-                      style={{
-                        textAlign: 'right',
-                        padding: '4px 8px',
-                      }}
-                    >
-                      N
-                    </th>
-                    <th
-                      style={{
-                        textAlign: 'right',
-                        padding: '4px 8px',
-                      }}
-                    >
-                      p vs 20%
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {qrngGhostBySource.map((r) => (
-                    <tr key={`sl_${r.source}`}>
-                      <td style={{ padding: '4px 8px' }}>
-                        {r.source}
-                      </td>
-                      <td
-                        style={{
-                          padding: '4px 8px',
-                          textAlign: 'right',
-                        }}
-                      >
-                        {r.pct != null ? r.pct.toFixed(2) : '—'}%
-                      </td>
-                      <td
-                        style={{
-                          padding: '4px 8px',
-                          textAlign: 'right',
-                        }}
-                      >
-                        {r.n}
-                      </td>
-                      <td
-                        style={{
-                          padding: '4px 8px',
-                          textAlign: 'right',
-                        }}
-                      >
-                        {Number.isFinite(r.p)
-                          ? r.p.toExponential(2)
-                          : '—'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : (
-              <p style={{ color: '#666' }}>No QRNG trials found.</p>
-            )}
-          </div>
 
-          <div>
-            <h4 style={{ margin: '6px 0' }}>Physical — Full Stack</h4>
-            {prngGhostBySource.length ? (
-              <table style={{ borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr>
-                    <th
-                      style={{
-                        textAlign: 'left',
-                        padding: '4px 8px',
-                      }}
-                    >
-                      RNG source
-                    </th>
-                    <th
-                      style={{
-                        textAlign: 'right',
-                        padding: '4px 8px',
-                      }}
-                    >
-                      Demon %
-                    </th>
-                    <th
-                      style={{
-                        textAlign: 'right',
-                        padding: '4px 8px',
-                      }}
-                    >
-                      N
-                    </th>
-                    <th
-                      style={{
-                        textAlign: 'right',
-                        padding: '4px 8px',
-                      }}
-                    >
-                      p vs 20%
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {prngGhostBySource.map((r) => (
-                    <tr key={`fs_${r.source}`}>
-                      <td style={{ padding: '4px 8px' }}>
-                        {r.source}
-                      </td>
-                      <td
+        {/* RNG randomness (ghost/demon vs 20%) by RNG source */}
+        <details style={{ marginTop: 12 }}>
+          <summary>
+            Randomness checks — ghost vs chance (p₀=20%) by RNG
+          </summary>
+          <div style={{ display: 'grid', gap: 12, marginTop: 8 }}>
+            <div>
+              <h4 style={{ margin: '6px 0' }}>Quantum</h4>
+              {qrngGhostBySource.length ? (
+                <table style={{ borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr>
+                      <th
                         style={{
+                          textAlign: 'left',
                           padding: '4px 8px',
-                          textAlign: 'right',
                         }}
                       >
-                        {r.pct != null ? r.pct.toFixed(2) : '—'}%
-                      </td>
-                      <td
+                        RNG source
+                      </th>
+                      <th
                         style={{
-                          padding: '4px 8px',
                           textAlign: 'right',
+                          padding: '4px 8px',
                         }}
                       >
-                        {r.n}
-                      </td>
-                      <td
+                        Demon %
+                      </th>
+                      <th
                         style={{
-                          padding: '4px 8px',
                           textAlign: 'right',
+                          padding: '4px 8px',
                         }}
                       >
-                        {Number.isFinite(r.p)
-                          ? r.p.toExponential(2)
-                          : '—'}
-                      </td>
+                        N
+                      </th>
+                      <th
+                        style={{
+                          textAlign: 'right',
+                          padding: '4px 8px',
+                        }}
+                      >
+                        p vs 20%
+                      </th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : (
-              <p style={{ color: '#666' }}>
-                No Full Stack trials found.
-              </p>
-            )}
-          </div>
-        </div>
-      </details>
-
-      {/* ========== Histograms — % accuracy per run ========== */}
-      <details style={{ marginTop: 12 }}>
-        <summary>Histograms — % accuracy per run</summary>
-        <div style={{ display: 'grid', gap: 12 }}>
-          <Histogram
-            title="Physical — subject % per run"
-            values={accuraciesFS}
-            bin={2}
-          />
-          <Histogram
-            title="Quantum — subject % per run"
-            values={accuraciesSL}
-            bin={2}
-          />
-          <Histogram
-            title="Local — subject % per run"
-            values={accuraciesCL}
-            bin={2}
-          />
-        </div>
-      </details>
-      {/* ========== Block-by-block deltas per participant ========== */}
-      <details style={{ marginTop: 12 }}>
-        <summary>Block-by-block deltas per participant</summary>
-        <div style={{ overflowX: 'auto', marginTop: 8 }}>
-          <table
-            style={{
-              borderCollapse: 'collapse',
-              minWidth: 720,
-              width: '100%',
-            }}
-          >
-            <thead>
-              <tr style={{ background: '#fafafa' }}>
-                <th
-                  style={{
-                    textAlign: 'left',
-                    padding: '6px 8px',
-                    borderBottom: '1px solid #eee',
-                  }}
-                >
-                  Participant
-                </th>
-                <th
-                  style={{
-                    textAlign: 'right',
-                    padding: '6px 8px',
-                    borderBottom: '1px solid #eee',
-                  }}
-                >
-                  Physical %
-                </th>
-                <th
-                  style={{
-                    textAlign: 'right',
-                    padding: '6px 8px',
-                    borderBottom: '1px solid #eee',
-                  }}
-                >
-                  Quantum %
-                </th>
-                <th
-                  style={{
-                    textAlign: 'right',
-                    padding: '6px 8px',
-                    borderBottom: '1px solid #eee',
-                  }}
-                >
-                  Local %
-                </th>
-                <th
-                  style={{
-                    textAlign: 'right',
-                    padding: '6px 8px',
-                    borderBottom: '1px solid #eee',
-                  }}
-                >
-                  Δ SL − FS (pp)
-                </th>
-                <th
-                  style={{
-                    textAlign: 'right',
-                    padding: '6px 8px',
-                    borderBottom: '1px solid #eee',
-                  }}
-                >
-                  Δ CL − FS (pp)
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {deltasPerParticipant.map((r) => (
-                <tr key={r.participant_id}>
-                  <td
-                    style={{
-                      padding: '6px 8px',
-                      borderBottom: '1px solid #f5f5f5',
-                    }}
-                  >
-                    <code>{r.participant_id}</code>
-                  </td>
-                  <td
-                    style={{
-                      padding: '6px 8px',
-                      borderBottom: '1px solid #f5f5f5',
-                      textAlign: 'right',
-                    }}
-                  >
-                    {Number.isFinite(r.fsPct)
-                      ? r.fsPct.toFixed(1)
-                      : '—'}
-                    %
-                  </td>
-                  <td
-                    style={{
-                      padding: '6px 8px',
-                      borderBottom: '1px solid #f5f5f5',
-                      textAlign: 'right',
-                    }}
-                  >
-                    {Number.isFinite(r.slPct)
-                      ? r.slPct.toFixed(1)
-                      : '—'}
-                    %
-                  </td>
-                  <td
-                    style={{
-                      padding: '6px 8px',
-                      borderBottom: '1px solid #f5f5f5',
-                      textAlign: 'right',
-                    }}
-                  >
-                    {Number.isFinite(r.clPct)
-                      ? r.clPct.toFixed(1)
-                      : '—'}
-                    %
-                  </td>
-                  <td
-                    style={{
-                      padding: '6px 8px',
-                      borderBottom: '1px solid #f5f5f5',
-                      textAlign: 'right',
-                    }}
-                  >
-                    {Number.isFinite(r.deltaSLvsFS)
-                      ? r.deltaSLvsFS.toFixed(1)
-                      : '—'}
-                  </td>
-                  <td
-                    style={{
-                      padding: '6px 8px',
-                      borderBottom: '1px solid #f5f5f5',
-                      textAlign: 'right',
-                    }}
-                  >
-                    {Number.isFinite(r.deltaCLvsFS)
-                      ? r.deltaCLvsFS.toFixed(1)
-                      : '—'}
-                  </td>
-                </tr>
-              ))}
-              {deltasPerParticipant.length === 0 && (
-                <tr>
-                  <td
-                    colSpan={6}
-                    style={{ padding: 8, color: '#666' }}
-                  >
-                    No participants found.
-                  </td>
-                </tr>
+                  </thead>
+                  <tbody>
+                    {qrngGhostBySource.map((r) => (
+                      <tr key={`sl_${r.source}`}>
+                        <td style={{ padding: '4px 8px' }}>
+                          {r.source}
+                        </td>
+                        <td
+                          style={{
+                            padding: '4px 8px',
+                            textAlign: 'right',
+                          }}
+                        >
+                          {r.pct != null ? r.pct.toFixed(2) : '—'}%
+                        </td>
+                        <td
+                          style={{
+                            padding: '4px 8px',
+                            textAlign: 'right',
+                          }}
+                        >
+                          {r.n}
+                        </td>
+                        <td
+                          style={{
+                            padding: '4px 8px',
+                            textAlign: 'right',
+                          }}
+                        >
+                          {Number.isFinite(r.p)
+                            ? r.p.toExponential(2)
+                            : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <p style={{ color: '#666' }}>No QRNG trials found.</p>
               )}
-            </tbody>
-          </table>
-        </div>
+            </div>
+
+            <div>
+              <h4 style={{ margin: '6px 0' }}>Physical — Full Stack</h4>
+              {prngGhostBySource.length ? (
+                <table style={{ borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr>
+                      <th
+                        style={{
+                          textAlign: 'left',
+                          padding: '4px 8px',
+                        }}
+                      >
+                        RNG source
+                      </th>
+                      <th
+                        style={{
+                          textAlign: 'right',
+                          padding: '4px 8px',
+                        }}
+                      >
+                        Demon %
+                      </th>
+                      <th
+                        style={{
+                          textAlign: 'right',
+                          padding: '4px 8px',
+                        }}
+                      >
+                        N
+                      </th>
+                      <th
+                        style={{
+                          textAlign: 'right',
+                          padding: '4px 8px',
+                        }}
+                      >
+                        p vs 20%
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {prngGhostBySource.map((r) => (
+                      <tr key={`fs_${r.source}`}>
+                        <td style={{ padding: '4px 8px' }}>
+                          {r.source}
+                        </td>
+                        <td
+                          style={{
+                            padding: '4px 8px',
+                            textAlign: 'right',
+                          }}
+                        >
+                          {r.pct != null ? r.pct.toFixed(2) : '—'}%
+                        </td>
+                        <td
+                          style={{
+                            padding: '4px 8px',
+                            textAlign: 'right',
+                          }}
+                        >
+                          {r.n}
+                        </td>
+                        <td
+                          style={{
+                            padding: '4px 8px',
+                            textAlign: 'right',
+                          }}
+                        >
+                          {Number.isFinite(r.p)
+                            ? r.p.toExponential(2)
+                            : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <p style={{ color: '#666' }}>
+                  No Full Stack trials found.
+                </p>
+              )}
+            </div>
+          </div>
+        </details>
+
+        {/* Removed histograms - they don't provide useful info */}
+
+        {/* Block-by-block deltas per participant */}
+        <details style={{ marginTop: 12 }}>
+          <summary>Block-by-block deltas per participant</summary>
+          <div style={{ overflowX: 'auto', marginTop: 8 }}>
+            <table
+              style={{
+                borderCollapse: 'collapse',
+                minWidth: 720,
+                width: '100%',
+              }}
+            >
+              <thead>
+                <tr style={{ background: '#fafafa' }}>
+                  <th
+                    style={{
+                      textAlign: 'left',
+                      padding: '6px 8px',
+                      borderBottom: '1px solid #eee',
+                    }}
+                  >
+                    Participant
+                  </th>
+                  <th
+                    style={{
+                      textAlign: 'right',
+                      padding: '6px 8px',
+                      borderBottom: '1px solid #eee',
+                    }}
+                  >
+                    Physical %
+                  </th>
+                  <th
+                    style={{
+                      textAlign: 'right',
+                      padding: '6px 8px',
+                      borderBottom: '1px solid #eee',
+                    }}
+                  >
+                    Quantum %
+                  </th>
+                  <th
+                    style={{
+                      textAlign: 'right',
+                      padding: '6px 8px',
+                      borderBottom: '1px solid #eee',
+                    }}
+                  >
+                    Local %
+                  </th>
+                  <th
+                    style={{
+                      textAlign: 'right',
+                      padding: '6px 8px',
+                      borderBottom: '1px solid #eee',
+                    }}
+                  >
+                    Δ SL − FS (pp)
+                  </th>
+                  <th
+                    style={{
+                      textAlign: 'right',
+                      padding: '6px 8px',
+                      borderBottom: '1px solid #eee',
+                    }}
+                  >
+                    Δ CL − FS (pp)
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {deltasPerParticipant.map((r) => (
+                  <tr key={r.participant_id}>
+                    <td
+                      style={{
+                        padding: '6px 8px',
+                        borderBottom: '1px solid #f5f5f5',
+                      }}
+                    >
+                      <code>{r.participant_id}</code>
+                    </td>
+                    <td
+                      style={{
+                        padding: '6px 8px',
+                        borderBottom: '1px solid #f5f5f5',
+                        textAlign: 'right',
+                      }}
+                    >
+                      {Number.isFinite(r.fsPct)
+                        ? r.fsPct.toFixed(1)
+                        : '—'}
+                      %
+                    </td>
+                    <td
+                      style={{
+                        padding: '6px 8px',
+                        borderBottom: '1px solid #f5f5f5',
+                        textAlign: 'right',
+                      }}
+                    >
+                      {Number.isFinite(r.slPct)
+                        ? r.slPct.toFixed(1)
+                        : '—'}
+                      %
+                    </td>
+                    <td
+                      style={{
+                        padding: '6px 8px',
+                        borderBottom: '1px solid #f5f5f5',
+                        textAlign: 'right',
+                      }}
+                    >
+                      {Number.isFinite(r.clPct)
+                        ? r.clPct.toFixed(1)
+                        : '—'}
+                      %
+                    </td>
+                    <td
+                      style={{
+                        padding: '6px 8px',
+                        borderBottom: '1px solid #f5f5f5',
+                        textAlign: 'right',
+                      }}
+                    >
+                      {Number.isFinite(r.deltaSLvsFS)
+                        ? r.deltaSLvsFS.toFixed(1)
+                        : '—'}
+                    </td>
+                    <td
+                      style={{
+                        padding: '6px 8px',
+                        borderBottom: '1px solid #f5f5f5',
+                        textAlign: 'right',
+                      }}
+                    >
+                      {Number.isFinite(r.deltaCLvsFS)
+                        ? r.deltaCLvsFS.toFixed(1)
+                        : '—'}
+                    </td>
+                  </tr>
+                ))}
+                {deltasPerParticipant.length === 0 && (
+                  <tr>
+                    <td
+                      colSpan={6}
+                      style={{ padding: 8, color: '#666' }}
+                    >
+                      No participants found.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </details>
       </details>
     </div>
   );

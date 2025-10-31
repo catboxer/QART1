@@ -89,8 +89,16 @@ function summarizeSession(doc, idx) {
   let lastPos = null;
   let mismatchesComputed = 0;
 
-  for (let i = 0; i < N; i++) {
-    const t = trials[i] || {};
+  // Filter to only complete trials (both primary and ghost have valid data)
+  const validTrials = trials.filter(t => {
+    return typeof t.primary_is_right === 'number' &&
+           typeof t.ghost_is_right === 'number';
+  });
+
+  const validN = validTrials.length;
+
+  for (let i = 0; i < validN; i++) {
+    const t = validTrials[i];
     const p = Number(t.primary_is_right) === 1 ? 1 : 0;
     const g = Number(t.ghost_is_right) === 1 ? 1 : 0;
     hitsPrimary += p;
@@ -109,8 +117,8 @@ function summarizeSession(doc, idx) {
     if (qc !== 1 && qc !== 2) qrngOK = false;
   }
 
-  const pctPrimary = N ? (100 * hitsPrimary) / N : null;
-  const pctGhost = N ? (100 * hitsGhost) / N : null;
+  const pctPrimary = validN ? (100 * hitsPrimary) / validN : null;
+  const pctGhost = validN ? (100 * hitsGhost) / validN : null;
   const delta =
     pctPrimary != null && pctGhost != null
       ? pctPrimary - pctGhost
@@ -119,7 +127,8 @@ function summarizeSession(doc, idx) {
   // pull summary if present (for cross-checks)
   const s = sl.summary || {};
   const summary = {
-    trials: s.trials ?? N,
+    trials: s.trials ?? validN,  // Use valid trial count
+    total_logged_trials: N,      // Track original count for debugging
     hits_primary_right: s.hits_primary_right ?? hitsPrimary,
     hits_ghost_right: s.hits_ghost_right ?? hitsGhost,
     percent_primary_right:
