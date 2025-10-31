@@ -18,6 +18,23 @@ import { config } from './config.js';
 
 /* ---------------- CIR²S Analysis Functions ---------------- */
 // Helper functions
+function pearsonCorrelation(x, y) {
+  if (x.length !== y.length || x.length === 0) return null;
+  const n = x.length;
+
+  const sumX = x.reduce((a, b) => a + b, 0);
+  const sumY = y.reduce((a, b) => a + b, 0);
+  const sumXY = x.reduce((sum, xi, i) => sum + xi * y[i], 0);
+  const sumX2 = x.reduce((sum, xi) => sum + xi * xi, 0);
+  const sumY2 = y.reduce((sum, yi) => sum + yi * yi, 0);
+
+  const numerator = n * sumXY - sumX * sumY;
+  const denominator = Math.sqrt((n * sumX2 - sumX * sumX) * (n * sumY2 - sumY * sumY));
+
+  if (denominator === 0) return null;
+  return numerator / denominator;
+}
+
 function computeEntropy(bytes) {
   if (bytes.length === 0) return 0;
   const counts = new Array(256).fill(0);
@@ -729,123 +746,6 @@ function PBadge({ label, p }) {
   );
 }
 
-/* ---- Tiny histogram (no libs) ---- */
-function buildHistogram(values, binSize = 2) {
-  const clean = values.filter((v) => Number.isFinite(v));
-  if (!clean.length) return [];
-  const bins = new Map(); // key = binStart e.g. 24, 26, ...
-  for (const v of clean) {
-    const clamped = Math.max(0, Math.min(100, v));
-    const k = Math.floor(clamped / binSize) * binSize;
-    bins.set(k, (bins.get(k) || 0) + 1);
-  }
-  return Array.from(bins.entries())
-    .sort((a, b) => a[0] - b[0])
-    .map(([start, count]) => ({
-      start,
-      end: start + binSize,
-      count,
-    }));
-}
-
-function Histogram({
-  title = 'Accuracy per run',
-  values,
-  bin = 2,
-  width = 520,
-  height = 200,
-}) {
-  const data = buildHistogram(values || [], bin);
-  if (!data.length) return null;
-
-  const padL = 32,
-    padB = 24,
-    padR = 8,
-    padT = 24;
-  const plotW = width - padL - padR;
-  const plotH = height - padT - padB;
-
-  const maxCount = Math.max(...data.map((d) => d.count));
-  const xStep = plotW / data.length;
-
-  const barW = Math.max(1, xStep * 0.9);
-  const yTo = (c) => padT + plotH - (plotH * c) / (maxCount || 1);
-
-  return (
-    <figure style={{ margin: '12px 0' }}>
-      <figcaption style={{ marginBottom: 4 }}>{title}</figcaption>
-      <svg width={width} height={height} aria-label={title}>
-        {/* axes */}
-        <line
-          x1={padL}
-          y1={padT}
-          x2={padL}
-          y2={padT + plotH}
-          stroke="#999"
-        />
-        <line
-          x1={padL}
-          y1={padT + plotH}
-          x2={padL + plotW}
-          y2={padT + plotH}
-          stroke="#999"
-        />
-
-        {/* bars */}
-        {data.map((d, i) => {
-          const x = padL + i * xStep + (xStep - barW) / 2;
-          const y = yTo(d.count);
-          const h = padT + plotH - y;
-          return (
-            <rect
-              key={i}
-              x={x}
-              y={y}
-              width={barW}
-              height={h}
-              fill="#4c78a8"
-            />
-          );
-        })}
-
-        {/* simple x ticks at 0, 20, 40, 60, 80, 100 */}
-        {[0, 20, 40, 60, 80, 100].map((t) => {
-          const x = padL + (t / 100) * plotW;
-          return (
-            <g key={t}>
-              <line
-                x1={x}
-                y1={padT + plotH}
-                x2={x}
-                y2={padT + plotH + 4}
-                stroke="#999"
-              />
-              <text
-                x={x}
-                y={padT + plotH + 14}
-                textAnchor="middle"
-                fontSize="10"
-              >
-                {t}
-              </text>
-            </g>
-          );
-        })}
-
-        {/* y max label */}
-        <text
-          x={padL - 6}
-          y={padT + 8}
-          textAnchor="end"
-          fontSize="10"
-        >
-          {maxCount}
-        </text>
-      </svg>
-    </figure>
-  );
-}
-
 function BarChart({ data, width = 520, height = 180, title = '' }) {
   const max = 100;
   const pad = 24;
@@ -959,44 +859,10 @@ function variance(arr, m) {
   }
   return s / (arr.length - 1);
 }
-function tTwoSidedP_fromNormalApprox(t, df) {
+function tTwoSidedP_fromNormalApprox(t) {
   const z = Math.abs(t);
   return Math.max(0, Math.min(1, 2 * (1 - normalCdf(z))));
 }
-function runRngSanityTest() {
-  const N = 10000,
-    k = 5;
-  const pick = () => Math.floor(Math.random() * k);
-  const pct = (x) => ((100 * x) / N).toFixed(2) + '%';
-
-  let physHits = 0,
-    qFixedHits = 0,
-    qBugHits = 0;
-
-  for (let i = 0; i < N; i++) {
-    const remapR = pick();
-    const targetP = (pick() + remapR) % k;
-    const demonP = (pick() + remapR) % k;
-    if (demonP === targetP) physHits++;
-  }
-  for (let i = 0; i < N; i++) {
-    const remapR = pick();
-    const target = (pick() + remapR) % k;
-    const demon = (pick() + remapR) % k;
-    if (demon === target) qFixedHits++;
-  }
-  for (let i = 0; i < N; i++) {
-    const remapR = pick();
-    const s = pick(),
-      g = pick();
-    const target = (s + remapR) % k;
-    const rPrime = (remapR + (g % k)) % k; // old buggy extra rotation
-    const demon = (g + rPrime) % k;
-    if (demon === target) qBugHits++;
-  }
-
-}
-
 /* ---------------- general stats over sessions (pooled) ---------------- */
 function computeStats(sessions, getTrials, sessionFilter) {
   const per = [];
@@ -1980,6 +1846,7 @@ export default function QAExport() {
   const [reportQRNG, setReportQRNG] = useState(null); // spoon_love (Quantum)
   const [reportCL, setReportCL] = useState(null); // client_local (Local)
   const [reportALL, setReportALL] = useState(null); // pooled across blocks
+  const [entropyStats, setEntropyStats] = useState(null); // entropy tracking
   const [error, setError] = useState('');
   const [authed, setAuthed] = useState(false);
   const [canToggle, setCanToggle] = useState(false);
@@ -2244,6 +2111,11 @@ export default function QAExport() {
 
           if (!hasCl && Array.isArray(det.client_local_trials))
             d.client_local.trialResults = det.client_local_trials;
+
+          // Load entropy data
+          if (det.full_stack_entropy) d.full_stack_entropy = det.full_stack_entropy;
+          if (det.spoon_love_entropy) d.spoon_love_entropy = det.spoon_love_entropy;
+          if (det.client_local_entropy) d.client_local_entropy = det.client_local_entropy;
         }
 
         // No longer needed: trialDetails now contains complete data including redundancy_mode
@@ -2381,29 +2253,14 @@ export default function QAExport() {
     // trial extractors for each block
     const getPRNG = (doc) => {
       const all = doc?.full_stack?.trialResults || [];
-      const valid = all.filter(
-        (t) => t.target_index_0based !== null && t.target_index_0based !== undefined &&
-               t.selected_index !== null && t.selected_index !== undefined &&
-               t.ghost_index_0based !== null && t.ghost_index_0based !== undefined
-      );
       return all; // Return unfiltered for now
     };
     const getQRNG = (doc) => {
       const all = doc?.spoon_love?.trialResults || [];
-      const valid = all.filter(
-        (t) => t.target_index_0based !== null && t.target_index_0based !== undefined &&
-               t.selected_index !== null && t.selected_index !== undefined &&
-               t.ghost_index_0based !== null && t.ghost_index_0based !== undefined
-      );
       return all; // Return unfiltered for now
     };
     const getCL = (doc) => {
       const all = doc?.client_local?.trialResults || [];
-      const valid = all.filter(
-        (t) => t.target_index_0based !== null && t.target_index_0based !== undefined &&
-               t.selected_index !== null && t.selected_index !== undefined &&
-               t.ghost_index_0based !== null && t.ghost_index_0based !== undefined
-      );
       return all; // Return unfiltered for now
     };
     let rPRNG, rQRNG, rCL;
@@ -2438,6 +2295,98 @@ export default function QAExport() {
     } else {
       rALL = computeStats(all, getALL, combinedFilter);
     }
+
+    // Calculate entropy statistics from saved entropy data
+    const entropyData = {
+      full_stack: [],
+      spoon_love: [],
+      client_local: [],
+    };
+
+    all.forEach(session => {
+      if (combinedFilter(session)) {
+        const fsEnt = session.full_stack_entropy;
+        const slEnt = session.spoon_love_entropy;
+        const clEnt = session.client_local_entropy;
+
+        if (fsEnt) entropyData.full_stack.push(fsEnt);
+        if (slEnt) entropyData.spoon_love.push(slEnt);
+        if (clEnt) entropyData.client_local.push(clEnt);
+      }
+    });
+
+    const calcStats = (data) => {
+      if (data.length === 0) return null;
+
+      const subjectEntropies = data.map(d => d.subject_entropy).filter(e => e !== null);
+      const ghostEntropies = data.map(d => d.ghost_entropy).filter(e => e !== null);
+      const avgEntropies = data.map(d => d.avg_entropy).filter(e => e !== null);
+
+      const meanSubject = subjectEntropies.length > 0
+        ? subjectEntropies.reduce((a, b) => a + b, 0) / subjectEntropies.length
+        : null;
+      const meanGhost = ghostEntropies.length > 0
+        ? ghostEntropies.reduce((a, b) => a + b, 0) / ghostEntropies.length
+        : null;
+      const meanAvg = avgEntropies.length > 0
+        ? avgEntropies.reduce((a, b) => a + b, 0) / avgEntropies.length
+        : null;
+
+      // Calculate mean hit rates
+      const hitRates = data.map(d => d.hit_rate).filter(r => r !== null);
+      const ghostHitRates = data.map(d => d.ghost_hit_rate).filter(r => r !== null);
+
+      const meanHitRate = hitRates.length > 0
+        ? hitRates.reduce((a, b) => a + b, 0) / hitRates.length
+        : null;
+      const meanGhostHitRate = ghostHitRates.length > 0
+        ? ghostHitRates.reduce((a, b) => a + b, 0) / ghostHitRates.length
+        : null;
+
+      // Calculate entropy-performance correlations
+      // Subject entropy vs Subject hit rate
+      const subjectPairs = data
+        .filter(d => d.subject_entropy !== null && d.hit_rate !== null)
+        .map(d => ({ entropy: d.subject_entropy, hitRate: d.hit_rate }));
+
+      const subjectCorrelation = subjectPairs.length > 1
+        ? pearsonCorrelation(
+            subjectPairs.map(p => p.entropy),
+            subjectPairs.map(p => p.hitRate)
+          )
+        : null;
+
+      // Ghost entropy vs Ghost hit rate
+      const ghostPairs = data
+        .filter(d => d.ghost_entropy !== null && d.ghost_hit_rate !== null)
+        .map(d => ({ entropy: d.ghost_entropy, hitRate: d.ghost_hit_rate }));
+
+      const ghostCorrelation = ghostPairs.length > 1
+        ? pearsonCorrelation(
+            ghostPairs.map(p => p.entropy),
+            ghostPairs.map(p => p.hitRate)
+          )
+        : null;
+
+      return {
+        sessionCount: data.length,
+        meanSubject,
+        meanGhost,
+        meanAvg,
+        meanHitRate,
+        meanGhostHitRate,
+        subjectCorrelation,
+        ghostCorrelation,
+        subjectPairs: subjectPairs.length,
+        ghostPairs: ghostPairs.length,
+      };
+    };
+
+    setEntropyStats({
+      full_stack: calcStats(entropyData.full_stack),
+      spoon_love: calcStats(entropyData.spoon_love),
+      client_local: calcStats(entropyData.client_local),
+    });
 
     setReportPRNG(rPRNG);
     setReportQRNG(rQRNG);
@@ -3902,9 +3851,6 @@ export default function QAExport() {
           </div>
         </div>
       )}
-      <button onClick={runRngSanityTest}>
-        Run RNG Sanity Test - check console log for results
-      </button>
 
       {/* ==== NEW: mode toggle & summary ==== */}
       <ModeToggle />
@@ -4020,9 +3966,6 @@ export default function QAExport() {
 
         <button
           onClick={() => {
-            const arr = rows.flatMap(
-              (d) => d?.spoon_love?.trialResults || []
-            );
             alert(
               'Opened console: View QUANTUM trial field names there.'
             );
@@ -4064,9 +4007,6 @@ export default function QAExport() {
 
         <button
           onClick={() => {
-            const arr = rows.flatMap(
-              (d) => d?.client_local?.trialResults || []
-            );
             alert(
               'Opened console: View LOCAL trial field names there.'
             );
@@ -4076,6 +4016,298 @@ export default function QAExport() {
           Debug Local trial fields (console)
         </button>
       </div>
+
+      {/* Entropy Tracking Section */}
+      {entropyStats && (
+        <div style={{ marginTop: 32 }}>
+          <h2 style={{
+            fontSize: 24,
+            margin: '0 0 16px 0',
+            padding: '8px 12px',
+            background: '#f3f4f6',
+            borderRadius: 6,
+            borderLeft: '4px solid #8b5cf6'
+          }}>
+            Entropy Analysis
+          </h2>
+
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+            gap: 16,
+            marginBottom: 16
+          }}>
+            {/* PRNG Block */}
+            {entropyStats.full_stack && (
+              <div style={{
+                padding: 16,
+                border: '2px solid #ef4444',
+                borderRadius: 8,
+                background: '#fff'
+              }}>
+                <div style={{ fontSize: 14, fontWeight: 'bold', color: '#ef4444', marginBottom: 12 }}>
+                  PRNG Block (Baseline)
+                </div>
+                <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 8 }}>
+                  {entropyStats.full_stack.sessionCount} sessions
+                </div>
+                {entropyStats.full_stack.meanHitRate !== null && (
+                  <div style={{ marginBottom: 8, padding: 8, background: '#fef2f2', borderRadius: 4 }}>
+                    <span style={{ fontSize: 11, color: '#6b7280' }}>Subject Hit Rate: </span>
+                    <span style={{ fontSize: 14, fontWeight: 'bold', color: '#ef4444' }}>
+                      {(entropyStats.full_stack.meanHitRate * 100).toFixed(1)}%
+                    </span>
+                  </div>
+                )}
+                {entropyStats.full_stack.meanGhostHitRate !== null && (
+                  <div style={{ marginBottom: 8, padding: 8, background: '#fef2f2', borderRadius: 4 }}>
+                    <span style={{ fontSize: 11, color: '#6b7280' }}>Ghost Hit Rate: </span>
+                    <span style={{ fontSize: 14, fontWeight: 'bold', color: '#dc2626' }}>
+                      {(entropyStats.full_stack.meanGhostHitRate * 100).toFixed(1)}%
+                    </span>
+                  </div>
+                )}
+                {entropyStats.full_stack.meanSubject !== null && (
+                  <div style={{ marginBottom: 4 }}>
+                    <span style={{ fontSize: 11, color: '#6b7280' }}>Subject: </span>
+                    <span style={{ fontSize: 13, fontWeight: 'bold' }}>
+                      {entropyStats.full_stack.meanSubject.toFixed(4)}
+                    </span>
+                  </div>
+                )}
+                {entropyStats.full_stack.meanGhost !== null && (
+                  <div style={{ marginBottom: 4 }}>
+                    <span style={{ fontSize: 11, color: '#6b7280' }}>Ghost: </span>
+                    <span style={{ fontSize: 13, fontWeight: 'bold' }}>
+                      {entropyStats.full_stack.meanGhost.toFixed(4)}
+                    </span>
+                  </div>
+                )}
+                {entropyStats.full_stack.meanAvg !== null && (
+                  <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid #e5e7eb' }}>
+                    <span style={{ fontSize: 11, color: '#6b7280' }}>Average: </span>
+                    <span style={{ fontSize: 14, fontWeight: 'bold', color: '#ef4444' }}>
+                      {entropyStats.full_stack.meanAvg.toFixed(4)}
+                    </span>
+                  </div>
+                )}
+                {entropyStats.full_stack.subjectCorrelation !== null && (
+                  <div style={{ marginTop: 12, paddingTop: 8, borderTop: '1px solid #e5e7eb' }}>
+                    <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 4 }}>
+                      Subject Entropy ↔ Hit Rate
+                    </div>
+                    <div style={{ fontSize: 13, fontWeight: 'bold', color: entropyStats.full_stack.subjectCorrelation < 0 ? '#dc2626' : '#059669' }}>
+                      r = {entropyStats.full_stack.subjectCorrelation.toFixed(3)}
+                    </div>
+                    <div style={{ fontSize: 9, color: '#9ca3af' }}>
+                      n={entropyStats.full_stack.subjectPairs}
+                    </div>
+                  </div>
+                )}
+                {entropyStats.full_stack.ghostCorrelation !== null && (
+                  <div style={{ marginTop: 8 }}>
+                    <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 4 }}>
+                      Ghost Entropy ↔ Ghost Hit Rate
+                    </div>
+                    <div style={{ fontSize: 13, fontWeight: 'bold', color: entropyStats.full_stack.ghostCorrelation < 0 ? '#dc2626' : '#059669' }}>
+                      r = {entropyStats.full_stack.ghostCorrelation.toFixed(3)}
+                    </div>
+                    <div style={{ fontSize: 9, color: '#9ca3af' }}>
+                      n={entropyStats.full_stack.ghostPairs}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* QRNG Block */}
+            {entropyStats.spoon_love && (
+              <div style={{
+                padding: 16,
+                border: '2px solid #3b82f6',
+                borderRadius: 8,
+                background: '#fff'
+              }}>
+                <div style={{ fontSize: 14, fontWeight: 'bold', color: '#3b82f6', marginBottom: 12 }}>
+                  QRNG Block (Quantum)
+                </div>
+                <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 8 }}>
+                  {entropyStats.spoon_love.sessionCount} sessions
+                </div>
+                {entropyStats.spoon_love.meanHitRate !== null && (
+                  <div style={{ marginBottom: 8, padding: 8, background: '#eff6ff', borderRadius: 4 }}>
+                    <span style={{ fontSize: 11, color: '#6b7280' }}>Subject Hit Rate: </span>
+                    <span style={{ fontSize: 14, fontWeight: 'bold', color: '#3b82f6' }}>
+                      {(entropyStats.spoon_love.meanHitRate * 100).toFixed(1)}%
+                    </span>
+                  </div>
+                )}
+                {entropyStats.spoon_love.meanGhostHitRate !== null && (
+                  <div style={{ marginBottom: 8, padding: 8, background: '#eff6ff', borderRadius: 4 }}>
+                    <span style={{ fontSize: 11, color: '#6b7280' }}>Ghost Hit Rate: </span>
+                    <span style={{ fontSize: 14, fontWeight: 'bold', color: '#2563eb' }}>
+                      {(entropyStats.spoon_love.meanGhostHitRate * 100).toFixed(1)}%
+                    </span>
+                  </div>
+                )}
+                {entropyStats.spoon_love.meanSubject !== null && (
+                  <div style={{ marginBottom: 4 }}>
+                    <span style={{ fontSize: 11, color: '#6b7280' }}>Subject: </span>
+                    <span style={{ fontSize: 13, fontWeight: 'bold' }}>
+                      {entropyStats.spoon_love.meanSubject.toFixed(4)}
+                    </span>
+                  </div>
+                )}
+                {entropyStats.spoon_love.meanGhost !== null && (
+                  <div style={{ marginBottom: 4 }}>
+                    <span style={{ fontSize: 11, color: '#6b7280' }}>Ghost: </span>
+                    <span style={{ fontSize: 13, fontWeight: 'bold' }}>
+                      {entropyStats.spoon_love.meanGhost.toFixed(4)}
+                    </span>
+                  </div>
+                )}
+                {entropyStats.spoon_love.meanAvg !== null && (
+                  <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid #e5e7eb' }}>
+                    <span style={{ fontSize: 11, color: '#6b7280' }}>Average: </span>
+                    <span style={{ fontSize: 14, fontWeight: 'bold', color: '#3b82f6' }}>
+                      {entropyStats.spoon_love.meanAvg.toFixed(4)}
+                    </span>
+                  </div>
+                )}
+                {entropyStats.spoon_love.subjectCorrelation !== null && (
+                  <div style={{ marginTop: 12, paddingTop: 8, borderTop: '1px solid #e5e7eb' }}>
+                    <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 4 }}>
+                      Subject Entropy ↔ Hit Rate
+                    </div>
+                    <div style={{ fontSize: 13, fontWeight: 'bold', color: entropyStats.spoon_love.subjectCorrelation < 0 ? '#dc2626' : '#059669' }}>
+                      r = {entropyStats.spoon_love.subjectCorrelation.toFixed(3)}
+                    </div>
+                    <div style={{ fontSize: 9, color: '#9ca3af' }}>
+                      n={entropyStats.spoon_love.subjectPairs}
+                    </div>
+                  </div>
+                )}
+                {entropyStats.spoon_love.ghostCorrelation !== null && (
+                  <div style={{ marginTop: 8 }}>
+                    <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 4 }}>
+                      Ghost Entropy ↔ Ghost Hit Rate
+                    </div>
+                    <div style={{ fontSize: 13, fontWeight: 'bold', color: entropyStats.spoon_love.ghostCorrelation < 0 ? '#dc2626' : '#059669' }}>
+                      r = {entropyStats.spoon_love.ghostCorrelation.toFixed(3)}
+                    </div>
+                    <div style={{ fontSize: 9, color: '#9ca3af' }}>
+                      n={entropyStats.spoon_love.ghostPairs}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Local RNG Block */}
+            {entropyStats.client_local && (
+              <div style={{
+                padding: 16,
+                border: '2px solid #10b981',
+                borderRadius: 8,
+                background: '#fff'
+              }}>
+                <div style={{ fontSize: 14, fontWeight: 'bold', color: '#10b981', marginBottom: 12 }}>
+                  Local RNG Block
+                </div>
+                <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 8 }}>
+                  {entropyStats.client_local.sessionCount} sessions
+                </div>
+                {entropyStats.client_local.meanHitRate !== null && (
+                  <div style={{ marginBottom: 8, padding: 8, background: '#f0fdf4', borderRadius: 4 }}>
+                    <span style={{ fontSize: 11, color: '#6b7280' }}>Subject Hit Rate: </span>
+                    <span style={{ fontSize: 14, fontWeight: 'bold', color: '#10b981' }}>
+                      {(entropyStats.client_local.meanHitRate * 100).toFixed(1)}%
+                    </span>
+                  </div>
+                )}
+                {entropyStats.client_local.meanGhostHitRate !== null && (
+                  <div style={{ marginBottom: 8, padding: 8, background: '#f0fdf4', borderRadius: 4 }}>
+                    <span style={{ fontSize: 11, color: '#6b7280' }}>Ghost Hit Rate: </span>
+                    <span style={{ fontSize: 14, fontWeight: 'bold', color: '#059669' }}>
+                      {(entropyStats.client_local.meanGhostHitRate * 100).toFixed(1)}%
+                    </span>
+                  </div>
+                )}
+                {entropyStats.client_local.meanSubject !== null && (
+                  <div style={{ marginBottom: 4 }}>
+                    <span style={{ fontSize: 11, color: '#6b7280' }}>Subject: </span>
+                    <span style={{ fontSize: 13, fontWeight: 'bold' }}>
+                      {entropyStats.client_local.meanSubject.toFixed(4)}
+                    </span>
+                  </div>
+                )}
+                {entropyStats.client_local.meanGhost !== null && (
+                  <div style={{ marginBottom: 4 }}>
+                    <span style={{ fontSize: 11, color: '#6b7280' }}>Ghost: </span>
+                    <span style={{ fontSize: 13, fontWeight: 'bold' }}>
+                      {entropyStats.client_local.meanGhost.toFixed(4)}
+                    </span>
+                  </div>
+                )}
+                {entropyStats.client_local.meanAvg !== null && (
+                  <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid #e5e7eb' }}>
+                    <span style={{ fontSize: 11, color: '#6b7280' }}>Average: </span>
+                    <span style={{ fontSize: 14, fontWeight: 'bold', color: '#10b981' }}>
+                      {entropyStats.client_local.meanAvg.toFixed(4)}
+                    </span>
+                  </div>
+                )}
+                {entropyStats.client_local.subjectCorrelation !== null && (
+                  <div style={{ marginTop: 12, paddingTop: 8, borderTop: '1px solid #e5e7eb' }}>
+                    <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 4 }}>
+                      Subject Entropy ↔ Hit Rate
+                    </div>
+                    <div style={{ fontSize: 13, fontWeight: 'bold', color: entropyStats.client_local.subjectCorrelation < 0 ? '#dc2626' : '#059669' }}>
+                      r = {entropyStats.client_local.subjectCorrelation.toFixed(3)}
+                    </div>
+                    <div style={{ fontSize: 9, color: '#9ca3af' }}>
+                      n={entropyStats.client_local.subjectPairs}
+                    </div>
+                  </div>
+                )}
+                {entropyStats.client_local.ghostCorrelation !== null && (
+                  <div style={{ marginTop: 8 }}>
+                    <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 4 }}>
+                      Ghost Entropy ↔ Ghost Hit Rate
+                    </div>
+                    <div style={{ fontSize: 13, fontWeight: 'bold', color: entropyStats.client_local.ghostCorrelation < 0 ? '#dc2626' : '#059669' }}>
+                      r = {entropyStats.client_local.ghostCorrelation.toFixed(3)}
+                    </div>
+                    <div style={{ fontSize: 9, color: '#9ca3af' }}>
+                      n={entropyStats.client_local.ghostPairs}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div style={{
+            padding: 12,
+            background: '#f9fafb',
+            borderRadius: 6,
+            fontSize: 12,
+            color: '#6b7280'
+          }}>
+            <div style={{ marginBottom: 8 }}>
+              <strong>Entropy:</strong> Shannon entropy ranges from 0 to 1 for binary sequences.
+              Values close to 1 indicate high randomness (≈50/50 mix of 0s and 1s).
+              Values close to 0 indicate low randomness (mostly 0s or mostly 1s).
+            </div>
+            <div>
+              <strong>Correlations:</strong> Pearson r shows relationship between entropy and hit rate.
+              <span style={{ color: '#dc2626', fontWeight: 'bold' }}> Negative r</span> (red) = better performance with <em>lower</em> entropy (pattern detection).
+              <span style={{ color: '#059669', fontWeight: 'bold' }}> Positive r</span> (green) = better performance with <em>higher</em> entropy (true randomness).
+              Values near 0 = no relationship.
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Combined Analysis - Move to bottom */}
       <div style={{ marginTop: 32 }}>
