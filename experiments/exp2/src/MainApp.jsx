@@ -25,6 +25,7 @@ import {
 } from './questions';
 import confetti from 'canvas-confetti';
 import { config } from './config.js';
+import HighScoreEmailGate from "./HighScoreEmailGate";
 
 // ---------- helpers ----------
 const randomInt = (min, max) =>
@@ -339,8 +340,10 @@ function MainApp() {
   // ----- blocks & trials -----
   const fullStackBlock = cueBlocks.find((b) => b.id === 'full_stack');
   const spoonLoveBlock = cueBlocks.find((b) => b.id === 'spoon_love');
+
+
   const [blockOrder] = useState([
-    { ...fullStackBlock, id: 'full_stack', showFeedback: true },
+    // { ...fullStackBlock, id: 'full_stack', showFeedback: true }, // Baseline block commented out
     { ...spoonLoveBlock, id: 'spoon_love', showFeedback: true },
   ]);
   const trialsPerBlock = config.trialsPerBlock;
@@ -1019,8 +1022,6 @@ function MainApp() {
     setButtonsDisabled(true);
   }, [trialResults, currentBlock, totalTrialsPerBlock]);
 
-  // -------- minimize each trial row (only what QAExport needs) --------
-  // -------- minimize each trial row (neutral names, no duplicate times) --------
   const toMinimalTrial = (r) => ({
     session_id: r.session_id,
 
@@ -2219,9 +2220,18 @@ function MainApp() {
           })()}
         </>
       )}
-
       {step === 'done' && (
         <>
+          <HighScoreEmailGate
+            experiment="exp2"
+            step={step}
+            sessionId={sessionId}
+            participantId={auth.currentUser?.uid ?? null}
+            spoonLoveStats={spoonLoveStats}
+            fullStackStats={fullStackStats}
+          />
+
+
           <h2>Thank you for participating!</h2>
           <p>Your data has been submitted.</p>
           <p>

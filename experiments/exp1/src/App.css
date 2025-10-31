@@ -427,13 +427,13 @@ input[type='range']::-webkit-slider-thumb {
 .star-burst {
   font-size: 2.5rem;
   text-align: center;
-  animation: popstar 0.8s ease-in-out;
+  animation: popstar .8s ease-in-out;
   margin-top: 0.6rem;
 }
 @keyframes popstar {
   0% {
     transform: scale(0.5) rotate(0deg);
-    opacity: 0;
+    opacity: 1;
   }
   50% {
     transform: scale(1.4) rotate(20deg);
@@ -441,7 +441,7 @@ input[type='range']::-webkit-slider-thumb {
   }
   100% {
     transform: scale(1) rotate(0deg);
-    opacity: 0;
+    opacity: 1;
   }
 }
 @media (prefers-reduced-motion: reduce) {

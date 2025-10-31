@@ -1,14 +1,7 @@
-import { config } from './config.js';
+// import { config } from './config.js';
 //const N_QUANTUM = config.trialsPerBlock.spoon_love;
 
 export const preQuestions = [
-  //   { id: 'name', question: 'What is your name?', type: 'text' },
-  // {
-  //   id: 'email',
-  //   question:
-  //     'What is your email? *(optional—only used by research team if your results are unusually high)',
-  //   type: 'email',
-  // },
   {
     id: 'age',
     question: 'What is your age?',
@@ -93,165 +86,31 @@ export const preQuestions = [
   },
 ];
 
-// ——— BLOCK METADATA ———
-export const cueBlocks = [
-  {
-    id: 'full_stack',
-    label: 'Physical RNG - Match One',
-    preInstructions: `
-      <h1>Focus & Breathe</h1>
-      
-      <h3>Your Task:</h3>
-<ul>
-   <li><strong>Draw your envelopes.</strong> Click the <em>Draw Your Sealed Envelopes</em> button.</li>
-  <li><strong>Start the trials.</strong> Click the <em>Start Match One Trials</em> button when it turns green.</li>
-  <li><strong>How many:</strong> ${
-    config.trialsPerBlock.full_stack
-  } trials (~${Math.ceil(
-      Number(config.trialsPerBlock.full_stack) / 5
-    )} rounds of 5).</li>
-  <li><strong>Play in rounds.</strong> Each round has 5 trials. After each round you’ll see your result.</li>
-  <li><strong>Round win.</strong> Getting 3 or more correct out of 5 wins the round.</li>
-  <li><strong>Progress.</strong> You’ll complete several rounds; your total round & trial wins are shown on screen at the end.</li>
-  <li><strong>Goal.</strong> Choose the hidden symbol more often than chance (~20% per trial).</li>
-  <li><strong>Need to stop early?</strong> Click <em>Exit Study</em> (bottom-right) to send your completed results.</li>
-</ul>
- `,
-    trialInstructions: `
-      <h2>Physical RNG (Match One)</h2>
-        <ul>
-        <li>You’ll see five symbols. On each trial, one is the target.</li>
-        <li>Pick the one you feel is right.</li>
-        <li>Encountering issues? <a href="{{ISSUE_MAILTO}}">Email us at h@whatthequark.com</a> about the problem.</li>
-      </ul>
-      `,
-    showFeedback: true,
-  },
-  {
-    id: 'spoon_love',
-    label: 'Quantum RNG - Match Two',
-    preInstructions: `
-           <h1>Focus & Breathe</h1>
-<h3>Your Task:</h3>
-<ul>
-   <li><strong>Draw your envelopes.</strong> Click the <em>Draw Your Sealed Envelopes</em> button. </li>
-  <li><strong>Start the trials.</strong> Click the <em>Start Match Two Trials</em> button when it turns green.</li>
-  <li><strong>How many:</strong> ${
-    config.trialsPerBlock.spoon_love
-  } trials (~${Math.ceil(
-      Number(config.trialsPerBlock.spoon_love) / 5
-    )} rounds of 5).</li>
-  <li><strong>Play in rounds.</strong> Each round has 5 trials. After each round you’ll see your result.</li>
-  <li><strong>Round win.</strong> Getting 3 or more correct out of 5 wins the round.</li>
-  <li><strong>Progress.</strong> You’ll complete several rounds; your total round wins & trial wins are shown on screen at the end.</li>
-  <li><strong>Goal.</strong> Choose the hidden symbol more often than chance (~20% per trial).</li>
-  <li><strong>Need to stop early?</strong> Click <em>Exit Study</em> (bottom-right) to send your completed results.</li>
-</ul>`,
-    trialInstructions: `
-      <h2>Quantum RNG (Match Two)</h2>
-        <ul>
-        <li>You’ll see five symbols. On each trial, one is the target.</li>
-        <li>Pick the one you feel is right.</li>
-        <li>Encountering issues? <a href="{{ISSUE_MAILTO}}">Email us at h@whatthequark.com</a> about the problem.</li>
-      </ul>`,
-    showFeedback: false,
-  },
-  {
-    id: 'client_local',
-    label: 'Local - Match Three',
-    preInstructions: `
-           <h1>Focus & Breathe</h1>
-      <h3>Your Task:</h3>
-<ul>
-  <li><strong>Start the trials.</strong> Click the <em>Start Match Three Trials</em> button.</li>
-     <li>The app generates a choice <strong>after </strong>you select yours.</li>
-     <li><strong>How many:</strong> ${
-       config.trialsPerBlock.client_local
-     } trials (~${Math.ceil(
-      Number(config.trialsPerBlock.client_local) / 5
-    )} rounds of 5).</li>
-  <li><strong>Play in rounds.</strong> Each round has 5 trials. After each round you’ll see your result.</li>
-  <li><strong>Round win.</strong> Getting 3 or more correct out of 5 wins the round.</li>
-  <li><strong>Progress.</strong> You’ll complete several rounds; your round wins and total trial wins are shown on screen.</li>
-  <li><strong>Goal.</strong> Choose the hidden symbol more often than chance (~20% per trial).</li>
-  <li><strong>Need to stop early?</strong> Click <em>Exit Study</em> (bottom-right) to send your completed results.</li>
-</ul>`,
-    trialInstructions: `
-      <h2>Local (Match Three)</h2>
-        <ul>
-        <li>You’ll see five symbols. On each trial, one is the target.</li>
-        <li>Pick the one you feel is right.</li>
-        <li>Encountering issues? <a href="{{ISSUE_MAILTO}}">Email us at h@whatthequark.com</a> about the problem.</li>
-      </ul>`,
-    showFeedback: false,
-  },
-];
-export function buildIssueMailto(sessionId) {
-  const subject = 'Experiment issue report';
-  const body = `Hi team,
-
-I hit a problem during the experiment.
-
-- What I was doing: [brief steps]
-- What happened: [error message or behavior]
-- When: [date/time and timezone]
-- Device / browser: [e.g., iPhone 14, Safari]
-- Session ID: ${sessionId}
-
-Thanks!`;
-  return (
-    'mailto:h@whatthequark.com' +
-    '?subject=' +
-    encodeURIComponent(subject) +
-    '&body=' +
-    encodeURIComponent(body)
-  );
-}
-// ——— MID (between blocks) ———
-export const midQuestions = [
-  {
-    id: 'confidence',
-    type: 'slider',
-    min: 0,
-    max: 100,
-    leftLabel: 'Not at all',
-    rightLabel: 'Extremely',
-    question:
-      'How confident are you that you can nudge above 50% (chance) the quantum outcome toward RIGHT in the next block?',
-  },
-  {
-    id: 'knowledge',
-    type: 'slider',
-    min: 0,
-    max: 100,
-    leftLabel: 'Not at all',
-    rightLabel: 'Extremely',
-    question: 'How confident are you that you know what to do?',
-  },
-  {
-    id: 'focus',
-    type: 'slider',
-    min: 0,
-    max: 100,
-    leftLabel: 'Not at all',
-    rightLabel: 'Extremely',
-    question: 'How focused did you feel during this block?',
-  },
-  {
-    id: 'expectation_pct',
-    type: 'slider',
-    min: 0,
-    max: 100,
-    leftLabel: '0%',
-    rightLabel: '100%',
-    question:
-      'What percentage do you expect to achieve in the quantum block?',
-  },
-];
-
 // ——— POST ———
 
 export const postQuestions = [
+  {
+    id: 'binaural_beats',
+    type: 'select',
+    question: 'Did you listen to binaural beats during any part of this experiment?',
+    options: ['No', 'Yes - during all blocks', 'Yes - during Block 1 (Physical)', 'Yes - during Block 2 (Quantum)', 'Yes - during Block 3 (Local)', 'What are binaural beats?'],
+  },
+  {
+    id: 'binaural_level',
+    question: 'What hertz did you listen to?',
+    type: 'number',
+    min: 1,
+    max: 32,
+    showIf: {
+      id: 'binaural_beats',
+      values: [
+        'Yes - during all blocks',
+        'Yes - during Block 1 (Physical)',
+        'Yes - during Block 2 (Quantum)',
+        'Yes - during Block 3 (Local)'
+      ]
+    }
+  },
   {
     id: 'focusLevel',
     question:

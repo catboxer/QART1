@@ -1,0 +1,629 @@
+/* ---------------- CIR²S Analysis Functions ---------------- */
+// Helper functions
+function computeEntropy(bytes) {
+  if (bytes.length === 0) return 0;
+  const counts = new Array(256).fill(0);
+  bytes.forEach(b => counts[b]++);
+  const total = bytes.length;
+  let entropy = 0;
+  for (const count of counts) {
+    if (count > 0) {
+      const p = count / total;
+      entropy -= p * Math.log2(p);
+    }
+  }
+  return entropy;
+}
+
+function computeAutocorrelation(bytes, maxLag = 10) {
+  const n = bytes.length;
+  if (n <= 1) return [];
+  const mean = bytes.reduce((a, b) => a + b, 0) / n;
+  const autocorr = [];
+
+  for (let lag = 0; lag <= maxLag; lag++) {
+    let sum = 0;
+    let count = 0;
+    for (let i = 0; i < n - lag; i++) {
+      sum += (bytes[i] - mean) * (bytes[i + lag] - mean);
+      count++;
+    }
+    const correlation = count > 0 ? sum / count : 0;
+    autocorr.push({ lag, correlation, count });
+  }
+  return autocorr;
+}
+
+// 4. Coherence by Redundancy Analysis
+function analyzeCoherenceByRedundancy(trials) {
+  const redundant = trials.filter(t => t.redundancy_mode === 'redundant');
+  const single = trials.filter(t => t.redundancy_mode === 'single');
+
+  const analyzeGroup = (group, label) => {
+    if (group.length === 0) return null;
+
+    const bytes = group.map(t => t.raw_byte).filter(b => Number.isFinite(b));
+    const hits = group.reduce((a, t) => a + (t.subject_hit === 1 ? 1 : 0), 0);
+
+    return {
+      label,
+      count: group.length,
+      hit_rate: group.length > 0 ? hits / group.length : 0,
+      entropy: computeEntropy(bytes),
+      autocorr: computeAutocorrelation(bytes, 5),
+      mean_byte: bytes.length > 0 ? bytes.reduce((a, b) => a + b, 0) / bytes.length : 0
+    };
+  };
+
+  return {
+    redundant: analyzeGroup(redundant, 'Redundant'),
+    single: analyzeGroup(single, 'Single')
+  };
+}
+
+// 5. RNG Source Analysis
+function analyzeByRNGSource(trials) {
+  const sourceMap = new Map();
+
+  trials.forEach(t => {
+    const source = t.rng_source || 'unknown';
+    if (!sourceMap.has(source)) {
+      sourceMap.set(source, []);
+    }
+    sourceMap.get(source).push(t);
+  });
+
+  const results = Array.from(sourceMap.entries()).map(([source, trials]) => {
+    const bytes = trials.map(t => t.raw_byte).filter(b => Number.isFinite(b));
+    const hits = trials.reduce((a, t) => a + (t.subject_hit === 1 ? 1 : 0), 0);
+
+    return {
+      source,
+      count: trials.length,
+      hit_rate: trials.length > 0 ? hits / trials.length : 0,
+      entropy: computeEntropy(bytes),
+      autocorr: computeAutocorrelation(bytes, 5),
+      variance: bytes.length > 0 ? computeVariance(bytes) : 0
+    };
+  });
+
+  return results.sort((a, b) => b.count - a.count);
+}
+
+function computeVariance(values) {
+  if (values.length === 0) return 0;
+  const mean = values.length > 0 ? values.reduce((a, b) => a + b, 0) / values.length : 0;
+  return values.length > 0 ? values.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / values.length : 0;
+}
+
+// 6. Sequential Dependency Analysis
+function analyzeSequentialDependency(trials) {
+  const maxLag = 5;
+  const results = [];
+
+  for (let lag = 1; lag <= maxLag; lag++) {
+    let correlations = 0;
+    let count = 0;
+
+    for (let i = 0; i < trials.length - lag; i++) {
+      const current = trials[i].subject_hit === 1 ? 1 : 0;
+      const future = trials[i + lag].subject_hit === 1 ? 1 : 0;
+
+      correlations += current * future;
+      count++;
+    }
+
+    const correlation = count > 0 ? correlations / count : 0;
+    const expected = 0.04; // 20% * 20% for independent trials
+
+    results.push({
+      lag,
+      correlation,
+      expected,
+      deviation: correlation - expected,
+      count
+    });
+  }
+
+  return results;
+}
+
+// 7. Target Selection Bias Analysis
+function analyzeTargetSelectionBias(trials) {
+  const symbolCounts = {};
+  const totalTrials = trials.length;
+
+  trials.forEach(t => {
+    if (t.target_symbol_id) {
+      symbolCounts[t.target_symbol_id] = (symbolCounts[t.target_symbol_id] || 0) + 1;
+    }
+  });
+
+  const expected = totalTrials / 5; // 20% each for 5 symbols
+  const results = Object.entries(symbolCounts).map(([symbol, count]) => ({
+    symbol,
+    count,
+    percentage: (count / totalTrials) * 100,
+    expected_percentage: 20,
+    deviation: ((count / totalTrials) * 100) - 20,
+    z_score: (count - expected) / Math.sqrt(expected * 0.8) // binomial z-score
+  }));
+
+  return results.sort((a, b) => b.deviation - a.deviation);
+}
+
+// 8. Hit Clustering Analysis
+function analyzeHitClustering(trials) {
+  const hits = trials.map(t => t.subject_hit === 1 ? 1 : 0);
+  const streaks = [];
+  let currentStreak = 0;
+  let currentType = null;
+
+  hits.forEach(hit => {
+    if (hit === currentType) {
+      currentStreak++;
+    } else {
+      if (currentStreak > 0) {
+        streaks.push({ type: currentType, length: currentStreak });
+      }
+      currentType = hit;
+      currentStreak = 1;
+    }
+  });
+
+  if (currentStreak > 0) {
+    streaks.push({ type: currentType, length: currentStreak });
+  }
+
+  const hitStreaks = streaks.filter(s => s.type === 1);
+  const missStreaks = streaks.filter(s => s.type === 0);
+
+  const longestHitStreak = hitStreaks.length > 0 ? Math.max(...hitStreaks.map(s => s.length)) : 0;
+  const longestMissStreak = missStreaks.length > 0 ? Math.max(...missStreaks.map(s => s.length)) : 0;
+
+  return {
+    hit_streaks: hitStreaks,
+    miss_streaks: missStreaks,
+    longest_hit_streak: longestHitStreak,
+    longest_miss_streak: longestMissStreak,
+    avg_hit_streak: hitStreaks.length > 0 ? hitStreaks.reduce((a, s) => a + s.length, 0) / hitStreaks.length : 0,
+    avg_miss_streak: missStreaks.length > 0 ? missStreaks.reduce((a, s) => a + s.length, 0) / missStreaks.length : 0,
+    total_streaks: streaks.length
+  };
+}
+
+// 9. Response Timing vs Outcome Analysis
+function analyzeTimingOutcome(trials) {
+  const timingData = trials
+    .filter(t => Number.isFinite(t.press_bucket_ms))
+    .map(t => ({
+      bucket: Math.floor(t.press_bucket_ms / 100) * 100, // 100ms buckets
+      hit: t.subject_hit === 1 ? 1 : 0
+    }));
+
+  const bucketMap = new Map();
+  timingData.forEach(t => {
+    if (!bucketMap.has(t.bucket)) {
+      bucketMap.set(t.bucket, { hits: 0, total: 0 });
+    }
+    const data = bucketMap.get(t.bucket);
+    data.hits += t.hit;
+    data.total += 1;
+  });
+
+  const results = Array.from(bucketMap.entries())
+    .map(([bucket, data]) => ({
+      bucket_ms: bucket,
+      hit_rate: data.total > 0 ? data.hits / data.total : 0,
+      count: data.total,
+      hits: data.hits
+    }))
+    .sort((a, b) => a.bucket_ms - b.bucket_ms);
+
+  return results;
+}
+
+// 10. Trial Position Effects Analysis
+function analyzeTrialPositionEffects(trials) {
+  const totalTrials = trials.length;
+  const binSize = Math.max(5, Math.floor(totalTrials / 10)); // 10 bins minimum
+  const results = [];
+
+  for (let i = 0; i < totalTrials; i += binSize) {
+    const binTrials = trials.slice(i, i + binSize);
+    const hits = binTrials.reduce((a, t) => a + (t.subject_hit === 1 ? 1 : 0), 0);
+
+    results.push({
+      position_start: i + 1,
+      position_end: Math.min(i + binSize, totalTrials),
+      hit_rate: binTrials.length > 0 ? hits / binTrials.length : 0,
+      count: binTrials.length,
+      hits
+    });
+  }
+
+  return results;
+}
+
+// Complete Analysis Panel Component
+function CompletePSIAnalysisPanel({ trials, title = 'Complete PSI Signatures' }) {
+  if (!Array.isArray(trials) || trials.length === 0) return null;
+
+  const coherenceAnalysis = analyzeCoherenceByRedundancy(trials);
+  const sourceAnalysis = analyzeByRNGSource(trials);
+  const sequentialAnalysis = analyzeSequentialDependency(trials);
+  const targetBiasAnalysis = analyzeTargetSelectionBias(trials);
+  const clusteringAnalysis = analyzeHitClustering(trials);
+  const timingAnalysis = analyzeTimingOutcome(trials);
+  const positionAnalysis = analyzeTrialPositionEffects(trials);
+
+  return (
+    <details style={{ marginTop: 12 }}>
+      <summary>{title}</summary>
+
+      <div style={{ marginTop: 8, display: 'grid', gap: 16 }}>
+
+        {/* Coherence by Redundancy */}
+        <div>
+          <h4>Redundancy vs Single Flash Analysis</h4>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 8 }}>
+            {[coherenceAnalysis.single, coherenceAnalysis.redundant].filter(Boolean).map(group => (
+              <div key={group.label} style={{ border: '1px solid #eee', padding: 12, borderRadius: 4, background: '#fafafa' }}>
+                <div style={{ fontWeight: 'bold', marginBottom: 4 }}>{group.label}</div>
+                <div style={{ fontSize: 13, lineHeight: 1.4 }}>
+                  <div>Trials: {group.count}</div>
+                  <div>Hit Rate: {(group.hit_rate * 100).toFixed(1)}%</div>
+                  <div>Entropy: {(group.entropy).toFixed(3)} bits</div>
+                  <div>Autocorr(1): {(group.autocorr[1]?.correlation).toFixed(4) || 'N/A'}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* RNG Source Comparison */}
+        <div>
+          <h4>RNG Source Analysis</h4>
+          {sourceAnalysis.length > 0 ? (
+            <table style={{ borderCollapse: 'collapse', marginTop: 4 }}>
+              <thead>
+                <tr>
+                  <th style={{ padding: '4px 8px', textAlign: 'left', borderBottom: '1px solid #eee' }}>Source</th>
+                  <th style={{ padding: '4px 8px', textAlign: 'right', borderBottom: '1px solid #eee' }}>Count</th>
+                  <th style={{ padding: '4px 8px', textAlign: 'right', borderBottom: '1px solid #eee' }}>Hit Rate</th>
+                  <th style={{ padding: '4px 8px', textAlign: 'right', borderBottom: '1px solid #eee' }}>Entropy</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sourceAnalysis.map(row => (
+                  <tr key={row.source}>
+                    <td style={{ padding: '4px 8px' }}>{row.source}</td>
+                    <td style={{ padding: '4px 8px', textAlign: 'right' }}>{row.count}</td>
+                    <td style={{ padding: '4px 8px', textAlign: 'right' }}>{(row.hit_rate * 100).toFixed(1)}%</td>
+                    <td style={{ padding: '4px 8px', textAlign: 'right' }}>{(row.entropy).toFixed(3)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <div style={{ color: '#666' }}>No RNG source data available</div>
+          )}
+        </div>
+
+        {/* Sequential Dependencies */}
+        <div>
+          <h4>Sequential Dependencies (Trial-to-Trial Correlations)</h4>
+          <table style={{ borderCollapse: 'collapse', marginTop: 4 }}>
+            <thead>
+              <tr>
+                <th style={{ padding: '4px 8px', textAlign: 'left', borderBottom: '1px solid #eee' }}>Lag</th>
+                <th style={{ padding: '4px 8px', textAlign: 'right', borderBottom: '1px solid #eee' }}>Correlation</th>
+                <th style={{ padding: '4px 8px', textAlign: 'right', borderBottom: '1px solid #eee' }}>Expected</th>
+                <th style={{ padding: '4px 8px', textAlign: 'right', borderBottom: '1px solid #eee' }}>Deviation</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sequentialAnalysis.map(row => (
+                <tr key={row.lag}>
+                  <td style={{ padding: '4px 8px' }}>{row.lag}</td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>{row.correlation.toFixed(4)}</td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>{row.expected.toFixed(4)}</td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>{row.deviation.toFixed(4)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Target Selection Bias */}
+        <div>
+          <h4>Target Selection Bias</h4>
+          <table style={{ borderCollapse: 'collapse', marginTop: 4 }}>
+            <thead>
+              <tr>
+                <th style={{ padding: '4px 8px', textAlign: 'left', borderBottom: '1px solid #eee' }}>Symbol</th>
+                <th style={{ padding: '4px 8px', textAlign: 'right', borderBottom: '1px solid #eee' }}>Count</th>
+                <th style={{ padding: '4px 8px', textAlign: 'right', borderBottom: '1px solid #eee' }}>Percentage</th>
+                <th style={{ padding: '4px 8px', textAlign: 'right', borderBottom: '1px solid #eee' }}>Deviation</th>
+              </tr>
+            </thead>
+            <tbody>
+              {targetBiasAnalysis.map(row => (
+                <tr key={row.symbol}>
+                  <td style={{ padding: '4px 8px' }}>{row.symbol}</td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>{row.count}</td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>{row.percentage.toFixed(1)}%</td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>{row.deviation.toFixed(1)}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Hit Clustering */}
+        <div>
+          <h4>Hit Clustering Analysis</h4>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <strong>Hit Streaks:</strong>
+              <div>Longest: {clusteringAnalysis.longest_hit_streak}</div>
+              <div>Average: {(clusteringAnalysis.avg_hit_streak).toFixed(1)}</div>
+              <div>Count: {clusteringAnalysis.hit_streaks.length}</div>
+            </div>
+            <div>
+              <strong>Miss Streaks:</strong>
+              <div>Longest: {clusteringAnalysis.longest_miss_streak}</div>
+              <div>Average: {(clusteringAnalysis.avg_miss_streak).toFixed(1)}</div>
+              <div>Count: {clusteringAnalysis.miss_streaks.length}</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Timing vs Outcome */}
+        <div>
+          <h4>Response Timing vs Hit Rate</h4>
+          {timingAnalysis.length > 0 ? (
+            <table style={{ borderCollapse: 'collapse', marginTop: 4 }}>
+              <thead>
+                <tr>
+                  <th style={{ padding: '4px 8px', textAlign: 'left', borderBottom: '1px solid #eee' }}>Timing (ms)</th>
+                  <th style={{ padding: '4px 8px', textAlign: 'right', borderBottom: '1px solid #eee' }}>Count</th>
+                  <th style={{ padding: '4px 8px', textAlign: 'right', borderBottom: '1px solid #eee' }}>Hit Rate</th>
+                </tr>
+              </thead>
+              <tbody>
+                {timingAnalysis.slice(0, 10).map(row => (
+                  <tr key={row.bucket_ms}>
+                    <td style={{ padding: '4px 8px' }}>{row.bucket_ms}</td>
+                    <td style={{ padding: '4px 8px', textAlign: 'right' }}>{row.count}</td>
+                    <td style={{ padding: '4px 8px', textAlign: 'right' }}>{(row.hit_rate * 100).toFixed(1)}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <div style={{ color: '#666' }}>No timing data available</div>
+          )}
+        </div>
+
+        {/* Trial Position Effects */}
+        <div>
+          <h4>Trial Position Effects</h4>
+          <table style={{ borderCollapse: 'collapse', marginTop: 4 }}>
+            <thead>
+              <tr>
+                <th style={{ padding: '4px 8px', textAlign: 'left', borderBottom: '1px solid #eee' }}>Position</th>
+                <th style={{ padding: '4px 8px', textAlign: 'right', borderBottom: '1px solid #eee' }}>Count</th>
+                <th style={{ padding: '4px 8px', textAlign: 'right', borderBottom: '1px solid #eee' }}>Hit Rate</th>
+              </tr>
+            </thead>
+            <tbody>
+              {positionAnalysis.map((row, idx) => (
+                <tr key={idx}>
+                  <td style={{ padding: '4px 8px' }}>{row.position_start}-{row.position_end}</td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>{row.count}</td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>{(row.hit_rate * 100).toFixed(1)}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+      </div>
+    </details>
+  );
+}
+/* ---------------- tiny chart helpers (no libs) ---------------- */
+function PBadge({ label, p }) {
+  let tone = '#888';
+  if (p < 0.001) tone = '#8b0000';
+function CompletePSIAnalysisPanel({ trials, title = 'Complete PSI Signatures' }) {
+  if (!Array.isArray(trials) || trials.length === 0) return null;
+
+  const coherenceAnalysis = analyzeCoherenceByRedundancy(trials);
+  const sourceAnalysis = analyzeByRNGSource(trials);
+  const sequentialAnalysis = analyzeSequentialDependency(trials);
+  const targetBiasAnalysis = analyzeTargetSelectionBias(trials);
+  const clusteringAnalysis = analyzeHitClustering(trials);
+  const timingAnalysis = analyzeTimingOutcome(trials);
+  const positionAnalysis = analyzeTrialPositionEffects(trials);
+
+  return (
+    <details style={{ marginTop: 12 }}>
+      <summary>{title}</summary>
+
+      <div style={{ marginTop: 8, display: 'grid', gap: 16 }}>
+
+        {/* Coherence by Redundancy */}
+        <div>
+          <h4>Redundancy vs Single Flash Analysis</h4>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 8 }}>
+            {[coherenceAnalysis.single, coherenceAnalysis.redundant].filter(Boolean).map(group => (
+              <div key={group.label} style={{ border: '1px solid #eee', padding: 12, borderRadius: 4, background: '#fafafa' }}>
+                <div style={{ fontWeight: 'bold', marginBottom: 4 }}>{group.label}</div>
+                <div style={{ fontSize: 13, lineHeight: 1.4 }}>
+                  <div>Trials: {group.count}</div>
+                  <div>Hit Rate: {(group.hit_rate * 100).toFixed(1)}%</div>
+                  <div>Entropy: {(group.entropy).toFixed(3)} bits</div>
+                  <div>Autocorr(1): {(group.autocorr[1]?.correlation).toFixed(4) || 'N/A'}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* RNG Source Comparison */}
+        <div>
+          <h4>RNG Source Analysis</h4>
+          {sourceAnalysis.length > 0 ? (
+            <table style={{ borderCollapse: 'collapse', marginTop: 4 }}>
+              <thead>
+                <tr>
+                  <th style={{ padding: '4px 8px', textAlign: 'left', borderBottom: '1px solid #eee' }}>Source</th>
+                  <th style={{ padding: '4px 8px', textAlign: 'right', borderBottom: '1px solid #eee' }}>Count</th>
+                  <th style={{ padding: '4px 8px', textAlign: 'right', borderBottom: '1px solid #eee' }}>Hit Rate</th>
+                  <th style={{ padding: '4px 8px', textAlign: 'right', borderBottom: '1px solid #eee' }}>Entropy</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sourceAnalysis.map(row => (
+                  <tr key={row.source}>
+                    <td style={{ padding: '4px 8px' }}>{row.source}</td>
+                    <td style={{ padding: '4px 8px', textAlign: 'right' }}>{row.count}</td>
+                    <td style={{ padding: '4px 8px', textAlign: 'right' }}>{(row.hit_rate * 100).toFixed(1)}%</td>
+                    <td style={{ padding: '4px 8px', textAlign: 'right' }}>{(row.entropy).toFixed(3)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <div style={{ color: '#666' }}>No RNG source data available</div>
+          )}
+        </div>
+
+        {/* Sequential Dependencies */}
+        <div>
+          <h4>Sequential Dependencies (Trial-to-Trial Correlations)</h4>
+          <table style={{ borderCollapse: 'collapse', marginTop: 4 }}>
+            <thead>
+              <tr>
+                <th style={{ padding: '4px 8px', textAlign: 'left', borderBottom: '1px solid #eee' }}>Lag</th>
+                <th style={{ padding: '4px 8px', textAlign: 'right', borderBottom: '1px solid #eee' }}>Correlation</th>
+                <th style={{ padding: '4px 8px', textAlign: 'right', borderBottom: '1px solid #eee' }}>Expected</th>
+                <th style={{ padding: '4px 8px', textAlign: 'right', borderBottom: '1px solid #eee' }}>Deviation</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sequentialAnalysis.map(row => (
+                <tr key={row.lag}>
+                  <td style={{ padding: '4px 8px' }}>{row.lag}</td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>{row.correlation.toFixed(4)}</td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>{row.expected.toFixed(4)}</td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>{row.deviation.toFixed(4)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Target Selection Bias */}
+        <div>
+          <h4>Target Selection Bias</h4>
+          <table style={{ borderCollapse: 'collapse', marginTop: 4 }}>
+            <thead>
+              <tr>
+                <th style={{ padding: '4px 8px', textAlign: 'left', borderBottom: '1px solid #eee' }}>Symbol</th>
+                <th style={{ padding: '4px 8px', textAlign: 'right', borderBottom: '1px solid #eee' }}>Count</th>
+                <th style={{ padding: '4px 8px', textAlign: 'right', borderBottom: '1px solid #eee' }}>Percentage</th>
+                <th style={{ padding: '4px 8px', textAlign: 'right', borderBottom: '1px solid #eee' }}>Deviation</th>
+              </tr>
+            </thead>
+            <tbody>
+              {targetBiasAnalysis.map(row => (
+                <tr key={row.symbol}>
+                  <td style={{ padding: '4px 8px' }}>{row.symbol}</td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>{row.count}</td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>{row.percentage.toFixed(1)}%</td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>{row.deviation.toFixed(1)}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Hit Clustering */}
+        <div>
+          <h4>Hit Clustering Analysis</h4>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <strong>Hit Streaks:</strong>
+              <div>Longest: {clusteringAnalysis.longest_hit_streak}</div>
+              <div>Average: {(clusteringAnalysis.avg_hit_streak).toFixed(1)}</div>
+              <div>Count: {clusteringAnalysis.hit_streaks.length}</div>
+            </div>
+            <div>
+              <strong>Miss Streaks:</strong>
+              <div>Longest: {clusteringAnalysis.longest_miss_streak}</div>
+              <div>Average: {(clusteringAnalysis.avg_miss_streak).toFixed(1)}</div>
+              <div>Count: {clusteringAnalysis.miss_streaks.length}</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Timing vs Outcome */}
+        <div>
+          <h4>Response Timing vs Hit Rate</h4>
+          {timingAnalysis.length > 0 ? (
+            <table style={{ borderCollapse: 'collapse', marginTop: 4 }}>
+              <thead>
+                <tr>
+                  <th style={{ padding: '4px 8px', textAlign: 'left', borderBottom: '1px solid #eee' }}>Timing (ms)</th>
+                  <th style={{ padding: '4px 8px', textAlign: 'right', borderBottom: '1px solid #eee' }}>Count</th>
+                  <th style={{ padding: '4px 8px', textAlign: 'right', borderBottom: '1px solid #eee' }}>Hit Rate</th>
+                </tr>
+              </thead>
+              <tbody>
+                {timingAnalysis.slice(0, 10).map(row => (
+                  <tr key={row.bucket_ms}>
+                    <td style={{ padding: '4px 8px' }}>{row.bucket_ms}</td>
+                    <td style={{ padding: '4px 8px', textAlign: 'right' }}>{row.count}</td>
+                    <td style={{ padding: '4px 8px', textAlign: 'right' }}>{(row.hit_rate * 100).toFixed(1)}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <div style={{ color: '#666' }}>No timing data available</div>
+          )}
+        </div>
+
+        {/* Trial Position Effects */}
+        <div>
+          <h4>Trial Position Effects</h4>
+          <table style={{ borderCollapse: 'collapse', marginTop: 4 }}>
+            <thead>
+              <tr>
+                <th style={{ padding: '4px 8px', textAlign: 'left', borderBottom: '1px solid #eee' }}>Position</th>
+                <th style={{ padding: '4px 8px', textAlign: 'right', borderBottom: '1px solid #eee' }}>Count</th>
+                <th style={{ padding: '4px 8px', textAlign: 'right', borderBottom: '1px solid #eee' }}>Hit Rate</th>
+              </tr>
+            </thead>
+            <tbody>
+              {positionAnalysis.map((row, idx) => (
+                <tr key={idx}>
+                  <td style={{ padding: '4px 8px' }}>{row.position_start}-{row.position_end}</td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>{row.count}</td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>{(row.hit_rate * 100).toFixed(1)}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+      </div>
+    </details>
+  );
+}
+/* ---------------- tiny chart helpers (no libs) ---------------- */
+function PBadge({ label, p }) {
+  let tone = '#888';

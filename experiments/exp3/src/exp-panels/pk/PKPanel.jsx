@@ -54,6 +54,13 @@ export default function PKPanel({ runs }) {
     retroAC1 = 0,
     retroCount = 0;
 
+  // entropy windows tracking
+  let totalSubjWindows = 0,
+    totalGhostWindows = 0,
+    subjEntropySum = 0,
+    ghostEntropySum = 0,
+    entropyCount = 0;
+
   for (const r of runs) {
     const g = r.target_side === 'RED' ? 1 : 0; // goal bit for this run
     for (const m of r.minutes || []) {
@@ -82,6 +89,27 @@ export default function PKPanel({ runs }) {
         if (m.resonance?.ac1 != null) {
           liveAC1 += m.resonance.ac1;
         }
+
+        // Collect entropy windows data
+        if (m.entropy?.cumulative) {
+          totalSubjWindows += m.entropy.cumulative.subj_count || 0;
+          totalGhostWindows += m.entropy.cumulative.ghost_count || 0;
+        }
+        if (m.entropy?.new_windows_subj?.length) {
+          for (const h of m.entropy.new_windows_subj) {
+            if (typeof h === 'number') {
+              subjEntropySum += h;
+              entropyCount++;
+            }
+          }
+        }
+        if (m.entropy?.new_windows_ghost?.length) {
+          for (const h of m.entropy.new_windows_ghost) {
+            if (typeof h === 'number') {
+              ghostEntropySum += h;
+            }
+          }
+        }
       } else if (m.kind === 'retro') {
         retroN += n;
         retroK += k;
@@ -102,6 +130,27 @@ export default function PKPanel({ runs }) {
         }
         if (m.resonance?.ac1 != null) {
           retroAC1 += m.resonance.ac1;
+        }
+
+        // Collect entropy windows data from retro too
+        if (m.entropy?.cumulative) {
+          totalSubjWindows += m.entropy.cumulative.subj_count || 0;
+          totalGhostWindows += m.entropy.cumulative.ghost_count || 0;
+        }
+        if (m.entropy?.new_windows_subj?.length) {
+          for (const h of m.entropy.new_windows_subj) {
+            if (typeof h === 'number') {
+              subjEntropySum += h;
+              entropyCount++;
+            }
+          }
+        }
+        if (m.entropy?.new_windows_ghost?.length) {
+          for (const h of m.entropy.new_windows_ghost) {
+            if (typeof h === 'number') {
+              ghostEntropySum += h;
+            }
+          }
         }
       }
     }
@@ -130,6 +179,10 @@ export default function PKPanel({ runs }) {
 
   const avg = (sum, count, def = '—') =>
     count ? (sum / count).toFixed(3) : def;
+
+  // Entropy calculations
+  const avgSubjEntropy = entropyCount ? (subjEntropySum / entropyCount).toFixed(4) : '—';
+  const avgGhostEntropy = entropyCount ? (ghostEntropySum / entropyCount).toFixed(4) : '—';
 
   const Tile = ({ title, children }) => (
     <div
@@ -185,6 +238,12 @@ export default function PKPanel({ runs }) {
         <Tile title="Resonance (AC₁, avg)">
           <div>Live ≈ {avg(liveAC1, liveCount)}</div>
           <div>Retro ≈ {avg(retroAC1, retroCount)}</div>
+        </Tile>
+        <Tile title="Entropy Windows (1000-bit)">
+          <div>Total subj windows: {totalSubjWindows}</div>
+          <div>Total ghost windows: {totalGhostWindows}</div>
+          <div>Avg subj entropy: {avgSubjEntropy}</div>
+          <div>Avg ghost entropy: {avgGhostEntropy}</div>
         </Tile>
       </div>
     </div>
