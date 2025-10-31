@@ -40,7 +40,6 @@ function HighEntropyMosaic({
     if (completedTrials > 0) {
       // Fill cells based on actual trial results
       const hitCount = trialOutcomes.filter(hit => hit).length;
-      const missCount = completedTrials - hitCount;
       const hitRate = hitCount / completedTrials;
 
 
