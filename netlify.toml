@@ -12,5 +12,8 @@
   targetPort = 3000
   functions = "netlify/functions"
   # You can change this line when you switch experiments:
-  command = "npm start --prefix experiments/exp4"
+  command = "npm start --prefix experiments/exp3"
 
+[[edge_functions]]
+function = "live"
+path = "/live"

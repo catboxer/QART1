@@ -37,6 +37,9 @@ experiments/*/dist/
 experiments/*/build/
 .env
 /experiments/exp0/
-/experiments/exp3/
+/experiments/exp3-old/
+/experiments/exp2-old/
+/experiments/exp1-old/
+
 
 
