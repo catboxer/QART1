@@ -30,29 +30,19 @@ function mutualInformationFromCounts(n00, n01, n10, n11) {
 export default function PKPanel({ runs }) {
   let liveN = 0,
     liveK = 0,
-    liveGhostK = 0,
-    retroN = 0,
-    retroK = 0;
+    liveGhostK = 0;
 
   // 2×2 counts for MI by arm
   let live_n00 = 0,
     live_n01 = 0,
     live_n10 = 0,
     live_n11 = 0;
-  let retro_n00 = 0,
-    retro_n01 = 0,
-    retro_n10 = 0,
-    retro_n11 = 0;
 
   // optional coherence/resonance avgs if present in docs
   let liveC = 0,
     liveH = 0,
     liveAC1 = 0,
     liveCount = 0;
-  let retroC = 0,
-    retroH = 0,
-    retroAC1 = 0,
-    retroCount = 0;
 
   // entropy windows tracking
   let totalSubjWindows = 0,
@@ -96,71 +86,31 @@ export default function PKPanel({ runs }) {
           totalGhostWindows += m.entropy.cumulative.ghost_count || 0;
         }
         if (m.entropy?.new_windows_subj?.length) {
-          for (const h of m.entropy.new_windows_subj) {
-            if (typeof h === 'number') {
-              subjEntropySum += h;
+          for (const window of m.entropy.new_windows_subj) {
+            // Handle both old format (number) and new format (object with .entropy)
+            const entropyValue = typeof window === 'number' ? window : window.entropy;
+            if (typeof entropyValue === 'number' && !isNaN(entropyValue)) {
+              subjEntropySum += entropyValue;
               entropyCount++;
             }
           }
         }
         if (m.entropy?.new_windows_ghost?.length) {
-          for (const h of m.entropy.new_windows_ghost) {
-            if (typeof h === 'number') {
-              ghostEntropySum += h;
-            }
-          }
-        }
-      } else if (m.kind === 'retro') {
-        retroN += n;
-        retroK += k;
-        if (g === 1) {
-          retro_n11 += k;
-          retro_n10 += n - k;
-        } else {
-          retro_n01 += k;
-          retro_n00 += n - k;
-        }
-
-        if (m.coherence?.cumRange != null) {
-          retroC += m.coherence.cumRange;
-          retroCount++;
-        }
-        if (m.coherence?.hurst != null) {
-          retroH += m.coherence.hurst;
-        }
-        if (m.resonance?.ac1 != null) {
-          retroAC1 += m.resonance.ac1;
-        }
-
-        // Collect entropy windows data from retro too
-        if (m.entropy?.cumulative) {
-          totalSubjWindows += m.entropy.cumulative.subj_count || 0;
-          totalGhostWindows += m.entropy.cumulative.ghost_count || 0;
-        }
-        if (m.entropy?.new_windows_subj?.length) {
-          for (const h of m.entropy.new_windows_subj) {
-            if (typeof h === 'number') {
-              subjEntropySum += h;
-              entropyCount++;
-            }
-          }
-        }
-        if (m.entropy?.new_windows_ghost?.length) {
-          for (const h of m.entropy.new_windows_ghost) {
-            if (typeof h === 'number') {
-              ghostEntropySum += h;
+          for (const window of m.entropy.new_windows_ghost) {
+            // Handle both old format (number) and new format (object with .entropy)
+            const entropyValue = typeof window === 'number' ? window : window.entropy;
+            if (typeof entropyValue === 'number' && !isNaN(entropyValue)) {
+              ghostEntropySum += entropyValue;
             }
           }
         }
       }
+      // Note: All blocks are now 'live' - retro mode was removed
     }
   }
 
   const zLive = zFromBinom(liveK, liveN, 0.5),
     pLive = twoSidedP(zLive);
-  const zRetro = zFromBinom(retroK, retroN, 0.5),
-    pRetro = twoSidedP(zRetro);
-  const deltaZ = zLive - zRetro;
   const ghostPHat = liveN ? liveGhostK / liveN : 0;
 
   // MI from counts (minute-level)
@@ -169,12 +119,6 @@ export default function PKPanel({ runs }) {
     live_n01,
     live_n10,
     live_n11
-  );
-  const I_retro = mutualInformationFromCounts(
-    retro_n00,
-    retro_n01,
-    retro_n10,
-    retro_n11
   );
 
   const avg = (sum, count, def = '—') =>
@@ -200,7 +144,7 @@ export default function PKPanel({ runs }) {
 
   return (
     <div style={{ marginTop: 16 }}>
-      <h3>PK / Retro-PK Pilot</h3>
+      <h3>PK Pilot (Live QRNG)</h3>
       <div
         style={{
           display: 'grid',
@@ -217,27 +161,12 @@ export default function PKPanel({ runs }) {
           <div>ghost p̂ = {ghostPHat.toFixed(3)}</div>
           <div>MI(G;H) ≈ {I_live.toFixed(4)} bits</div>
         </Tile>
-        <Tile title="All Retro (A+B)">
-          <div>n = {retroN}</div>
-          <div>hits = {retroK}</div>
-          <div>
-            z = {zRetro.toFixed(2)} (p = {pRetro.toExponential(2)})
-          </div>
-          <div>MI(G;H) ≈ {I_retro.toFixed(4)} bits</div>
-        </Tile>
-        <Tile title="PK vs Retro">
-          <div>Δz = {deltaZ.toFixed(2)} (Live − Retro)</div>
-          <div style={{ opacity: 0.7 }}>Primary contrast</div>
-        </Tile>
         <Tile title="Coherence (avg)">
-          <div>Live range ≈ {avg(liveC, liveCount)}</div>
-          <div>Live H ≈ {avg(liveH, liveCount)}</div>
-          <div>Retro range ≈ {avg(retroC, retroCount)}</div>
-          <div>Retro H ≈ {avg(retroH, retroCount)}</div>
+          <div>Range ≈ {avg(liveC, liveCount)}</div>
+          <div>Hurst ≈ {avg(liveH, liveCount)}</div>
         </Tile>
         <Tile title="Resonance (AC₁, avg)">
-          <div>Live ≈ {avg(liveAC1, liveCount)}</div>
-          <div>Retro ≈ {avg(retroAC1, retroCount)}</div>
+          <div>AC₁ ≈ {avg(liveAC1, liveCount)}</div>
         </Tile>
         <Tile title="Entropy Windows (1000-bit)">
           <div>Total subj windows: {totalSubjWindows}</div>

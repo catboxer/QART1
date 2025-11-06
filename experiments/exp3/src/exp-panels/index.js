@@ -3,5 +3,5 @@ import PKPanel from './pk/PKPanel.jsx';
 
 export const panels = {
   // experimentId → component
-  pk_retro_pk_pilot_v0: PKPanel,
+  pk_pilot_live_qrng: PKPanel,
 };

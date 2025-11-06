@@ -206,18 +206,35 @@ function ExitDoorButton({ onClick, title = 'Exit and save' }) {
   );
 }
 
+function bytesToBits(byteArray) {
+  // Convert array of bytes (0-255) to array of bits (0/1)
+  // Each byte becomes 8 bits
+  const bits = [];
+  for (const byte of byteArray) {
+    // Convert byte to 8-bit binary string, then to array of bits
+    const binaryString = byte.toString(2).padStart(8, '0');
+    for (let i = 0; i < 8; i++) {
+      bits.push(binaryString[i] === '1' ? 1 : 0);
+    }
+  }
+  return bits;
+}
+
 function flattenBits(accum) {
   // flatten nested arrays deeply and coerce booleans/strings to numbers 0/1
+  // NOTE: This function is for decision bits (already 0/1), NOT for byte conversion
   return accum.flat ? accum.flat(Infinity).map(b => Number(b ? 1 : 0)) :
     accum.reduce((out, item) => out.concat(Array.isArray(item) ? item : [item]), []).map(b => Number(b ? 1 : 0));
 }
 
 // Break a bit array into non-overlapping windows and compute entropy per window.
 // Leaves any trailing remainder in-place in the accumulator.
+// NOTE: accumArray must contain bits (0/1), not bytes (0-255). Use bytesToBits() first if needed.
 function extractEntropyWindowsFromAccumulator(accumArray, winSize = 1000) {
   const flat = flattenBits(accumArray);
   if (flat.length > 0 && !flat.every(b => b === 0 || b === 1)) {
-    console.warn('Entropy accumulator contains non-binary elements (after flatten):', flat.slice(0,20));
+    console.warn('⚠️ Entropy accumulator contains non-binary elements (after flatten):', flat.slice(0,20));
+    console.warn('This should not happen! Did you forget to convert bytes to bits?');
   }
   const windows = [];
   while (flat.length >= winSize) {
@@ -316,6 +333,7 @@ export default function MainApp() {
 
   useEffect(() => {
     if (targetAssignedRef.current) {
+      console.log('🎯 Target already assigned, skipping');
       return;
     }
     targetAssignedRef.current = true; // Set flag immediately to prevent second execution
@@ -323,6 +341,14 @@ export default function MainApp() {
     const randomByte = crypto.getRandomValues(new Uint8Array(1))[0];
     const randomBit = randomByte & 1;
     const t = randomBit ? 'BLUE' : 'ORANGE';
+    console.log('🎯 Target Assignment:', {
+      randomByte,
+      randomByteBinary: randomByte.toString(2).padStart(8, '0'),
+      randomBit: randomBit,
+      target: t,
+      logic: 'LSB of crypto.getRandomValues()→target (LSB=1→BLUE, LSB=0→ORANGE)',
+      note: 'Trial bits use XOR extraction (not LSB) to eliminate LFDR positional bias'
+    });
     setTarget(t);
 
     // Note: No session-level bit strategy assignment needed
@@ -487,6 +513,7 @@ export default function MainApp() {
   const bitsRef = useRef([]);
   const ghostBitsRef = useRef([]);
   const alignedRef = useRef([]);
+  const alignedGhostRef = useRef([]); // Ghost hit indicators (aligned ghost bits to target)
   const hitsRef = useRef(0);
   const ghostHitsRef = useRef(0);
   const subjectBytesRef = useRef([]); // Store full bytes (0-255) for entropy
@@ -533,11 +560,28 @@ export default function MainApp() {
     } else if (phase === 'preparing_next') {
       // Delayed reset to ensure clean state transition
       setTimeout(() => {
+        console.log('🔄 Resetting session state for new run');
         setRunRef(null);
         setblockIdx(-1);
         setTotals({ k: 0, n: 0 });
         setLastBlock(null);
         setIsRunning(false);
+
+        // Assign new random target directly (don't rely on useEffect)
+        const randomByte = crypto.getRandomValues(new Uint8Array(1))[0];
+        const randomBit = randomByte & 1;
+        const newTarget = randomBit ? 'BLUE' : 'ORANGE';
+        console.log('🎯 New Target Assignment:', {
+          randomByte,
+          randomByteBinary: randomByte.toString(2).padStart(8, '0'),
+          randomBit: randomBit,
+          target: newTarget,
+          logic: 'LSB of crypto.getRandomValues()→target'
+        });
+        setTarget(newTarget);
+        targetAssignedRef.current = true; // Mark as assigned
+
+        console.log('✓ Session reset complete, new target assigned');
         setPhase('consent');
       }, 100);
     }
@@ -632,10 +676,12 @@ export default function MainApp() {
     const cohRange = cumulativeRange(bitsRef.current);
     const hurst = hurstApprox(bitsRef.current);
     const ac1 = lag1Autocorr(bitsRef.current);
+    const ac1_hits = lag1Autocorr(alignedRef.current); // AC1 on hit indicators (feedback amplification test)
 
     const gCohRange = cumulativeRange(ghostBitsRef.current);
     const gHurst = hurstApprox(ghostBitsRef.current);
     const gAc1 = lag1Autocorr(ghostBitsRef.current);
+    const gAc1_hits = lag1Autocorr(alignedGhostRef.current); // AC1 on ghost hit indicators
 
     // All blocks are live now
     const kind = 'live';
@@ -644,10 +690,12 @@ export default function MainApp() {
     let newGhostWindows = [];
 
     try {
-      // Append this minute's BYTES to accumulators
+      // Convert this minute's BYTES to BITS, then append to accumulators
       if (Array.isArray(subjectBytesRef.current) && subjectBytesRef.current.length) {
-        entropyAccumRef.current.subj.push(...subjectBytesRef.current);
-        entropyAccumRef.current.ghost.push(...ghostBytesRef.current);
+        const subjBits = bytesToBits(subjectBytesRef.current);
+        const ghostBits = bytesToBits(ghostBytesRef.current);
+        entropyAccumRef.current.subj.push(...subjBits);
+        entropyAccumRef.current.ghost.push(...ghostBits);
 
       } else {
         console.warn(`⚠️ Block ${blockIdx}: subjectBytesRef.current is empty or not an array!`, {
@@ -660,12 +708,6 @@ export default function MainApp() {
       // Extract any completed windows
       newSubjWindows = extractEntropyWindowsFromAccumulator(entropyAccumRef.current.subj, ENTROPY_WINDOW_SIZE);
       newGhostWindows = extractEntropyWindowsFromAccumulator(entropyAccumRef.current.ghost, ENTROPY_WINDOW_SIZE);
-
-
-      if (newSubjWindows.length) {
-      }
-      if (newGhostWindows.length) {
-      }
 
       // Append to running windows history
       if (newSubjWindows.length) entropyWindowsRef.current.subj.push(...newSubjWindows);
@@ -680,6 +722,57 @@ export default function MainApp() {
     const blockBits = bitsRef.current.length;
     const blockSubjEntropy = blockBits > 0 ? shannonEntropy(bitsRef.current) : null;
     const blockGhostEntropy = ghostBitsRef.current.length > 0 ? shannonEntropy(ghostBitsRef.current) : null;
+
+    // DIAGNOSTIC: Check extracted bit distribution
+    const ones = bitsRef.current.filter(b => b === 1).length;
+    const bitDistribution = blockBits > 0 ? (ones / blockBits) : 0;
+    const hitRate = n > 0 ? (k / n) : 0;
+
+    // Check XOR parity distribution from source bytes
+    const xorBitsFromBytes = subjectBytesRef.current.map(byte => {
+      let parity = 0;
+      for (let b = 0; b < 8; b++) {
+        parity ^= (byte >> b) & 1;
+      }
+      return parity;
+    });
+    const xorOnes = xorBitsFromBytes.filter(b => b === 1).length;
+    const xorDistribution = xorBitsFromBytes.length > 0 ? (xorOnes / xorBitsFromBytes.length) : 0;
+
+    // Calculate session cumulative stats
+    const sessionHits = totals.k + k;
+    const sessionTrials = totals.n + n;
+    const sessionHitRate = sessionTrials > 0 ? (sessionHits / sessionTrials) : 0;
+    const sessionExpected = sessionTrials * 0.5;
+    const sessionDiff = sessionHits - sessionExpected;
+    const sessionSE = Math.sqrt(sessionTrials * 0.5 * 0.5);
+    const sessionZ = sessionTrials > 0 ? sessionDiff / sessionSE : 0;
+
+    console.log('📊 Block Diagnostic:', {
+      extractionMethod: 'XOR (parity of all 8 bits)',
+      target: target,
+      targetBit: targetBit,
+      totalBits: blockBits,
+      ones: ones,
+      zeros: blockBits - ones,
+      bitDistribution: (bitDistribution * 100).toFixed(1) + '%',
+      xorOnes: xorOnes,
+      xorZeros: xorBitsFromBytes.length - xorOnes,
+      xorDistribution: (xorDistribution * 100).toFixed(1) + '%',
+      expectedDist: '50.0%',
+      hits: k,
+      trials: n,
+      hitRate: (hitRate * 100).toFixed(1) + '%',
+      expectedHitRate: '50.0%',
+      pValue: pTwo.toFixed(4),
+      diagnosis: Math.abs(xorDistribution - 0.5) > 0.1 ? '⚠️ UNUSUAL XOR DISTRIBUTION' : '✓ XOR distribution normal',
+      '---SESSION_CUMULATIVE---': '---',
+      sessionHits: sessionHits,
+      sessionTrials: sessionTrials,
+      sessionHitRate: (sessionHitRate * 100).toFixed(2) + '%',
+      sessionZ: sessionZ.toFixed(2),
+      sessionSignificance: Math.abs(sessionZ) > 1.96 ? '⚠️ SIGNIFICANT DEVIATION' : '✓ Within normal range'
+    });
 
     // Block-level k2 split: [first 75 bits, last 75 bits]
     const half = Math.floor(blockBits / 2);
@@ -726,8 +819,11 @@ export default function MainApp() {
       ghost_hits: kg, ghost_z: zg, ghost_pTwo: pg,
       // No tape metadata for live streams
       coherence: { cumRange: cohRange, hurst },
-      resonance: { ac1 },
-      ghost_metrics: { coherence: { cumRange: gCohRange, hurst: gHurst }, resonance: { ac1: gAc1 } },
+      resonance: { ac1, ac1_hits }, // AC1 on bits and AC1 on hit indicators
+      ghost_metrics: {
+        coherence: { cumRange: gCohRange, hurst: gHurst },
+        resonance: { ac1: gAc1, ac1_hits: gAc1_hits } // Ghost AC1 on bits and hits
+      },
       mapping_type: mappingType,
       // Block-level timing (replaces per-trial timestamps)
       timing: {
@@ -745,25 +841,21 @@ export default function MainApp() {
         // 1000-bit windows (computed across session as bits accumulate)
         new_windows_subj: newSubjWindows.map((entropy, index) => {
           const globalWindowIndex = entropyWindowsRef.current.subj.length + index;
-          const bitStart = globalWindowIndex * ENTROPY_WINDOW_SIZE;
-          const bitEnd = bitStart + ENTROPY_WINDOW_SIZE;
+          const bitIndexCenter = globalWindowIndex * ENTROPY_WINDOW_SIZE + (ENTROPY_WINDOW_SIZE / 2);
           return {
             entropy,
             windowIndex: globalWindowIndex,
-            bitStart,
-            bitEnd,
+            bitIndexCenter,  // Center of window for uniform bit-time axis (e.g., 500, 1500, 2500, ...)
             timestamp: blockStartTimeRef.current
           };
         }),
         new_windows_ghost: newGhostWindows.map((entropy, index) => {
           const globalWindowIndex = entropyWindowsRef.current.ghost.length + index;
-          const bitStart = globalWindowIndex * ENTROPY_WINDOW_SIZE;
-          const bitEnd = bitStart + ENTROPY_WINDOW_SIZE;
+          const bitIndexCenter = globalWindowIndex * ENTROPY_WINDOW_SIZE + (ENTROPY_WINDOW_SIZE / 2);
           return {
             entropy,
             windowIndex: globalWindowIndex,
-            bitStart,
-            bitEnd,
+            bitIndexCenter,  // Center of window for uniform bit-time axis (e.g., 500, 1500, 2500, ...)
             timestamp: blockStartTimeRef.current
           };
         }),
@@ -805,20 +897,21 @@ export default function MainApp() {
     // Update previous block end time for next block's pause calculation
     previousBlockEndTimeRef.current = blockEndTimeRef.current;
   }, [
-    runRef, blockIdx, mappingType, targetBit, liveLastSource
+    runRef, blockIdx, mappingType, targetBit, liveLastSource, target, totals.k, totals.n
   ]);
 
   const endMinute = useCallback(async () => {
-    // Always disconnect live stream since all blocks are live
-    if (C.USE_LIVE_STREAM) {
-      liveDisconnect();
-    }
+    // Capture block end time FIRST, before any async operations
+    blockEndTimeRef.current = Date.now();
+
+    // Keep stream connected across blocks - only disconnect at session end
+    // (Disconnecting between blocks wastes quota on repeated warmup calls)
     setIsRunning(false);
     await persistMinute();
     if (minuteInvalidRef.current) { setPhase('rest'); return; }
     // Always go to rest phase first, even for the final block
     setPhase('rest');
-  }, [liveDisconnect, persistMinute]);
+  }, [persistMinute]);
   // Idle prefetch during PRIME/REST in non-streaming mode
   useEffect(() => {
     // Never prefetch in streaming mode
@@ -915,15 +1008,17 @@ export default function MainApp() {
         subjectRawIndex = sByteObj.rawIndex;
         ghostRawIndex = gByteObj.rawIndex;
 
-        // Convert bytes to 8-bit binary strings for entropy storage
-        const subjectBits8 = subjectByte.toString(2).padStart(8, '0');
-        const ghostBits8 = ghostByte.toString(2).padStart(8, '0');
-
-        // Extract 1 bit for trial decision (using LSB - least significant bit)
-        const sBit = subjectBits8[7]; // LSB
-        const gBit = ghostBits8[7];   // LSB
-        bit = sBit === '1' ? 1 : 0;
-        ghost = gBit === '1' ? 1 : 0;
+        // Extract 1 bit for trial decision using XOR (parity) of all 8 bits
+        // This eliminates any positional bias by combining all bit positions
+        // XOR all bits: odd number of 1s → 1, even number of 1s → 0
+        let sBit = 0;
+        let gBit = 0;
+        for (let b = 0; b < 8; b++) {
+          sBit ^= (subjectByte >> b) & 1;
+          gBit ^= (ghostByte >> b) & 1;
+        }
+        bit = sBit;
+        ghost = gBit;
 
         if (shouldInvalidate()) {
           minuteInvalidRef.current = true; invalidReasonRef.current = 'invalidated-buffer';
@@ -958,6 +1053,7 @@ export default function MainApp() {
       const align = bit === targetBit ? 1 : 0;
       const alignGhost = ghost === targetBit ? 1 : 0;
       alignedRef.current.push(align);
+      alignedGhostRef.current.push(alignGhost); // Store ghost hit sequence
       hitsRef.current += align;
       ghostHitsRef.current += alignGhost;
 
@@ -971,9 +1067,12 @@ export default function MainApp() {
     }, TICK);
 
     return () => { if (tickTimerRef.current) { clearInterval(tickTimerRef.current); tickTimerRef.current = null; } };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     isRunning, blockIdx, trialsPerMinute, targetBit, target,
-    livePopSubjectByte, livePopGhostByte, liveBufferedBytes, maybePause, maybeResume, shouldInvalidate, trialsPerBlock, isBuffering,
+    livePopSubjectByte, livePopGhostByte, liveBufferedBytes, maybePause, maybeResume, shouldInvalidate, trialsPerBlock,
+    // NOTE: isBuffering deliberately EXCLUDED from deps - tick loop handles buffering internally via early returns
+    // Including it causes the tick loop to restart on every buffer state change, resulting in 200+ trials
   ]);
 
 
@@ -1029,22 +1128,20 @@ export default function MainApp() {
       // Fetch all minutes to get their indices
       const minutesSnapshot = await getDocs(collection(runRef, 'minutes'));
       const sortedMinutes = minutesSnapshot.docs
-        .map(d => ({ id: d.id, ref: d.ref, idx: d.data().idx || 0 }))
+        .map(d => ({ id: d.id, ref: d.ref, data: d.data(), idx: d.data().idx || 0 }))
         .sort((a, b) => a.idx - b.idx);
 
-      // For each minute, read trials subcollection and extract bits in order
+      // For each minute, read trial_data field (NOT trials subcollection - that's old structure)
       for (const minute of sortedMinutes) {
-        const trialsSnapshot = await getDocs(collection(minute.ref, 'trials'));
+        const trialData = minute.data.trial_data;
 
-        // Sort trials by trialIndex to maintain proper order
-        const sortedTrials = trialsSnapshot.docs
-          .map(d => d.data())
-          .sort((a, b) => (a.trialIndex || 0) - (b.trialIndex || 0));
-
-        sortedTrials.forEach(trial => {
-          allSubjectBits.push(trial.subjectBit);
-          allGhostBits.push(trial.ghostBit);
-        });
+        if (trialData?.subject_bits && Array.isArray(trialData.subject_bits)) {
+          // Use decision bits (0/1) for temporal entropy
+          allSubjectBits.push(...trialData.subject_bits);
+          allGhostBits.push(...trialData.ghost_bits);
+        } else {
+          console.warn(`⚠️ No trial_data found for minute ${minute.idx}`);
+        }
       }
 
       const n = allSubjectBits.length;
@@ -1058,24 +1155,23 @@ export default function MainApp() {
       const allBlockEntropySubj = [];
       const allBlockEntropyGhost = [];
 
-      // Fetch block-level entropy from each minute
+      // Extract block-level entropy from each minute (data already fetched above)
       for (const minute of sortedMinutes) {
-        const minuteDoc = await getDoc(minute.ref);
-        const minuteData = minuteDoc.data();
+        const minuteData = minute.data;
 
         if (minuteData?.entropy?.block_entropy_subj !== undefined) {
           allBlockEntropySubj.push({
-            blockIdx: minuteData.entropy.block_idx,
+            blockIdx: minuteData.idx, // Use minute.idx, not entropy.block_idx (which doesn't exist)
             entropy: minuteData.entropy.block_entropy_subj,
-            timestamp: minuteData.entropy.block_timestamp || minuteData.timing?.block_start_time
+            timestamp: minuteData.timing?.block_start_time || minuteData.timing?.first_trial_time
           });
         }
 
         if (minuteData?.entropy?.block_entropy_ghost !== undefined) {
           allBlockEntropyGhost.push({
-            blockIdx: minuteData.entropy.block_idx,
+            blockIdx: minuteData.idx, // Use minute.idx, not entropy.block_idx (which doesn't exist)
             entropy: minuteData.entropy.block_entropy_ghost,
-            timestamp: minuteData.entropy.block_timestamp || minuteData.timing?.block_start_time
+            timestamp: minuteData.timing?.block_start_time || minuteData.timing?.first_trial_time
           });
         }
       }
@@ -1158,6 +1254,10 @@ export default function MainApp() {
 
     // If we've completed all blocks, go to post-experiment questions
     if (!redo && blockIdx + 1 >= C.BLOCKS_TOTAL) {
+      // Disconnect stream at session end
+      if (C.USE_LIVE_STREAM) {
+        liveDisconnect();
+      }
       // Calculate and save session-level temporal entropy before ending
       await calculateSessionTemporalEntropy();
       setPhase('done');
@@ -1179,7 +1279,7 @@ export default function MainApp() {
 
     // All blocks are live now - no retro tracking needed
 
-    bitsRef.current = []; ghostBitsRef.current = []; alignedRef.current = [];
+    bitsRef.current = []; ghostBitsRef.current = []; alignedRef.current = []; alignedGhostRef.current = [];
     subjectBytesRef.current = []; ghostBytesRef.current = [];
     subjectIndicesRef.current = []; ghostIndicesRef.current = []; trialStrategiesRef.current = [];
     hitsRef.current = 0; ghostHitsRef.current = 0;
@@ -1190,7 +1290,7 @@ export default function MainApp() {
     blockStartTimeRef.current = Date.now();
 
     setIsRunning(true);
-  }, [blockIdx, calculateSessionTemporalEntropy, ensureNextBlockReady, resetLivePauseCounters]);
+  }, [blockIdx, calculateSessionTemporalEntropy, ensureNextBlockReady, resetLivePauseCounters, liveDisconnect]);
 
   // Create a ref to hold the latest startNextMinute function for auto-mode
   const startNextMinuteRef = useRef(null);
@@ -1783,20 +1883,15 @@ export default function MainApp() {
             {debugUI && (
               <>
                 {' — '}
-                <strong>{isLive ? 'Live' : 'Retro'}</strong>
-                {!isLive && (
-                  <span style={{ marginLeft: 6, opacity: 0.7 }}>
-                    (live stream)
-                  </span>
-                )}
-                {isLive && !C.USE_LIVE_STREAM && liveBufRef.current?.source && (
+                <strong>Live</strong>
+                {!C.USE_LIVE_STREAM && liveBufRef.current?.source && (
                   <span style={{ marginLeft: 6, opacity: 0.7 }}>
                     [{liveBufRef.current.source} · {liveBufRef.current?.subj?.length || 0}]
                   </span>
                 )}
-                {isLive && C.USE_LIVE_STREAM && (
+                {C.USE_LIVE_STREAM && (
                   <span style={{ marginLeft: 6, opacity: 0.7 }}>
-                    [live src: {liveLastSource || '—'} · buf {liveBufferedBytes()} bytes]
+                    [src: {liveLastSource || '—'} · buf {liveBufferedBytes()} bytes]
                   </span>
                 )}
               </>
