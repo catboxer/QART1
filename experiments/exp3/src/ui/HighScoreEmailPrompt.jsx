@@ -40,7 +40,7 @@ export default function HighScoreEmailPrompt({
       : [
           `Hi WTQ team,`,
           ``,
-          `I got a high score and would love to be considered for future studies (and the PSI hoodie!).`,
+          `I got a high score and would love to be considered for future studies!`,
           ``,
           `Experiment: ${experiment}`,
           `Score: ${scoreStr}`,
@@ -93,15 +93,16 @@ Session ID: ${sessionId || "(not provided)"}
             <p>
               Your score is statistically significant in the opposite direction—a phenomenon known as
               "psi-missing." This is just as interesting to researchers as high scores! Join our shortlist
-              for future studies and we'll thank you with an organic PSI "Founding Ψ Cohort" hoodie.
+              for future studies.
             </p>
           </>
         ) : (
           <>
             <h2 style={{ marginTop: 0 }}>🎉 You're a high scorer!</h2>
             <p>
-              You've clearly got the touch. Join our shortlist for future studies and
-              we'll thank you with an organic PSI "Founding Ψ Cohort" hoodie.
+                You've clearly got the touch. Join our shortlist for future studies - we're building
+                a database of consistently
+                interesting performers for more advanced experiments.
             </p>
           </>
         )}
