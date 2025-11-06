@@ -12,7 +12,7 @@ const headers = {
 };
 
 const OUTSHIFT_TIMEOUT_MS = 800;
-const _LFDR_TIMEOUT_MS = 1000;
+const _LFDR_TIMEOUT_MS = 3000;  // Increased from 1000ms - LFDR can be slow
 
 interface QRNGResult {
   source: string;
