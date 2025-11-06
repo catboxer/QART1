@@ -106,17 +106,34 @@ export function useLiveStreamQueue(
 
   const connect = useCallback(() => {
     disconnect();
+    console.log('🔌 Connecting to quantum stream:', `/live?dur=${durationMs}`);
     const es = new EventSource(`/live?dur=${durationMs}`);
     esRef.current = es;
     setConnected(true);
+    console.log('✓ EventSource created, waiting for events...');
 
     es.addEventListener("bits", (evt) => {
       const data = JSON.parse(evt.data);  // { ts, source, bits }
+      console.log('📦 Received bits:', { source: data.source, bitCount: data.bits?.length, queueSize: qRef.current.length });
       if (data?.source) setLastSource(data.source);
       const s = data?.bits || "";
 
       // Push each char to the queue
       for (let i = 0; i < s.length; i++) qRef.current.push(s[i]);
+      console.log('✓ Queue updated:', { totalBits: qRef.current.length, bytes: Math.floor(qRef.current.length / 8) });
+    });
+
+    es.addEventListener("error", (evt) => {
+      console.error("❌ QRNG error event:", evt);
+      try {
+        if (evt.data) {
+          const data = JSON.parse(evt.data);
+          console.error("Error details:", data);
+        }
+      } catch (e) {
+        console.error("Could not parse error data:", e);
+      }
+      disconnect();
     });
 
     es.addEventListener("done", () => {
@@ -125,6 +142,8 @@ export function useLiveStreamQueue(
 
     es.onerror = (err) => {
       console.error("❌ EventSource error:", err, "ReadyState:", es.readyState);
+      console.error("EventSource URL:", es.url);
+      console.error("Full error object:", JSON.stringify(err, null, 2));
       disconnect();
     };
   }, [durationMs, disconnect]);

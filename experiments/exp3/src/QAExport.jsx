@@ -13,7 +13,7 @@ import {
 import { signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { panels } from './exp-panels';
 import jStat from 'jstat';
-import { twoSidedP } from './stats';
+import { twoSidedP, shannonEntropy } from './stats/index';
 
 // Statistical helper functions
 function sampleVariance(arr) {
@@ -22,16 +22,6 @@ function sampleVariance(arr) {
   const mean = arr.reduce((s, v) => s + v, 0) / n;
   return arr.reduce((sum, v) => sum + Math.pow(v - mean, 2), 0) / (n - 1);
 }
-
-// Shannon entropy calculation (from MainApp.jsx)
-function shannonEntropy(bits) {
-  if (!bits.length) return 0;
-  const ones = bits.reduce((sum, bit) => sum + bit, 0);
-  const p = ones / bits.length;
-  if (p === 0 || p === 1) return 0;
-  return -p * Math.log2(p) - (1 - p) * Math.log2(1 - p);
-}
-
 
 // Analysis helper functions
 function computeStatistics(sessions, mode = 'pooled', binauralFilter = 'all', primeFilter = 'all', mappingFilter = 'all') {
@@ -706,6 +696,68 @@ function computeCrossCorrelation(x, y, lag = 0) {
 
   const denom = Math.sqrt(varX * varY);
   return denom > 0 ? num / denom : 0;
+}
+
+// AC1 on Hit Indicators with Permutation Test
+// Tests feedback amplification hypothesis: "After I see my target, am I more likely to see it again?"
+function computeAC1OnHits(sessions, numPermutations = 10000) {
+  const subjectAC1s = [];
+  const ghostAC1s = [];
+
+  sessions.forEach(session => {
+    session.minutes?.forEach(minute => {
+      // Collect AC1 on hits from each block
+      if (minute.resonance?.ac1_hits !== undefined && isFinite(minute.resonance.ac1_hits)) {
+        subjectAC1s.push(minute.resonance.ac1_hits);
+      }
+      if (minute.ghost_metrics?.resonance?.ac1_hits !== undefined &&
+          isFinite(minute.ghost_metrics.resonance.ac1_hits)) {
+        ghostAC1s.push(minute.ghost_metrics.resonance.ac1_hits);
+      }
+    });
+  });
+
+  if (subjectAC1s.length === 0 || ghostAC1s.length === 0) {
+    return null;
+  }
+
+  const n = Math.min(subjectAC1s.length, ghostAC1s.length);
+
+  // Compute observed means
+  const subjMean = subjectAC1s.slice(0, n).reduce((a, b) => a + b, 0) / n;
+  const ghostMean = ghostAC1s.slice(0, n).reduce((a, b) => a + b, 0) / n;
+  const observedDiff = subjMean - ghostMean;
+
+  // Permutation test: shuffle labels and compute difference
+  let extremeCount = 0;
+  const allValues = [...subjectAC1s.slice(0, n), ...ghostAC1s.slice(0, n)];
+
+  for (let i = 0; i < numPermutations; i++) {
+    // Shuffle allValues
+    const shuffled = [...allValues].sort(() => Math.random() - 0.5);
+    const permSubjMean = shuffled.slice(0, n).reduce((a, b) => a + b, 0) / n;
+    const permGhostMean = shuffled.slice(n, 2 * n).reduce((a, b) => a + b, 0) / n;
+    const permDiff = permSubjMean - permGhostMean;
+
+    if (Math.abs(permDiff) >= Math.abs(observedDiff)) {
+      extremeCount++;
+    }
+  }
+
+  const pValue = extremeCount / numPermutations;
+
+  return {
+    n,
+    subjectMean: subjMean,
+    ghostMean: ghostMean,
+    difference: observedDiff,
+    pValue,
+    numPermutations,
+    significant: pValue < 0.05,
+    interpretation: observedDiff > 0
+      ? 'Subject shows positive serial correlation in hits (potential feedback amplification)'
+      : 'No evidence of feedback amplification'
+  };
 }
 
 function computeTrialSpectralAnalysis(sessions) {
@@ -4034,6 +4086,9 @@ function ExploratorySignatures({ sessions }) {
     // Detect dampened oscillator patterns
     const dampedOscillator = detectDampedOscillator(hitRateTimeSeries);
 
+    // AC1 on Hit Indicators - Tests feedback amplification
+    const ac1OnHitsAnalysis = computeAC1OnHits(sessions);
+
     return {
       totalDataPoints: hitRateTimeSeries.length,
       totalSessions: blockMetrics.length,
@@ -4042,6 +4097,7 @@ function ExploratorySignatures({ sessions }) {
       entropySpectral,
       crossCorrelation,
       dampedOscillator,
+      ac1OnHitsAnalysis,
       blockMetrics,
       overallTrend: calculateLinearTrend(hitRateTimeSeries),
     };
@@ -4144,6 +4200,81 @@ function ExploratorySignatures({ sessions }) {
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* AC1 on Hit Indicators - Feedback Amplification Test */}
+      {exploratoryMetrics.ac1OnHitsAnalysis && (
+        <div style={{ marginBottom: 24 }}>
+          <h4 style={{ marginBottom: 12, color: '#374151' }}>
+            Feedback Amplification (AC1 on Hit Indicators)
+          </h4>
+          <div style={{
+            padding: 16,
+            border: `1px solid ${exploratoryMetrics.ac1OnHitsAnalysis.significant ? '#d1fae5' : '#e5e7eb'}`,
+            borderRadius: 8,
+            background: exploratoryMetrics.ac1OnHitsAnalysis.significant ? '#ecfdf5' : '#f9fafb'
+          }}>
+            <p style={{ fontSize: 13, color: '#6b7280', marginBottom: 12 }}>
+              Tests if seeing your target makes you more likely to see it again (feedback reinforcement loop)
+            </p>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
+              <div>
+                <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}>Blocks Analyzed</div>
+                <div style={{ fontSize: 16, fontWeight: 'bold', color: '#374151' }}>
+                  {exploratoryMetrics.ac1OnHitsAnalysis.n}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}>Subject AC1</div>
+                <div style={{ fontSize: 16, fontWeight: 'bold', color: '#374151' }}>
+                  {exploratoryMetrics.ac1OnHitsAnalysis.subjectMean.toFixed(4)}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}>Ghost AC1</div>
+                <div style={{ fontSize: 16, fontWeight: 'bold', color: '#374151' }}>
+                  {exploratoryMetrics.ac1OnHitsAnalysis.ghostMean.toFixed(4)}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}>Difference</div>
+                <div style={{
+                  fontSize: 16,
+                  fontWeight: 'bold',
+                  color: exploratoryMetrics.ac1OnHitsAnalysis.difference > 0 ? '#059669' : '#6b7280'
+                }}>
+                  {exploratoryMetrics.ac1OnHitsAnalysis.difference > 0 ? '+' : ''}
+                  {exploratoryMetrics.ac1OnHitsAnalysis.difference.toFixed(4)}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}>
+                  P-value (permutation)
+                </div>
+                <div style={{
+                  fontSize: 16,
+                  fontWeight: 'bold',
+                  color: exploratoryMetrics.ac1OnHitsAnalysis.significant ? '#059669' : '#6b7280'
+                }}>
+                  {exploratoryMetrics.ac1OnHitsAnalysis.pValue.toFixed(4)}
+                  {exploratoryMetrics.ac1OnHitsAnalysis.significant && ' *'}
+                </div>
+              </div>
+            </div>
+            <p style={{
+              fontSize: 12,
+              color: exploratoryMetrics.ac1OnHitsAnalysis.significant ? '#059669' : '#6b7280',
+              marginTop: 12,
+              fontStyle: 'italic'
+            }}>
+              {exploratoryMetrics.ac1OnHitsAnalysis.interpretation}
+            </p>
+            <p style={{ fontSize: 11, color: '#9ca3af', marginTop: 8 }}>
+              Permutation test with {exploratoryMetrics.ac1OnHitsAnalysis.numPermutations.toLocaleString()} iterations.
+              Positive AC1 means hits cluster together (reinforcement); negative means they alternate.
+            </p>
           </div>
         </div>
       )}

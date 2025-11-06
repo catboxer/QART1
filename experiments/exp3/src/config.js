@@ -23,8 +23,8 @@ config.experiments = {
     SHOW_CONDITION_IN_HUD: false,
     SESSION_ALPHA: 0.01,
     BLOCK_HIGHLIGHT_PCT: 52, //what score gets a congrats
-    FINALIST_MIN_PCT: 50, // 54 email capture high score gate opens at or above this percent
-    FINALIST_MAX_PCT: 49, // 46 email capture low score gate opens at or below this percent
+    FINALIST_MIN_PCT: 54, // Email capture high score gate opens at or above this percent
+    FINALIST_MAX_PCT: 46, // Email capture low score gate opens at or below this percent
     AUTO_MODE_SESSIONS: 30, // Number of automated baseline sessions to run (access via #auto URL /exp3#auto)
     AUTO_MODE_REST_MS: 5000, // 5 second auto-continue delay between blocks in auto-mode
   },

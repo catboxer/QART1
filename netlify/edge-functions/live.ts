@@ -36,6 +36,7 @@ async function fetchWithTimeout(
 async function _tryOutshift(nBits: number): Promise<QRNGResult | null> {
   const apiKey = Deno.env.get("QRNG_OUTSHIFT_API_KEY");
   if (!apiKey) {
+    console.log("Outshift: No API key");
     return null;
   }
 
@@ -63,6 +64,7 @@ async function _tryOutshift(nBits: number): Promise<QRNGResult | null> {
 
     // Detect 429 rate limit specifically
     if (res.status === 429) {
+      console.log("Outshift: 429 rate limit - quota exhausted");
       return null;
     }
 
@@ -85,7 +87,8 @@ async function _tryOutshift(nBits: number): Promise<QRNGResult | null> {
       return { source: "outshift", bits: bits.slice(0, nBits) };
     }
     throw new Error("Bad response shape");
-  } catch {
+  } catch (e) {
+    console.log(`Outshift failed: ${e instanceof Error ? e.message : e}`);
     return null;
   }
 }
@@ -111,16 +114,25 @@ async function _tryLFDR(nBits: number): Promise<QRNGResult | null> {
       bits += byte.toString(2).padStart(8, "0");
     }
     return { source: "lfdr", bits: bits.slice(0, nBits) };
-  } catch {
+  } catch (e) {
+    console.log(`LFDR failed: ${e instanceof Error ? e.message : e}`);
     return null;
   }
 }
 
 
+// Session-level flag to skip outshift after rate limit
+let outshiftExhausted = false;
+
 async function getQRNGBits(nBits = 512): Promise<QRNGResult> {
-  // Try Outshift first (true quantum)
-  const outshift = await _tryOutshift(nBits);
-  if (outshift) return outshift;
+  // Try Outshift first (true quantum) - skip if already exhausted this session
+  if (!outshiftExhausted) {
+    const outshift = await _tryOutshift(nBits);
+    if (outshift) return outshift;
+    // Mark as exhausted to avoid retrying for rest of session
+    outshiftExhausted = true;
+    console.log("Outshift exhausted - switching to LFDR for remainder of stream");
+  }
 
   // Fall back to LFDR (validated quantum source - positional bias fixed as of 2025-10-27)
   const lfdr = await _tryLFDR(nBits);
