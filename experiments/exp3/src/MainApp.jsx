@@ -690,29 +690,33 @@ export default function MainApp() {
     let newGhostWindows = [];
 
     try {
-      // Convert this minute's BYTES to BITS, then append to accumulators
-      if (Array.isArray(subjectBytesRef.current) && subjectBytesRef.current.length) {
-        const subjBits = bytesToBits(subjectBytesRef.current);
-        const ghostBits = bytesToBits(ghostBytesRef.current);
-        entropyAccumRef.current.subj.push(...subjBits);
-        entropyAccumRef.current.ghost.push(...ghostBits);
+      // ONLY accumulate entropy from valid blocks - invalid blocks contaminate the data
+      if (!minuteInvalidRef.current) {
+        // Convert this minute's BYTES to BITS, then append to accumulators
+        if (Array.isArray(subjectBytesRef.current) && subjectBytesRef.current.length) {
+          const subjBits = bytesToBits(subjectBytesRef.current);
+          const ghostBits = bytesToBits(ghostBytesRef.current);
+          entropyAccumRef.current.subj.push(...subjBits);
+          entropyAccumRef.current.ghost.push(...ghostBits);
 
+        } else {
+          console.warn(`⚠️ Block ${blockIdx}: subjectBytesRef.current is empty or not an array!`, {
+            isArray: Array.isArray(subjectBytesRef.current),
+            length: subjectBytesRef.current?.length,
+            sample: subjectBytesRef.current?.slice(0, 5)
+          });
+        }
+
+        // Extract any completed windows
+        newSubjWindows = extractEntropyWindowsFromAccumulator(entropyAccumRef.current.subj, ENTROPY_WINDOW_SIZE);
+        newGhostWindows = extractEntropyWindowsFromAccumulator(entropyAccumRef.current.ghost, ENTROPY_WINDOW_SIZE);
+
+        // Append to running windows history
+        if (newSubjWindows.length) entropyWindowsRef.current.subj.push(...newSubjWindows);
+        if (newGhostWindows.length) entropyWindowsRef.current.ghost.push(...newGhostWindows);
       } else {
-        console.warn(`⚠️ Block ${blockIdx}: subjectBytesRef.current is empty or not an array!`, {
-          isArray: Array.isArray(subjectBytesRef.current),
-          length: subjectBytesRef.current?.length,
-          sample: subjectBytesRef.current?.slice(0, 5)
-        });
+        console.log(`⏭️ Block ${blockIdx}: Skipping entropy accumulation (block marked invalid)`);
       }
-
-      // Extract any completed windows
-      newSubjWindows = extractEntropyWindowsFromAccumulator(entropyAccumRef.current.subj, ENTROPY_WINDOW_SIZE);
-      newGhostWindows = extractEntropyWindowsFromAccumulator(entropyAccumRef.current.ghost, ENTROPY_WINDOW_SIZE);
-
-      // Append to running windows history
-      if (newSubjWindows.length) entropyWindowsRef.current.subj.push(...newSubjWindows);
-      if (newGhostWindows.length) entropyWindowsRef.current.ghost.push(...newGhostWindows);
-
 
     } catch (entropyErr) {
       console.warn('entropy-windowing failed', entropyErr);
