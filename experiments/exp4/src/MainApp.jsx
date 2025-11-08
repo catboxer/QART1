@@ -39,6 +39,11 @@ function validateConfig() {
   if (C.PRIME_PROB < 0 || C.PRIME_PROB > 1) errors.push('PRIME_PROB must be between 0 and 1');
   if (!Array.isArray(C.TARGET_SIDES) || C.TARGET_SIDES.length === 0) errors.push('TARGET_SIDES must be non-empty array');
 
+  // Cross-validation: Ensure config values are consistent
+  if (C.BITS_PER_BLOCK !== 1 + 2 * C.TRIALS_PER_BLOCK) {
+    errors.push(`BITS_PER_BLOCK must equal 1 + 2*TRIALS_PER_BLOCK (expected ${1 + 2 * C.TRIALS_PER_BLOCK}, got ${C.BITS_PER_BLOCK})`);
+  }
+
   if (errors.length > 0) {
     throw new Error(`Configuration validation failed: ${errors.join(', ')}`);
   }
@@ -235,15 +240,16 @@ export default function MainApp() {
     const assignmentBit = parseInt(quantumBits[0], 10);
     const subjectGetsFirstHalf = assignmentBit === 1;
 
-    // Split remaining 300 bits (after assignment bit) into two halves for trials
-    const halfA = quantumBits.slice(1, 151);    // bits 1-150 (150 bits)
-    const halfB = quantumBits.slice(151, 301);  // bits 151-300 (150 bits)
+    // Split remaining bits (after assignment bit) into two halves for trials
+    const n = C.TRIALS_PER_BLOCK; // Should be 150
+    const halfA = quantumBits.slice(1, 1 + n);    // bits 1 to (1+n)
+    const halfB = quantumBits.slice(1 + n, 1 + 2*n);  // bits (1+n) to (1+2n)
 
     const subjectBits = subjectGetsFirstHalf ? halfA : halfB;
     const demonBits = subjectGetsFirstHalf ? halfB : halfA;
 
     // Process subject bits
-    for (let i = 0; i < 150; i++) {
+    for (let i = 0; i < n; i++) {
       const bit = parseInt(subjectBits[i], 10);
       bitsRef.current.push(bit);
       alignedRef.current.push(bit === targetBit ? 1 : 0);
@@ -251,7 +257,7 @@ export default function MainApp() {
     }
 
     // Process demon bits
-    for (let i = 0; i < 150; i++) {
+    for (let i = 0; i < n; i++) {
       const bit = parseInt(demonBits[i], 10);
       demonBitsRef.current.push(bit);
       if (bit === targetBit) demonHitsRef.current++;
@@ -260,7 +266,6 @@ export default function MainApp() {
     // Calculate stats
     const k = hitsRef.current;
     const kd = demonHitsRef.current;
-    const n = 150;
     const z = zFromBinom(k, n, 0.5);
     const zd = zFromBinom(kd, n, 0.5);
     const pTwo = twoSidedP(z);
@@ -728,7 +733,7 @@ export default function MainApp() {
       return;
     }
 
-    const n = 150;
+    const n = C.TRIALS_PER_BLOCK; // Should be 150
     const k = hitsRef.current;
     const kd = demonHitsRef.current;
 
@@ -747,12 +752,12 @@ export default function MainApp() {
     const dHurst = hurstApprox(demonBitsRef.current);
     const dAc1 = lag1Autocorr(demonBitsRef.current);
 
-    // Block-level entropy (150 bits per block)
+    // Block-level entropy (n bits per block)
     const blockSubjEntropy = bitsRef.current.length > 0 ? shannonEntropy(bitsRef.current) : null;
     const blockDemonEntropy = demonBitsRef.current.length > 0 ? shannonEntropy(demonBitsRef.current) : null;
 
     // Block-level k2 split
-    const half = Math.floor(150 / 2);
+    const half = Math.floor(n / 2);
     const blockK2Subj = [
       shannonEntropy(bitsRef.current.slice(0, half)),
       shannonEntropy(bitsRef.current.slice(half))
@@ -763,7 +768,7 @@ export default function MainApp() {
     ];
 
     // Block-level k3 split
-    const third = Math.floor(150 / 3);
+    const third = Math.floor(n / 3);
     const blockK3Subj = [
       shannonEntropy(bitsRef.current.slice(0, third)),
       shannonEntropy(bitsRef.current.slice(third, 2 * third)),
@@ -805,7 +810,7 @@ export default function MainApp() {
         block_k2_demon: blockK2Demon,
         block_k3_subj: blockK3Subj,
         block_k3_demon: blockK3Demon,
-        bits_count: 150
+        bits_count: n
       },
 
       // Store bit sequences
@@ -813,7 +818,7 @@ export default function MainApp() {
         subject_bits: bitsRef.current,
         demon_bits: demonBitsRef.current,
         target_bit: targetBit,
-        trial_count: 150
+        trial_count: n
       },
 
       // Cryptographic authentication of quantum bitstream
