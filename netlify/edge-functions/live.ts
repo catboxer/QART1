@@ -12,7 +12,7 @@ const headers = {
 };
 
 const OUTSHIFT_TIMEOUT_MS = 800;
-const _LFDR_TIMEOUT_MS = 3000;  // Increased from 1000ms - LFDR can be slow
+const LFDR_TIMEOUT_MS = 5000;  // Increased to 5s - LFDR can be slow under load
 
 interface QRNGResult {
   source: string;
@@ -99,7 +99,7 @@ async function _tryLFDR(nBits: number): Promise<QRNGResult | null> {
     const res = await fetchWithTimeout(
       `https://lfdr.de/qrng_api/qrng?length=${nBytes}&format=HEX`,
       {},
-      _LFDR_TIMEOUT_MS
+      LFDR_TIMEOUT_MS
     );
 
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -121,16 +121,13 @@ async function _tryLFDR(nBits: number): Promise<QRNGResult | null> {
 }
 
 
-// Session-level flag to skip outshift after rate limit
-let outshiftExhausted = false;
-
-async function getQRNGBits(nBits = 512): Promise<QRNGResult> {
+async function getQRNGBits(nBits: number, outshiftExhausted: { value: boolean }): Promise<QRNGResult> {
   // Try Outshift first (true quantum) - skip if already exhausted this session
-  if (!outshiftExhausted) {
+  if (!outshiftExhausted.value) {
     const outshift = await _tryOutshift(nBits);
     if (outshift) return outshift;
     // Mark as exhausted to avoid retrying for rest of session
-    outshiftExhausted = true;
+    outshiftExhausted.value = true;
     console.log("Outshift exhausted - switching to LFDR for remainder of stream");
   }
 
@@ -147,6 +144,9 @@ export default (req: Request): Response => {
   const reqMs = Number(url.searchParams.get("dur")) || 600_000;
   const durationMs = Math.min(Math.max(reqMs, 5_000), 600_000);
   const endAt = Date.now() + durationMs;
+
+  // Stream-level flag to skip outshift after rate limit (resets per connection)
+  const outshiftExhausted = { value: false };
 
   let seq = 1;
 
@@ -170,7 +170,7 @@ export default (req: Request): Response => {
       const loop = async () => {
         // Initial warmup: pull 300 bytes (2400 bits) to build buffer
         try {
-          const warmup = await getQRNGBits(2400);
+          const warmup = await getQRNGBits(2400, outshiftExhausted);
           send("bits", {
             ts: Date.now(),
             source: warmup.source,
@@ -197,7 +197,7 @@ export default (req: Request): Response => {
           await new Promise((r) => setTimeout(r, 15000));
 
           try {
-            const result = await getQRNGBits(1160); // 145 bytes
+            const result = await getQRNGBits(1160, outshiftExhausted); // 145 bytes
             send("bits", {
               ts: Date.now(),
               source: result.source,

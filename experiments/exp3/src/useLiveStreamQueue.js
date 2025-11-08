@@ -11,6 +11,7 @@ export function useLiveStreamQueue(
 ) {
   const [connected, setConnected] = useState(false);
   const [lastSource, setLastSource] = useState(null);
+  const [streamError, setStreamError] = useState(null); // Track QRNG errors
   const qRef = useRef([]);       // queue of '0'/'1' chars
   const esRef = useRef(null);
   const positionRef = useRef(0);  // track position in original stream
@@ -18,7 +19,7 @@ export function useLiveStreamQueue(
   // Return buffered BYTES (not bits)
   const bufferedBytes = useCallback(() => Math.floor(qRef.current.length / 8), []);
 
-  // Store ghost byte for alternating tests
+  // Store ghost byte for consecutive-byte trials (odd trials)
   const ghostByteRef = useRef(null);
   const ghostByteIndexRef = useRef(null);
 
@@ -33,10 +34,11 @@ export function useLiveStreamQueue(
     return value;
   };
 
-  // Trial-based BYTE strategy: odd trials use alternating bytes, even trials use independent bytes
+  // Trial-based BYTE strategy: odd trials use consecutive bytes, even trials use temporally separated bytes
+  // NOTE: Both strategies pull from the SAME quantum stream - no separate QRNG calls
   const popSubjectByte = useCallback((trialNumber) => {
     if (trialNumber % 2 === 1) {
-      // Odd trials (1,3,5...): Use alternating bytes from same stream (need 16 bits for 2 bytes)
+      // Odd trials (1,3,5...): Subject and ghost are CONSECUTIVE in stream (need 16 bits total)
       if (qRef.current.length >= 16) {
         const subjectIndex = positionRef.current;
 
@@ -54,7 +56,7 @@ export function useLiveStreamQueue(
         return { byte: subjectByte, rawIndex: subjectIndex };
       }
     } else {
-      // Even trials (2,4,6...): Use fresh QRNG call (independent) - need 8 bits
+      // Even trials (2,4,6...): Subject now, ghost later - TEMPORALLY SEPARATED in stream
       if (qRef.current.length >= 8) {
         const subjectIndex = positionRef.current;
         const subjectBits = qRef.current.splice(0, 8);
@@ -79,14 +81,14 @@ export function useLiveStreamQueue(
 
   const popGhostByte = useCallback((trialNumber) => {
     if (trialNumber % 2 === 1) {
-      // Odd trials (1,3,5...): Use the stored alternating byte
+      // Odd trials (1,3,5...): Return the stored byte that was consecutive with subject
       const ghostByte = ghostByteRef.current;
       const ghostIndex = ghostByteIndexRef.current;
       ghostByteRef.current = null; // Clear after use
       ghostByteIndexRef.current = null;
       return ghostByte !== null ? { byte: ghostByte, rawIndex: ghostIndex } : null;
     } else {
-      // Even trials (2,4,6...): Use fresh QRNG call (independent from subject) - need 8 bits
+      // Even trials (2,4,6...): Pull from stream NOW - temporally separated from subject byte
       if (qRef.current.length >= 8) {
         const ghostIndex = positionRef.current;
         const ghostBits = qRef.current.splice(0, 8);
@@ -106,21 +108,18 @@ export function useLiveStreamQueue(
 
   const connect = useCallback(() => {
     disconnect();
-    console.log('🔌 Connecting to quantum stream:', `/live?dur=${durationMs}`);
+    setStreamError(null); // Clear any previous errors
     const es = new EventSource(`/live?dur=${durationMs}`);
     esRef.current = es;
     setConnected(true);
-    console.log('✓ EventSource created, waiting for events...');
 
     es.addEventListener("bits", (evt) => {
       const data = JSON.parse(evt.data);  // { ts, source, bits }
-      console.log('📦 Received bits:', { source: data.source, bitCount: data.bits?.length, queueSize: qRef.current.length });
       if (data?.source) setLastSource(data.source);
       const s = data?.bits || "";
 
       // Push each char to the queue
       for (let i = 0; i < s.length; i++) qRef.current.push(s[i]);
-      console.log('✓ Queue updated:', { totalBits: qRef.current.length, bytes: Math.floor(qRef.current.length / 8) });
     });
 
     es.addEventListener("error", (evt) => {
@@ -129,9 +128,18 @@ export function useLiveStreamQueue(
         if (evt.data) {
           const data = JSON.parse(evt.data);
           console.error("Error details:", data);
+          // Set error state for UI to display
+          setStreamError({
+            message: data.message || 'Quantum source error',
+            detail: data.detail || 'Unknown error'
+          });
         }
       } catch (e) {
         console.error("Could not parse error data:", e);
+        setStreamError({
+          message: 'Quantum source connection error',
+          detail: 'Failed to parse error message'
+        });
       }
       disconnect();
     });
@@ -157,6 +165,7 @@ export function useLiveStreamQueue(
     popGhostByte,    // Changed from popGhostBit
     bufferedBytes,   // Changed from bufferedBits - returns number of complete bytes available
     connected,
-    lastSource
+    lastSource,
+    streamError      // Expose QRNG errors to UI
   };
 }

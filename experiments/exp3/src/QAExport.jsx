@@ -1104,6 +1104,237 @@ function PrimaryPerformanceMetrics({ sessions, stats }) {
   );
 }
 
+// Positional Bias Analysis (Cyclic Bit Extraction)
+function PositionalBiasAnalysis({ sessions }) {
+  const analysis = useMemo(() => {
+    // Aggregate all trials across all sessions
+    const subjectPositionStats = Array(8).fill(0).map(() => ({ ones: 0, total: 0 }));
+    const ghostPositionStats = Array(8).fill(0).map(() => ({ ones: 0, total: 0 }));
+
+    let totalSessions = 0;
+    let sessionsWithPositionData = 0;
+
+    sessions.forEach(session => {
+      totalSessions++;
+      const sortedMinutes = (session.minutes || []).sort((a, b) => (a.idx || 0) - (b.idx || 0));
+
+      sortedMinutes.forEach(minute => {
+        if (minute.trial_data && minute.trial_data.subject_bit_positions) {
+          sessionsWithPositionData++;
+          const subjectBits = minute.trial_data.subject_bits || [];
+          const ghostBits = minute.trial_data.ghost_bits || [];
+          const subjectPositions = minute.trial_data.subject_bit_positions || [];
+          const ghostPositions = minute.trial_data.ghost_bit_positions || [];
+
+          // Count 1s per position for subject stream
+          subjectPositions.forEach((pos, i) => {
+            if (pos >= 0 && pos < 8 && i < subjectBits.length) {
+              subjectPositionStats[pos].total++;
+              if (subjectBits[i] === 1) {
+                subjectPositionStats[pos].ones++;
+              }
+            }
+          });
+
+          // Count 1s per position for ghost stream
+          ghostPositions.forEach((pos, i) => {
+            if (pos >= 0 && pos < 8 && i < ghostBits.length) {
+              ghostPositionStats[pos].total++;
+              if (ghostBits[i] === 1) {
+                ghostPositionStats[pos].ones++;
+              }
+            }
+          });
+        }
+      });
+    });
+
+    // Calculate percentages and detect bias
+    const subjectResults = subjectPositionStats.map((stat, pos) => ({
+      position: pos,
+      ones: stat.ones,
+      total: stat.total,
+      percentage: stat.total > 0 ? (stat.ones / stat.total) * 100 : 0,
+      deviation: stat.total > 0 ? Math.abs((stat.ones / stat.total) - 0.5) : 0
+    }));
+
+    const ghostResults = ghostPositionStats.map((stat, pos) => ({
+      position: pos,
+      ones: stat.ones,
+      total: stat.total,
+      percentage: stat.total > 0 ? (stat.ones / stat.total) * 100 : 0,
+      deviation: stat.total > 0 ? Math.abs((stat.ones / stat.total) - 0.5) : 0
+    }));
+
+    // Identify significant deviations (>2% from 50%)
+    const subjectBiasedPositions = subjectResults.filter(r => r.deviation > 0.02 && r.total > 50);
+    const ghostBiasedPositions = ghostResults.filter(r => r.deviation > 0.02 && r.total > 50);
+
+    // Check for correlated bias (same position biased in SAME DIRECTION in both streams = source bias)
+    // Only flag if both are >50% or both are <50% (same direction bias)
+    const correlatedBias = subjectBiasedPositions.filter(sp => {
+      const gp = ghostBiasedPositions.find(g => g.position === sp.position);
+      if (!gp) return false;
+
+      // Check if bias is in the same direction (both high or both low)
+      const subjectHigh = sp.percentage > 50;
+      const ghostHigh = gp.percentage > 50;
+      return subjectHigh === ghostHigh; // Same direction = correlated
+    });
+
+    return {
+      subjectResults,
+      ghostResults,
+      subjectBiasedPositions,
+      ghostBiasedPositions,
+      correlatedBias,
+      totalSessions,
+      sessionsWithPositionData
+    };
+  }, [sessions]);
+
+  if (analysis.sessionsWithPositionData === 0) {
+    return (
+      <div style={{ padding: 16, background: '#fef3c7', border: '1px solid #fbbf24', borderRadius: 8 }}>
+        <p style={{ margin: 0 }}>
+          ⚠️ No positional bias data available. This feature requires data collected with cyclic bit extraction (implemented after 2025-01-XX).
+        </p>
+      </div>
+    );
+  }
+
+  const getColorForDeviation = (dev) => {
+    if (dev > 0.05) return '#dc2626'; // red-600 - significant bias
+    if (dev > 0.03) return '#ea580c'; // orange-600 - moderate bias
+    if (dev > 0.02) return '#d97706'; // amber-600 - slight bias
+    return '#16a34a'; // green-600 - good
+  };
+
+  return (
+    <div>
+      <div style={{ marginBottom: 16, padding: 12, background: '#f0f9ff', border: '1px solid #0ea5e9', borderRadius: 8 }}>
+        <p style={{ margin: 0, fontSize: 14 }}>
+          <strong>Cyclic Bit Extraction Analysis:</strong> Each byte uses bit positions 0→7→0→7... in rotation.
+          This section detects if any bit position is significantly biased (deviates from 50% ones).
+        </p>
+        <p style={{ margin: '8px 0 0 0', fontSize: 13, color: '#475569' }}>
+          Analyzing {analysis.sessionsWithPositionData} sessions • {analysis.subjectResults[0]?.total || 0} trials per position
+        </p>
+      </div>
+
+      {/* Diagnosis Summary */}
+      {analysis.correlatedBias.length > 0 ? (
+        <div style={{ marginBottom: 16, padding: 12, background: '#fee2e2', border: '1px solid #dc2626', borderRadius: 8 }}>
+          <p style={{ margin: 0, fontWeight: 600, color: '#991b1b' }}>
+            ⚠️ QRNG Source Bias Detected
+          </p>
+          <p style={{ margin: '4px 0 0 0', fontSize: 14, color: '#7f1d1d' }}>
+            Position(s) {analysis.correlatedBias.map(b => b.position).join(', ')} show bias in BOTH subject and ghost streams.
+            This indicates a QRNG source artifact, not a psi effect.
+          </p>
+        </div>
+      ) : analysis.subjectBiasedPositions.length > 0 || analysis.ghostBiasedPositions.length > 0 ? (
+        <div style={{ marginBottom: 16, padding: 12, background: '#fef3c7', border: '1px solid #d97706', borderRadius: 8 }}>
+          <p style={{ margin: 0, fontWeight: 600, color: '#92400e' }}>
+            ℹ️ Positional Variations Detected
+          </p>
+          <p style={{ margin: '4px 0 0 0', fontSize: 14, color: '#78350f' }}>
+            Some positions show deviation from 50%, but not correlated between streams. May warrant further investigation.
+          </p>
+        </div>
+      ) : (
+        <div style={{ marginBottom: 16, padding: 12, background: '#d1fae5', border: '1px solid #16a34a', borderRadius: 8 }}>
+          <p style={{ margin: 0, fontWeight: 600, color: '#065f46' }}>
+            ✓ No Significant Positional Bias
+          </p>
+          <p style={{ margin: '4px 0 0 0', fontSize: 14, color: '#047857' }}>
+            All bit positions are within expected range (48-52%). QRNG source is clean.
+          </p>
+        </div>
+      )}
+
+      {/* Subject Stream Table */}
+      <h4 style={{ margin: '16px 0 8px', color: '#1f2937' }}>Subject Stream</h4>
+      <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
+        <thead>
+          <tr style={{ background: '#f3f4f6', borderBottom: '2px solid #d1d5db' }}>
+            <th style={{ padding: 8, textAlign: 'left' }}>Position</th>
+            <th style={{ padding: 8, textAlign: 'right' }}>Ones</th>
+            <th style={{ padding: 8, textAlign: 'right' }}>Total</th>
+            <th style={{ padding: 8, textAlign: 'right' }}>Percentage</th>
+            <th style={{ padding: 8, textAlign: 'right' }}>Deviation</th>
+            <th style={{ padding: 8, textAlign: 'center' }}>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {analysis.subjectResults.map(r => (
+            <tr key={r.position} style={{ borderBottom: '1px solid #e5e7eb' }}>
+              <td style={{ padding: 8 }}>Bit {r.position}</td>
+              <td style={{ padding: 8, textAlign: 'right' }}>{r.ones}</td>
+              <td style={{ padding: 8, textAlign: 'right' }}>{r.total}</td>
+              <td style={{ padding: 8, textAlign: 'right', fontWeight: 600 }}>
+                {r.percentage.toFixed(1)}%
+              </td>
+              <td style={{ padding: 8, textAlign: 'right', color: getColorForDeviation(r.deviation) }}>
+                {r.deviation > 0.01 ? `±${(r.deviation * 100).toFixed(1)}%` : '—'}
+              </td>
+              <td style={{ padding: 8, textAlign: 'center' }}>
+                {r.deviation > 0.03 ? '⚠️' : r.deviation > 0.02 ? '⚡' : '✓'}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      {/* Ghost Stream Table */}
+      <h4 style={{ margin: '24px 0 8px', color: '#1f2937' }}>Ghost Stream (Control)</h4>
+      <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
+        <thead>
+          <tr style={{ background: '#f3f4f6', borderBottom: '2px solid #d1d5db' }}>
+            <th style={{ padding: 8, textAlign: 'left' }}>Position</th>
+            <th style={{ padding: 8, textAlign: 'right' }}>Ones</th>
+            <th style={{ padding: 8, textAlign: 'right' }}>Total</th>
+            <th style={{ padding: 8, textAlign: 'right' }}>Percentage</th>
+            <th style={{ padding: 8, textAlign: 'right' }}>Deviation</th>
+            <th style={{ padding: 8, textAlign: 'center' }}>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {analysis.ghostResults.map(r => (
+            <tr key={r.position} style={{ borderBottom: '1px solid #e5e7eb' }}>
+              <td style={{ padding: 8 }}>Bit {r.position}</td>
+              <td style={{ padding: 8, textAlign: 'right' }}>{r.ones}</td>
+              <td style={{ padding: 8, textAlign: 'right' }}>{r.total}</td>
+              <td style={{ padding: 8, textAlign: 'right', fontWeight: 600 }}>
+                {r.percentage.toFixed(1)}%
+              </td>
+              <td style={{ padding: 8, textAlign: 'right', color: getColorForDeviation(r.deviation) }}>
+                {r.deviation > 0.01 ? `±${(r.deviation * 100).toFixed(1)}%` : '—'}
+              </td>
+              <td style={{ padding: 8, textAlign: 'center' }}>
+                {r.deviation > 0.03 ? '⚠️' : r.deviation > 0.02 ? '⚡' : '✓'}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <div style={{ marginTop: 16, padding: 12, background: '#f9fafb', borderRadius: 8, fontSize: 12, color: '#6b7280' }}>
+        <p style={{ margin: 0 }}>
+          <strong>Interpretation Guide:</strong>
+        </p>
+        <ul style={{ margin: '4px 0 0 0', paddingLeft: 20 }}>
+          <li>✓ = Normal (within ±2% of 50%)</li>
+          <li>⚡ = Slight deviation (±2-3%)</li>
+          <li>⚠️ = Significant deviation ({'>'} ±3%)</li>
+          <li>If subject and ghost show same bias → QRNG source issue (artifact)</li>
+          <li>If only subject shows bias → Potential psi effect (requires replication)</li>
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 // Simple cumulative performance chart
 // Unified Temporal & Control Analysis Component
 function UnifiedTemporalControlAnalysis({ sessions }) {
@@ -5654,6 +5885,12 @@ export default function QAExport() {
           <AnalyticsSection
             title="Trial-Level Control Validations (Chi-Square Independence)"
             content={<ControlValidations sessions={filteredSessions} mappingFilter={mappingFilter} />}
+          />
+
+          {/* Positional Bias Analysis (QRNG Quality Check) */}
+          <AnalyticsSection
+            title="Positional Bias Analysis (QRNG Quality)"
+            content={<PositionalBiasAnalysis sessions={filteredSessions} />}
           />
 
           {/* Exploratory Signatures */}

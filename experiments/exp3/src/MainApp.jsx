@@ -80,7 +80,7 @@ class DataCollectionErrorBoundary extends Component {
   }
 }
 
-const QRNG_URL = '/.netlify/functions/qrng-race';
+// QRNG_URL removed - old prefetch endpoint no longer used
 
 // ===== LIVE QUANTUM BUFFER MANAGEMENT =====
 // These parameters control how the experiment handles live quantum random number streams
@@ -126,50 +126,11 @@ const POLICY_TEXT = {
 };
 
 // ===== helpers (module scope) =====
-async function fetchBytes(n, { timeoutMs = 3500, retries = 2, requireQRNG = false } = {}) {
-  async function tryOnce() {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), timeoutMs);
-    try {
-      const res = await fetch(`${QRNG_URL}?n=${n}&nonce=${Date.now()}`, { cache: 'no-store', signal: ctrl.signal });
-      if (!res.ok) {
-        let detail = '';
-        try {
-          const j = await res.json();
-          if (j?.trace) detail = `:${(j.trace || []).join('|')}`;
-          else if (j?.detail || j?.error) detail = `:${j.detail || j.error}`;
-        } catch { }
-        throw new Error('http_' + res.status + detail);
-      }
-      const j = await res.json();
-      if (!j?.bytes || j.bytes.length < n) throw new Error('shape');
-      return { ok: true, bytes: new Uint8Array(j.bytes), source: j.source || 'qrng' };
-    } finally {
-      clearTimeout(t);
-    }
-  }
-  let lastErr = null;
-  for (let r = 0; r <= retries; r++) {
-    try { return await tryOnce(); }
-    catch (e) { lastErr = e?.message || String(e); await new Promise(s => setTimeout(s, 200 * (r + 1))); }
-  }
-  if (requireQRNG) throw new Error('qrng_unavailable_after_retries:' + lastErr);
-  const bytes = new Uint8Array(n);
-  crypto.getRandomValues(bytes);
-  console.warn('[exp3] QRNG unavailable; using local_prng. Last error:', lastErr);
-  return { ok: true, bytes, source: 'local_prng', fallback: true, lastErr };
-}
+// fetchBytes() function removed - dead code from old prefetch model with pseudo-RNG fallback
+// All quantum randomness now comes from live SSE stream only
 // sha256Hex function removed - no longer needed for live-only mode
-function localPairs(n) {
-  const bytes = new Uint8Array(n * 2);
-  crypto.getRandomValues(bytes);
-  const subj = [], ghost = [];
-  for (let i = 0; i < n; i++) {
-    subj.push(bytes[2 * i] & 1);
-    ghost.push(bytes[2 * i + 1] & 1);
-  }
-  return { subj, ghost, source: 'local_prng' };
-}
+// localPairs() function removed - NEVER fall back to pseudo-RNG
+// If quantum sources are exhausted, the experiment must fail gracefully with an error message
 // bytesToBits function removed - no longer needed for live-only mode
 // shuffleInPlace function removed - no longer needed for live-only mode
 // makeRedundancyPlan function removed - no longer needed for live-only mode
@@ -311,6 +272,7 @@ export default function MainApp() {
     bufferedBytes: liveBufferedBytes,
     connected: liveConnected,
     lastSource: liveLastSource,
+    streamError: liveStreamError,
   } = useLiveStreamQueue({ durationMs: C.LIVE_STREAM_DURATION_MS });
 
   // ---- toggles
@@ -328,12 +290,11 @@ export default function MainApp() {
 
   // ---- target assignment
   const [target, setTarget] = useState(null);
-  // Note: Using trial-level bit strategy (odd=alternating, even=independent)
+  // Note: Using trial-level bit strategy (odd=consecutive bytes, even=temporally separated bytes)
   const targetAssignedRef = useRef(false);
 
   useEffect(() => {
     if (targetAssignedRef.current) {
-      console.log('🎯 Target already assigned, skipping');
       return;
     }
     targetAssignedRef.current = true; // Set flag immediately to prevent second execution
@@ -341,19 +302,24 @@ export default function MainApp() {
     const randomByte = crypto.getRandomValues(new Uint8Array(1))[0];
     const randomBit = randomByte & 1;
     const t = randomBit ? 'BLUE' : 'ORANGE';
-    console.log('🎯 Target Assignment:', {
-      randomByte,
-      randomByteBinary: randomByte.toString(2).padStart(8, '0'),
-      randomBit: randomBit,
-      target: t,
-      logic: 'LSB of crypto.getRandomValues()→target (LSB=1→BLUE, LSB=0→ORANGE)',
-      note: 'Trial bits use XOR extraction (not LSB) to eliminate LFDR positional bias'
-    });
     setTarget(t);
 
     // Note: No session-level bit strategy assignment needed
-    // Using trial-level logic: odd trials = alternating, even trials = independent
+    // Using trial-level logic: odd trials = consecutive bytes, even trials = temporally separated bytes
   }, []);
+
+  // ---- Monitor for QRNG errors and display alert
+  useEffect(() => {
+    if (liveStreamError) {
+      alert(`❌ ${liveStreamError.message}\n\n${liveStreamError.detail}\n\nThe experiment cannot continue without quantum randomness.`);
+      // Stop the experiment
+      setIsRunning(false);
+      if (tickTimerRef.current) {
+        clearInterval(tickTimerRef.current);
+        tickTimerRef.current = null;
+      }
+    }
+  }, [liveStreamError]);
 
   // ---- tapes
   // Tape system removed - all blocks use live streams
@@ -368,35 +334,8 @@ export default function MainApp() {
 
 
 
-  // live prefetch model (only used when NOT using streaming)
-  const liveBufRef = useRef({ subj: [], ghost: [] });
-  const nextLiveBufRef = useRef(null);
-
-  const prefetchLivePairs = useCallback(async () => {
-    // If you're using the real live stream, don't prefetch at all
-    if (C.USE_LIVE_STREAM) return null;
-
-    const n = Math.round((C.BLOCK_MS / 1000) * C.VISUAL_HZ);
-
-    const qrngPromise = (async () => {
-      const { bytes, source } = await fetchBytes(n * 2);
-      const subj = [], ghost = [];
-      for (let i = 0; i < n; i++) {
-        subj.push(bytes[2 * i] & 1);
-        ghost.push(bytes[2 * i + 1] & 1);
-      }
-      return { subj, ghost, source };
-    })();
-
-    // small timeout to fall back to local if QRNG is slow
-    const timeout = new Promise((resolve) =>
-      setTimeout(() => resolve(localPairs(n)), 1500)
-    );
-
-    const pairset = await Promise.race([qrngPromise, timeout]);
-    nextLiveBufRef.current = pairset;
-    return pairset;
-  }, []);
+  // liveBufRef and nextLiveBufRef removed - old prefetch model no longer used
+  // All quantum data now comes from live SSE stream (useLiveStreamQueue)
  
   // ---- sign-in (local-only returning check)
     useEffect(() => {
@@ -520,7 +459,10 @@ export default function MainApp() {
   const ghostBytesRef = useRef([]); // Store full bytes (0-255) for entropy
   const subjectIndicesRef = useRef([]); // Track raw QRNG stream indices
   const ghostIndicesRef = useRef([]); // Track raw QRNG stream indices
-  const trialStrategiesRef = useRef([]); // Track which strategy each trial used (1=alternating, 0=independent)
+  const trialStrategiesRef = useRef([]); // Track which strategy each trial used (1=consecutive, 0=temporally separated)
+  const bitPositionRef = useRef(0); // Cyclic bit position counter (0→7→0→7...)
+  const subjectBitPositionsRef = useRef([]); // Track which bit position was used for each trial (subject)
+  const ghostBitPositionsRef = useRef([]); // Track which bit position was used for each trial (ghost)
   const trialsPerMinute = trialsPerBlock;
 
   // Auto-mode: Skip consent/questions, auto-restart, and auto-continue rest screens
@@ -560,7 +502,6 @@ export default function MainApp() {
     } else if (phase === 'preparing_next') {
       // Delayed reset to ensure clean state transition
       setTimeout(() => {
-        console.log('🔄 Resetting session state for new run');
         setRunRef(null);
         setblockIdx(-1);
         setTotals({ k: 0, n: 0 });
@@ -571,17 +512,9 @@ export default function MainApp() {
         const randomByte = crypto.getRandomValues(new Uint8Array(1))[0];
         const randomBit = randomByte & 1;
         const newTarget = randomBit ? 'BLUE' : 'ORANGE';
-        console.log('🎯 New Target Assignment:', {
-          randomByte,
-          randomByteBinary: randomByte.toString(2).padStart(8, '0'),
-          randomBit: randomBit,
-          target: newTarget,
-          logic: 'LSB of crypto.getRandomValues()→target'
-        });
         setTarget(newTarget);
         targetAssignedRef.current = true; // Mark as assigned
 
-        console.log('✓ Session reset complete, new target assigned');
         setPhase('consent');
       }, 100);
     }
@@ -714,8 +647,6 @@ export default function MainApp() {
         // Append to running windows history
         if (newSubjWindows.length) entropyWindowsRef.current.subj.push(...newSubjWindows);
         if (newGhostWindows.length) entropyWindowsRef.current.ghost.push(...newGhostWindows);
-      } else {
-        console.log(`⏭️ Block ${blockIdx}: Skipping entropy accumulation (block marked invalid)`);
       }
 
     } catch (entropyErr) {
@@ -726,57 +657,6 @@ export default function MainApp() {
     const blockBits = bitsRef.current.length;
     const blockSubjEntropy = blockBits > 0 ? shannonEntropy(bitsRef.current) : null;
     const blockGhostEntropy = ghostBitsRef.current.length > 0 ? shannonEntropy(ghostBitsRef.current) : null;
-
-    // DIAGNOSTIC: Check extracted bit distribution
-    const ones = bitsRef.current.filter(b => b === 1).length;
-    const bitDistribution = blockBits > 0 ? (ones / blockBits) : 0;
-    const hitRate = n > 0 ? (k / n) : 0;
-
-    // Check XOR parity distribution from source bytes
-    const xorBitsFromBytes = subjectBytesRef.current.map(byte => {
-      let parity = 0;
-      for (let b = 0; b < 8; b++) {
-        parity ^= (byte >> b) & 1;
-      }
-      return parity;
-    });
-    const xorOnes = xorBitsFromBytes.filter(b => b === 1).length;
-    const xorDistribution = xorBitsFromBytes.length > 0 ? (xorOnes / xorBitsFromBytes.length) : 0;
-
-    // Calculate session cumulative stats
-    const sessionHits = totals.k + k;
-    const sessionTrials = totals.n + n;
-    const sessionHitRate = sessionTrials > 0 ? (sessionHits / sessionTrials) : 0;
-    const sessionExpected = sessionTrials * 0.5;
-    const sessionDiff = sessionHits - sessionExpected;
-    const sessionSE = Math.sqrt(sessionTrials * 0.5 * 0.5);
-    const sessionZ = sessionTrials > 0 ? sessionDiff / sessionSE : 0;
-
-    console.log('📊 Block Diagnostic:', {
-      extractionMethod: 'XOR (parity of all 8 bits)',
-      target: target,
-      targetBit: targetBit,
-      totalBits: blockBits,
-      ones: ones,
-      zeros: blockBits - ones,
-      bitDistribution: (bitDistribution * 100).toFixed(1) + '%',
-      xorOnes: xorOnes,
-      xorZeros: xorBitsFromBytes.length - xorOnes,
-      xorDistribution: (xorDistribution * 100).toFixed(1) + '%',
-      expectedDist: '50.0%',
-      hits: k,
-      trials: n,
-      hitRate: (hitRate * 100).toFixed(1) + '%',
-      expectedHitRate: '50.0%',
-      pValue: pTwo.toFixed(4),
-      diagnosis: Math.abs(xorDistribution - 0.5) > 0.1 ? '⚠️ UNUSUAL XOR DISTRIBUTION' : '✓ XOR distribution normal',
-      '---SESSION_CUMULATIVE---': '---',
-      sessionHits: sessionHits,
-      sessionTrials: sessionTrials,
-      sessionHitRate: (sessionHitRate * 100).toFixed(2) + '%',
-      sessionZ: sessionZ.toFixed(2),
-      sessionSignificance: Math.abs(sessionZ) > 1.96 ? '⚠️ SIGNIFICANT DEVIATION' : '✓ Within normal range'
-    });
 
     // Block-level k2 split: [first 75 bits, last 75 bits]
     const half = Math.floor(blockBits / 2);
@@ -889,7 +769,9 @@ export default function MainApp() {
         ghost_bytes: ghostBytesRef.current, // Ghost full bytes
         subject_raw_indices: subjectIndicesRef.current,
         ghost_raw_indices: ghostIndicesRef.current,
-        trial_strategies: trialStrategiesRef.current, // 1=alternating, 0=independent (for chi-square test separation)
+        trial_strategies: trialStrategiesRef.current, // 1=consecutive, 0=temporally separated (for chi-square test separation)
+        subject_bit_positions: subjectBitPositionsRef.current, // Bit positions used (0-7) for positional bias detection
+        ghost_bit_positions: ghostBitPositionsRef.current, // Bit positions used (0-7) for positional bias detection
         source_label: liveLastSource || 'unknown',
         target_bit: targetBit,
         trial_count: bitsRef.current.length
@@ -901,7 +783,7 @@ export default function MainApp() {
     // Update previous block end time for next block's pause calculation
     previousBlockEndTimeRef.current = blockEndTimeRef.current;
   }, [
-    runRef, blockIdx, mappingType, targetBit, liveLastSource, target, totals.k, totals.n
+    runRef, blockIdx, mappingType, targetBit, liveLastSource
   ]);
 
   const endMinute = useCallback(async () => {
@@ -917,22 +799,7 @@ export default function MainApp() {
     setPhase('rest');
   }, [persistMinute]);
   // Idle prefetch during PRIME/REST in non-streaming mode
-  useEffect(() => {
-    // Never prefetch in streaming mode
-    if (C.USE_LIVE_STREAM) return;
-
-    // Only consider prefetching after onboarding has begun (avoid consent/preQ)
-    const allowedPhases = new Set(['prime', 'rest']);
-    if (!allowedPhases.has(phase)) return;
-
-    // When NOT running, if the next minute is 'live' and not already staged, prefetch now
-    if (phase !== 'running') {
-      // All blocks are live now - always prefetch
-      if (!nextLiveBufRef.current) {
-        prefetchLivePairs().catch(() => { /* ignore */ });
-      }
-    }
-  }, [phase, blockIdx, prefetchLivePairs]);
+  // Prefetch useEffect removed - dead code since USE_LIVE_STREAM is always true
   useEffect(() => {
     endMinuteRef.current = endMinute;
   }, [endMinute]);
@@ -942,13 +809,7 @@ export default function MainApp() {
     if (!isRunning) return;
     const TICK = Math.round(1000 / C.VISUAL_HZ);
     const MAX_TRIALS = trialsPerMinute; // Should be exactly 150 trials
-    // All blocks are live now
-    if (!C.USE_LIVE_STREAM) {
-      const ready =
-        Array.isArray(liveBufRef.current?.subj) && liveBufRef.current.subj.length >= trialsPerMinute &&
-        Array.isArray(liveBufRef.current?.ghost) && liveBufRef.current.ghost.length >= trialsPerMinute;
-      if (!ready) { endMinuteRef.current?.(); return; }
-    }
+    // All blocks use live streaming now - no prefetch buffer check needed
 
     let i = 0;
     const start = Date.now();
@@ -992,7 +853,7 @@ export default function MainApp() {
         const now = performance.now();
         if (isBuffering) { maybeResume(now); return; } // Don't increment i when buffering
         else { maybePause(now); if (isBuffering) { return; } } // Don't increment i when buffering starts
-        // Use trial-level BYTE strategy: odd trials = alternating, even trials = independent
+        // Use trial-level BYTE strategy: odd trials = consecutive, even trials = temporally separated
         const trialNumber = i + 1; // Convert 0-based to 1-based for odd/even logic
         const sByteObj = livePopSubjectByte(trialNumber); const gByteObj = livePopGhostByte(trialNumber);
         if (sByteObj === null || gByteObj === null) {
@@ -1012,17 +873,19 @@ export default function MainApp() {
         subjectRawIndex = sByteObj.rawIndex;
         ghostRawIndex = gByteObj.rawIndex;
 
-        // Extract 1 bit for trial decision using XOR (parity) of all 8 bits
-        // This eliminates any positional bias by combining all bit positions
-        // XOR all bits: odd number of 1s → 1, even number of 1s → 0
-        let sBit = 0;
-        let gBit = 0;
-        for (let b = 0; b < 8; b++) {
-          sBit ^= (subjectByte >> b) & 1;
-          gBit ^= (ghostByte >> b) & 1;
-        }
-        bit = sBit;
-        ghost = gBit;
+        // Extract 1 bit for trial decision using CYCLIC position selection (0→7→0→7...)
+        // Cycles through all 8 bit positions to average out any positional bias
+        // Track positions to enable positional bias detection in QA dashboard
+        const bitPos = bitPositionRef.current % 8;
+        bit = (subjectByte >> bitPos) & 1;
+        ghost = (ghostByte >> bitPos) & 1;
+
+        // Store positions used for this trial (for bias analysis)
+        subjectBitPositionsRef.current.push(bitPos);
+        ghostBitPositionsRef.current.push(bitPos);
+
+        // Increment position counter for next trial
+        bitPositionRef.current += 1;
 
         if (shouldInvalidate()) {
           minuteInvalidRef.current = true; invalidReasonRef.current = 'invalidated-buffer';
@@ -1030,10 +893,8 @@ export default function MainApp() {
           clearInterval(tickTimerRef.current); tickTimerRef.current = null;
           endMinuteRef.current?.(); return;
         }
-      } else {
-        bit = liveBufRef.current.subj[i] ?? 0;
-        ghost = liveBufRef.current.ghost[i] ?? 0;
       }
+      // Note: else branch removed - USE_LIVE_STREAM is always true
 
       // Only process trial and increment counter when we have valid data
       const now = Date.now();
@@ -1050,7 +911,7 @@ export default function MainApp() {
         ghostBytesRef.current.push(ghostByte);
         subjectIndicesRef.current.push(subjectRawIndex);
         ghostIndicesRef.current.push(ghostRawIndex);
-        // Track strategy: 1=alternating (odd trials), 0=independent (even trials)
+        // Track strategy: 1=consecutive (odd trials), 0=temporally separated (even trials)
         const trialNumber = i + 1;
         trialStrategiesRef.current.push(trialNumber % 2 === 1 ? 1 : 0);
       }
@@ -1103,22 +964,13 @@ export default function MainApp() {
       return;
     }
 
-    // NON-STREAM (prefetch model)
-    if (!nextLiveBufRef.current) { await prefetchLivePairs(); }
-    if (nextLiveBufRef.current) {
-      liveBufRef.current = nextLiveBufRef.current;
-      nextLiveBufRef.current = null;
-    } else {
-      // last-resort local
-      liveBufRef.current = localPairs(Math.round((C.BLOCK_MS / 1000) * C.VISUAL_HZ));
-    }
-    return;
+    // NON-STREAM (prefetch model) - NOT USED, left for backwards compatibility only
+    // This code path should never execute since USE_LIVE_STREAM is always true
+    throw new Error('Prefetch model is deprecated - USE_LIVE_STREAM must be true');
 
   }, [
-    // streaming deps
+    // streaming deps only - prefetch model is deprecated
     liveConnected, liveConnect, liveBufferedBytes, setIsBuffering,
-    // prefetch model deps
-    prefetchLivePairs,
   ]);
 
   // Calculate and save session-level temporal entropy (k=2 and k=3 windows)
@@ -1244,6 +1096,9 @@ export default function MainApp() {
       subjectIndicesRef.current = [];
       ghostIndicesRef.current = [];
       trialStrategiesRef.current = [];
+      subjectBitPositionsRef.current = [];
+      ghostBitPositionsRef.current = [];
+      bitPositionRef.current = 0; // Reset cyclic position counter
       entropyAccumRef.current = { subj: [], ghost: [] };
       entropyWindowsRef.current = { subj: [], ghost: [] };
     } catch (error) {
@@ -1286,6 +1141,7 @@ export default function MainApp() {
     bitsRef.current = []; ghostBitsRef.current = []; alignedRef.current = []; alignedGhostRef.current = [];
     subjectBytesRef.current = []; ghostBytesRef.current = [];
     subjectIndicesRef.current = []; ghostIndicesRef.current = []; trialStrategiesRef.current = [];
+    subjectBitPositionsRef.current = []; ghostBitPositionsRef.current = []; // Reset position tracking
     hitsRef.current = 0; ghostHitsRef.current = 0;
     resetLivePauseCounters();
     setRenderTrigger(0);
@@ -1888,16 +1744,9 @@ export default function MainApp() {
               <>
                 {' — '}
                 <strong>Live</strong>
-                {!C.USE_LIVE_STREAM && liveBufRef.current?.source && (
-                  <span style={{ marginLeft: 6, opacity: 0.7 }}>
-                    [{liveBufRef.current.source} · {liveBufRef.current?.subj?.length || 0}]
-                  </span>
-                )}
-                {C.USE_LIVE_STREAM && (
-                  <span style={{ marginLeft: 6, opacity: 0.7 }}>
-                    [src: {liveLastSource || '—'} · buf {liveBufferedBytes()} bytes]
-                  </span>
-                )}
+                <span style={{ marginLeft: 6, opacity: 0.7 }}>
+                  [src: {liveLastSource || '—'} · buf {liveBufferedBytes()} bytes]
+                </span>
               </>
             )}
             {' — '}Target: {target === 'BLUE' ? '🟦' : '🟠'}
