@@ -17,7 +17,7 @@ config.experiments = {
     LIVE_STREAM_DURATION_MS: 90_000, // how long to stream per LS minute
     NEEDLE_WINDOW: 20,
     PRIME_PROB: 0.75, // 75% prime / 25% neutral
-    TARGET_SIDES: ['RED', 'GREEN'],
+    TARGET_SIDES: ['BLUE', 'ORANGE'],
     LOW_CONTRAST_MODE: false, // default OFF (toggle available)
     SHOW_FEEDBACK_GAUGE: false, // circular gauge showing real-time performance
     SHOW_CONDITION_IN_HUD: false,
