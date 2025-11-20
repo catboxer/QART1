@@ -90,8 +90,8 @@ const TICK_MS = Math.round(1000 / C.VISUAL_HZ);
 
 // BUFFER WARMUP PHASE
 // Before starting trials, we accumulate quantum bytes to avoid immediate buffering issues
-const WARMUP_BYTES_START = 200;    // Require 200 bytes before starting trials
-const WARMUP_TIMEOUT_MS = 20000;   // Max 20s to wait for warmup (initial 300-byte chunk)
+const WARMUP_BYTES_START = 250;    // Require 250 bytes before starting trials (increased for stability)
+const WARMUP_TIMEOUT_MS = 25000;   // Max 25s to wait for warmup (allows time for larger initial buffer)
 
 // BUFFER PAUSE/RESUME THRESHOLDS
 // These create a "hysteresis" system to prevent rapid pause/resume cycling
@@ -102,20 +102,23 @@ const WARMUP_TIMEOUT_MS = 20000;   // Max 20s to wait for warmup (initial 300-by
 // - Participants need consistent 5Hz visual updates to maintain focus
 // - Buffer interruptions could contaminate results by breaking concentration
 //
-const PAUSE_THRESHOLD_LT = 20;     // PAUSE when buffer < 20 bytes (~6 trials worth)
-                                   // - Low enough to maximize quantum data usage
-                                   // - High enough to prevent buffer starvation
+// OPTIMIZED 2025-01-18: Increased thresholds to reduce invalidations from 36% → <10%
+// Analysis showed ~7-8 blocks/session were being invalidated due to tight buffer constraints
+const PAUSE_THRESHOLD_LT = 50;     // PAUSE when buffer < 50 bytes (~25 trials = 5s runway)
+                                   // - Increased from 20 bytes to give more buffer runway
+                                   // - Prevents premature pausing during normal stream fluctuations
 
-const RESUME_THRESHOLD_GTE = 50;   // RESUME when buffer ≥ 50 bytes (~16 trials worth)
-                                   // - Creates 30-byte hysteresis zone to prevent flicker
-                                   // - Ensures sufficient buffer depth before resuming
-                                  // - Balances quantum authenticity vs. experimental continuity
+const RESUME_THRESHOLD_GTE = 120;  // RESUME when buffer ≥ 120 bytes (~60 trials = 12s runway)
+                                   // - Increased from 50 bytes to ensure robust buffer depth
+                                   // - Creates 70-byte hysteresis zone (was 30) to prevent rapid cycling
+                                   // - Ensures stream is truly stable before resuming trials
 
 // TRIAL INVALIDATION LIMITS
 // If buffering becomes excessive, the trial block is invalidated to maintain data quality
-const MAX_PAUSES = 3;             // Max 3 pause events per 30s block (10% pause tolerance)
-const MAX_TOTAL_PAUSE_MS = 5 * TICK_MS;  // Max 1s total pause time per block (~3.3%)
-const MAX_SINGLE_PAUSE_MS = 3 * TICK_MS; // Max 600ms for any single pause event
+// RELAXED 2025-01-18: More tolerant of transient network issues while maintaining quality
+const MAX_PAUSES = 5;                    // Max 5 pause events per 30s block (was 3)
+const MAX_TOTAL_PAUSE_MS = 10 * TICK_MS; // Max 2s total pause time per block (was 1s)
+const MAX_SINGLE_PAUSE_MS = 5 * TICK_MS; // Max 1s for any single pause event (was 600ms)
 
 const fmtSec = (ms) => `${(ms / 1000).toFixed(ms % 1000 ? 1 : 0)}s`;
 const POLICY_TEXT = {
@@ -1142,6 +1145,7 @@ export default function MainApp() {
     subjectBytesRef.current = []; ghostBytesRef.current = [];
     subjectIndicesRef.current = []; ghostIndicesRef.current = []; trialStrategiesRef.current = [];
     subjectBitPositionsRef.current = []; ghostBitPositionsRef.current = []; // Reset position tracking
+    bitPositionRef.current = 0; // Reset cyclic position counter to 0 at start of each block
     hitsRef.current = 0; ghostHitsRef.current = 0;
     resetLivePauseCounters();
     setRenderTrigger(0);

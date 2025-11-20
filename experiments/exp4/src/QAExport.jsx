@@ -45,6 +45,9 @@ function computeStatistics(sessions, mode = 'pooled', binauralFilter = 'all', pr
   let allSubjectBits = [];
   let allGhostBits = [];
 
+  // Check if we're using aggregates-only mode (fast mode)
+  const usingAggregates = sessions.length > 0 && sessions[0].aggregates && (!sessions[0].minutes || sessions[0].minutes.length === 0);
+
   sessions.forEach(session => {
     let sessionHits = 0;
     let sessionTrials = 0;
@@ -52,7 +55,14 @@ function computeStatistics(sessions, mode = 'pooled', binauralFilter = 'all', pr
     let sessionSubjectBits = [];
     let sessionGhostBits = [];
 
-    (session.minutes || []).forEach(minute => {
+    // Use aggregates if available and no minute data loaded
+    if (session.aggregates && (!session.minutes || session.minutes.length === 0)) {
+      sessionHits = session.aggregates.totalHits || 0;
+      sessionTrials = session.aggregates.totalTrials || 0;
+      sessionGhostHits = session.aggregates.totalGhostHits || 0;
+    } else {
+      // Use detailed minute data (original behavior)
+      (session.minutes || []).forEach(minute => {
       // Filter by mapping type at the block level
       if (mappingFilter === 'ring' && minute.mapping_type !== 'low_entropy') return;
       if (mappingFilter === 'mosaic' && minute.mapping_type !== 'high_entropy') return;
@@ -88,7 +98,8 @@ function computeStatistics(sessions, mode = 'pooled', binauralFilter = 'all', pr
         sessionGhostBits.push(...demonBits);
         allGhostBits.push(...demonBits);
       }
-    });
+      });
+    }
 
     const hitRate = sessionTrials > 0 ? sessionHits / sessionTrials : 0;
     const ghostHitRate = sessionTrials > 0 ? sessionGhostHits / sessionTrials : 0;
@@ -925,13 +936,25 @@ function filterSessions(sessions, mode, binauralFilter, primeFilter, mappingFilt
   return filtered;
 }
 
-async function fetchAllRunsWithMinutes(includeTrials = true) {
+async function fetchAllRunsWithMinutes(includeTrials = true, aggregatesOnly = false) {
   try {
     // Fetch only from experiment3_ai_responses (contains all human, baseline, and ai_agent sessions)
     const runsSnap = await getDocs(
       query(collection(db, 'experiment3_ai_responses'), orderBy('createdAt', 'desc'))
     );
     const runs = runsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+    // Fast mode: return only run documents with aggregates (no subcollections)
+    if (aggregatesOnly) {
+      console.log('📊 FAST MODE: Loaded', runs.length, 'sessions with aggregates only');
+      return runs.map(r => ({
+        ...r,
+        minutes: [], // Empty array to avoid breaking existing code
+        audits: [],
+        blockCommits: []
+      }));
+    }
+
     const out = [];
 
     for (const r of runs) {
@@ -1106,13 +1129,20 @@ function PBadge({ label, p, style = {} }) {
 }
 
 // Expandable Analytics Section Component
-function AnalyticsSection({ title, content }) {
+function AnalyticsSection({ title, content, requiresDetailedData, onExpand }) {
   const [expanded, setExpanded] = useState(false);
+
+  const handleToggle = () => {
+    if (!expanded && requiresDetailedData && onExpand) {
+      onExpand(); // Trigger detailed data load
+    }
+    setExpanded(!expanded);
+  };
 
   return (
     <div style={{ marginBottom: 24, border: '1px solid #e5e7eb', borderRadius: 8 }}>
       <button
-        onClick={() => setExpanded(!expanded)}
+        onClick={handleToggle}
         style={{
           width: '100%',
           padding: '12px 16px',
@@ -4818,6 +4848,8 @@ function calculateCrossCorrelation(series1, series2) {
 export default function QAExport() {
   const [loading, setLoading] = useState(true);
   const [runs, setRuns] = useState([]);
+  const [detailedDataLoaded, setDetailedDataLoaded] = useState(false);
+  const [loadingDetailed, setLoadingDetailed] = useState(false);
   const [mode, setMode] = useState('pooled');
   const [binauralFilter, setBinauralFilter] = useState('all');
   const primeFilter = 'all'; // Everyone is primed now - no filter needed
@@ -4840,12 +4872,12 @@ export default function QAExport() {
     return unsub;
   }, []);
 
-  // Load experiment data
+  // Load experiment data (use aggregates-only mode for fast initial load)
   useEffect(() => {
     (async () => {
       try {
-        const loadedRuns = await fetchAllRunsWithMinutes();
-        console.log('QA Dashboard: Loaded runs:', loadedRuns.length, loadedRuns);
+        const loadedRuns = await fetchAllRunsWithMinutes(true, true); // includeTrials=true, aggregatesOnly=true
+        console.log('QA Dashboard: Loaded runs (aggregates only):', loadedRuns.length, loadedRuns);
         setRuns(loadedRuns);
       } finally {
         setLoading(false);
@@ -4925,6 +4957,24 @@ export default function QAExport() {
     } catch (err) {
       console.error('QA Dashboard: Toggle failed:', err);
       alert(`Toggle failed: ${err.message}`);
+    }
+  };
+
+  // Load detailed data (minutes, audits, commits) for advanced analysis
+  const loadDetailedData = async () => {
+    if (detailedDataLoaded || loadingDetailed) return;
+
+    setLoadingDetailed(true);
+    try {
+      const loadedRuns = await fetchAllRunsWithMinutes(true, false); // includeTrials=true, aggregatesOnly=false
+      console.log('QA Dashboard: Loaded detailed data for', loadedRuns.length, 'sessions');
+      setRuns(loadedRuns);
+      setDetailedDataLoaded(true);
+    } catch (err) {
+      console.error('Failed to load detailed data:', err);
+      alert(`Failed to load detailed data: ${err.message}`);
+    } finally {
+      setLoadingDetailed(false);
     }
   };
 
@@ -5843,6 +5893,54 @@ export default function QAExport() {
             Research Analytics Suite
           </h2>
 
+          {/* Load Detailed Data Button */}
+          {!detailedDataLoaded && (
+            <div style={{
+              marginBottom: 20,
+              padding: 16,
+              background: '#fef3c7',
+              border: '1px solid #f59e0b',
+              borderRadius: 8
+            }}>
+              <p style={{ marginBottom: 12, fontSize: 14 }}>
+                <strong>⚡ Fast Mode:</strong> Currently showing summary statistics only (loaded {filteredSessions.length} sessions instantly).
+              </p>
+              <p style={{ marginBottom: 12, fontSize: 14 }}>
+                To use advanced analytics (Temporal Structure, Entropy Analysis, etc.), click below to load detailed trial data.
+              </p>
+              <button
+                onClick={loadDetailedData}
+                disabled={loadingDetailed}
+                style={{
+                  padding: '10px 20px',
+                  fontSize: 14,
+                  fontWeight: 600,
+                  background: loadingDetailed ? '#9ca3af' : '#3b82f6',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: 6,
+                  cursor: loadingDetailed ? 'wait' : 'pointer',
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                }}
+              >
+                {loadingDetailed ? 'Loading detailed data...' : 'Load Detailed Data for Advanced Analytics'}
+              </button>
+            </div>
+          )}
+
+          {detailedDataLoaded && (
+            <div style={{
+              marginBottom: 20,
+              padding: 12,
+              background: '#d1fae5',
+              border: '1px solid #10b981',
+              borderRadius: 8,
+              fontSize: 14
+            }}>
+              ✅ Detailed data loaded - all analytics features enabled
+            </div>
+          )}
+
           {/* Basic Performance Summary */}
           <AnalyticsSection
             title="Basic Performance Summary"
@@ -5853,30 +5951,40 @@ export default function QAExport() {
           <AnalyticsSection
             title="Temporal Structure & Control Analysis"
             content={<UnifiedTemporalControlAnalysis sessions={filteredSessions} />}
+            requiresDetailedData={true}
+            onExpand={loadDetailedData}
           />
 
           {/* Entropy Signatures */}
           <AnalyticsSection
             title="Entropy Signatures"
             content={<EntropySignatures sessions={filteredSessions} />}
+            requiresDetailedData={true}
+            onExpand={loadDetailedData}
           />
 
           {/* Individual Difference Tracking */}
           <AnalyticsSection
             title="Individual Difference Tracking"
             content={<IndividualDifferenceTracking sessions={filteredSessions} />}
+            requiresDetailedData={true}
+            onExpand={loadDetailedData}
           />
 
           {/* Control Validations - Trial-Level Chi-Square Tests */}
           <AnalyticsSection
             title="Trial-Level Control Validations (Chi-Square Independence)"
             content={<ControlValidations sessions={filteredSessions} mappingFilter={mappingFilter} />}
+            requiresDetailedData={true}
+            onExpand={loadDetailedData}
           />
 
           {/* Exploratory Signatures */}
           <AnalyticsSection
             title="Exploratory Signatures"
             content={<ExploratorySignatures sessions={filteredSessions} />}
+            requiresDetailedData={true}
+            onExpand={loadDetailedData}
           />
         </div>
       )}

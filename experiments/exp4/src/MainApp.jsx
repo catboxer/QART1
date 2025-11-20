@@ -211,6 +211,7 @@ export default function MainApp() {
   const [isRunning, setIsRunning] = useState(false);
   const [lastBlock, setLastBlock] = useState(null);
   const [totals, setTotals] = useState({ k: 0, n: 0 });
+  const [totalGhostHits, setTotalGhostHits] = useState(0);
 
   const bitsRef = useRef([]);
   const demonBitsRef = useRef([]);
@@ -279,6 +280,7 @@ export default function MainApp() {
 
     setLastBlock(blockSummary);
     setTotals(t => ({ k: t.k + k, n: t.n + n }));
+    setTotalGhostHits(t => t + kd);
 
     // Increment block index
     setblockIdx(prev => prev + 1);
@@ -286,6 +288,35 @@ export default function MainApp() {
     // Note: persistMinute will be called after this via a useEffect watching blockIdx
 
   }, [target]);
+
+  // Save session-level aggregates for fast QA dashboard loading
+  const saveSessionAggregates = useCallback(async () => {
+    if (!runRef) return;
+
+    try {
+      const hitRate = totals.n > 0 ? totals.k / totals.n : 0.5;
+      const ghostHitRate = totals.n > 0 ? totalGhostHits / totals.n : 0.5;
+
+      await setDoc(runRef, {
+        aggregates: {
+          totalHits: totals.k,
+          totalTrials: totals.n,
+          totalGhostHits: totalGhostHits,
+          hitRate: hitRate,
+          ghostHitRate: ghostHitRate,
+          blocksCompleted: blockIdx,
+          blocksPlanned: C.BLOCKS_TOTAL,
+          sessionComplete: blockIdx >= C.BLOCKS_TOTAL,
+          target: target,
+          lastUpdated: new Date().toISOString()
+        }
+      }, { merge: true });
+
+      console.log('✅ Session aggregates saved:', runRef.id, { hitRate, ghostHitRate, blocks: blockIdx });
+    } catch (error) {
+      console.error('❌ Failed to save session aggregates:', error);
+    }
+  }, [runRef, totals, totalGhostHits, blockIdx, target]);
 
   // Calculate and save session-level temporal entropy (k=2 and k=3 windows)
   const calculateSessionTemporalEntropy = useCallback(async () => {
@@ -670,7 +701,10 @@ export default function MainApp() {
       // Skip post-questionnaire in auto/AI mode, go to results
       // Mark session as completed since we're skipping the post-questionnaire
       if (runRef) {
-        setDoc(runRef, { completed: true }, { merge: true })
+        Promise.all([
+          saveSessionAggregates(),
+          setDoc(runRef, { completed: true }, { merge: true })
+        ])
           .then(() => {
             console.warn('✅ Session marked as completed:', runRef.id);
             setPhase('results');
@@ -705,6 +739,7 @@ export default function MainApp() {
         setRunRef(null);
         setblockIdx(-1);
         setTotals({ k: 0, n: 0 });
+        setTotalGhostHits(0);
         setLastBlock(null);
         setIsRunning(false);
 
@@ -716,7 +751,7 @@ export default function MainApp() {
       }, 100);
     }
     // Note: blockIdxToPersist is a ref, not a state, so it doesn't need to be in dependencies
-  }, [isAutoMode, isAIMode, phase, blockIdx, autoSessionCount, autoSessionTarget, runRef]);
+  }, [isAutoMode, isAIMode, phase, blockIdx, autoSessionCount, autoSessionTarget, runRef, saveSessionAggregates]);
 
   // Note: Buffer management functions removed - no longer needed with instant trial processing
   const minuteInvalidRef = useRef(false);
@@ -847,7 +882,10 @@ export default function MainApp() {
   useEffect(() => {
     if (!needsPersist || !runRef) return;
 
-    persistMinute()
+    Promise.all([
+      persistMinute(),
+      saveSessionAggregates() // Update aggregates after each block
+    ])
       .then(() => {
         setNeedsPersist(false);
       })
@@ -855,7 +893,7 @@ export default function MainApp() {
         console.error('❌ Failed to save block data:', err);
         setNeedsPersist(false);
       });
-  }, [needsPersist, runRef, persistMinute]);
+  }, [needsPersist, runRef, persistMinute, saveSessionAggregates]);
 
   // Note: Trial processing is now handled instantly by processTrials() function
   // No tick loop needed since all 150 trials are processed at once
@@ -1502,6 +1540,7 @@ export default function MainApp() {
             setPhase('results');
             try {
               if (runRef) {
+                await saveSessionAggregates();
                 await setDoc(runRef, { post_survey: answers, completed: true }, { merge: true });
               }
             } catch (e) {

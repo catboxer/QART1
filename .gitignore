@@ -22,6 +22,8 @@ firestore.rules
 .DS_Store
 
 qartexperiment1-firebase-adminsdk-fbsvc-800e7fc19f.json
+serviceAccountKey.json
+*firebase-adminsdk*.json
 # Local Netlify folder
 .netlify
 # .gitignore
