@@ -17,7 +17,7 @@ import {
 } from './stats/index.js';
 import { db, ensureSignedIn } from './firebase.js';
 import {
-  collection, doc, addDoc, setDoc, getDoc, getDocs, updateDoc, serverTimestamp,
+  collection, doc, addDoc, setDoc, getDoc, getDocs, updateDoc, serverTimestamp, query, where,
 } from 'firebase/firestore';
 import { fetchQRNGBits } from './fetchQRNGBits.js';
 import { runNISTAudit } from './nistTests.js';
@@ -159,9 +159,20 @@ export default function MainApp() {
       try {
         if (!target) throw new Error('logic/order: target must be set before creating run');
         const uidNow = uid || (await requireUid());
+
+        // Count previous sessions for this participant to get session number
+        const previousSessionsQuery = query(
+          collection(db, 'experiment3_ai_responses'),
+          where('participant_id', '==', uidNow),
+          where('session_type', '==', isAutoMode ? 'baseline' : isAIMode ? 'ai_agent' : 'human')
+        );
+        const previousSessionsSnapshot = await getDocs(previousSessionsQuery);
+        const sessionNumber = previousSessionsSnapshot.size + 1;
+
         const col = collection(db, 'experiment3_ai_responses');
         const docData = {
           participant_id: uidNow,
+          sessionNumber: sessionNumber, // NEW: Track which session this is for this participant
           experimentId: C.EXPERIMENT_ID,
           createdAt: serverTimestamp(),
           target_side: target,

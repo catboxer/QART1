@@ -1129,20 +1129,45 @@ function PBadge({ label, p, style = {} }) {
 }
 
 // Expandable Analytics Section Component
-function AnalyticsSection({ title, content, requiresDetailedData, onExpand }) {
+function AnalyticsSection({ title, content, requiresDetailedData, onExpand, detailedDataLoaded, loadingDetailed }) {
   const [expanded, setExpanded] = useState(false);
+  const [shouldExpandAfterLoad, setShouldExpandAfterLoad] = useState(false);
+
+  // Auto-expand after data loads if user clicked while loading
+  useEffect(() => {
+    if (shouldExpandAfterLoad && detailedDataLoaded) {
+      setExpanded(true);
+      setShouldExpandAfterLoad(false);
+    }
+  }, [shouldExpandAfterLoad, detailedDataLoaded]);
 
   const handleToggle = () => {
-    if (!expanded && requiresDetailedData && onExpand) {
-      onExpand(); // Trigger detailed data load
+    console.log('AnalyticsSection handleToggle:', {
+      title,
+      expanded,
+      requiresDetailedData,
+      detailedDataLoaded,
+      loadingDetailed
+    });
+
+    if (!expanded && requiresDetailedData && !detailedDataLoaded) {
+      // Trigger data load and mark to expand after
+      console.log('Triggering data load for:', title);
+      if (onExpand) {
+        onExpand();
+        setShouldExpandAfterLoad(true);
+      }
+    } else {
+      console.log('Toggling expanded state for:', title);
+      setExpanded(!expanded);
     }
-    setExpanded(!expanded);
   };
 
   return (
     <div style={{ marginBottom: 24, border: '1px solid #e5e7eb', borderRadius: 8 }}>
       <button
         onClick={handleToggle}
+        disabled={loadingDetailed && requiresDetailedData && !detailedDataLoaded}
         style={{
           width: '100%',
           padding: '12px 16px',
@@ -1153,13 +1178,20 @@ function AnalyticsSection({ title, content, requiresDetailedData, onExpand }) {
           fontSize: 16,
           fontWeight: 'bold',
           color: '#374151',
-          cursor: 'pointer',
+          cursor: (loadingDetailed && requiresDetailedData && !detailedDataLoaded) ? 'wait' : 'pointer',
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
         }}
       >
-        {title}
+        <span>
+          {title}
+          {loadingDetailed && requiresDetailedData && !detailedDataLoaded && (
+            <span style={{ marginLeft: 8, fontSize: 14, color: '#9ca3af' }}>
+              (Loading detailed data...)
+            </span>
+          )}
+        </span>
         <span style={{ fontSize: 14, color: '#6b7280' }}>
           {expanded ? '▼' : '▶'}
         </span>
@@ -5945,6 +5977,9 @@ export default function QAExport() {
           <AnalyticsSection
             title="Basic Performance Summary"
             content={<PrimaryPerformanceMetrics sessions={filteredSessions} stats={stats} />}
+            requiresDetailedData={false}
+            detailedDataLoaded={detailedDataLoaded}
+            loadingDetailed={loadingDetailed}
           />
 
           {/* Unified Temporal & Control Analysis */}
@@ -5953,6 +5988,8 @@ export default function QAExport() {
             content={<UnifiedTemporalControlAnalysis sessions={filteredSessions} />}
             requiresDetailedData={true}
             onExpand={loadDetailedData}
+            detailedDataLoaded={detailedDataLoaded}
+            loadingDetailed={loadingDetailed}
           />
 
           {/* Entropy Signatures */}
@@ -5961,6 +5998,8 @@ export default function QAExport() {
             content={<EntropySignatures sessions={filteredSessions} />}
             requiresDetailedData={true}
             onExpand={loadDetailedData}
+            detailedDataLoaded={detailedDataLoaded}
+            loadingDetailed={loadingDetailed}
           />
 
           {/* Individual Difference Tracking */}
@@ -5969,6 +6008,8 @@ export default function QAExport() {
             content={<IndividualDifferenceTracking sessions={filteredSessions} />}
             requiresDetailedData={true}
             onExpand={loadDetailedData}
+            detailedDataLoaded={detailedDataLoaded}
+            loadingDetailed={loadingDetailed}
           />
 
           {/* Control Validations - Trial-Level Chi-Square Tests */}
@@ -5977,6 +6018,8 @@ export default function QAExport() {
             content={<ControlValidations sessions={filteredSessions} mappingFilter={mappingFilter} />}
             requiresDetailedData={true}
             onExpand={loadDetailedData}
+            detailedDataLoaded={detailedDataLoaded}
+            loadingDetailed={loadingDetailed}
           />
 
           {/* Exploratory Signatures */}
@@ -5985,6 +6028,8 @@ export default function QAExport() {
             content={<ExploratorySignatures sessions={filteredSessions} />}
             requiresDetailedData={true}
             onExpand={loadDetailedData}
+            detailedDataLoaded={detailedDataLoaded}
+            loadingDetailed={loadingDetailed}
           />
         </div>
       )}
