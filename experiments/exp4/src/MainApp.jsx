@@ -1671,6 +1671,9 @@ export default function MainApp() {
 
         <div style={{ marginTop: 24, padding: '16px', background: '#fff', border: '1px solid #ddd', borderRadius: 8 }}>
           <p>Session ID: <code>{runRef?.id}</code></p>
+          <p style={{ marginTop: 16 }}>
+            Redeem Survey Code with one click: <a href="https://www.surveycircle.com/ZZ4P-RCF3-P54R-7DVE/" target="_blank" rel="noopener noreferrer">https://www.surveycircle.com/ZZ4P-RCF3-P54R-7DVE/</a>
+          </p>
           <p>To keep the study fair and unbiased for future participants, we're holding back full details until data collection is complete.</p>
 
           <ul style={{ textAlign: 'left', marginTop: 16 }}>
