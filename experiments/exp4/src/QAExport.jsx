@@ -45,9 +45,6 @@ function computeStatistics(sessions, mode = 'pooled', binauralFilter = 'all', pr
   let allSubjectBits = [];
   let allGhostBits = [];
 
-  // Check if we're using aggregates-only mode (fast mode)
-  const usingAggregates = sessions.length > 0 && sessions[0].aggregates && (!sessions[0].minutes || sessions[0].minutes.length === 0);
-
   sessions.forEach(session => {
     let sessionHits = 0;
     let sessionTrials = 0;
