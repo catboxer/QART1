@@ -935,11 +935,11 @@ export default function MainApp() {
       <div style={{ position: 'relative' }}>
         <ConsentGate
           title="Consent to Participate"
-          studyDescription="This study investigates whether focused attention can correlate with patterns in random color generation during attention tasks. You will complete 30 blocks each 5 seconds long and brief questionnaires (approximately 3 minutes total)."
+          studyDescription="This study investigates whether different types of agents (human consciousness, artificial intelligence, and automated systems) show distinct patterns when attempting to influence quantum random number generators. You will complete 30 blocks each ~3 seconds long and brief questionnaires (approximately 5 minutes total)."
           bullets={[
-            'You will focus on an assigned target color (orange or blue) and attempt to influence quantum random outcomes through focused intention.',
-            'Your task is to concentrate your attention on your target color during the moment quantum data is fetched from a quantum random number generator.',
-            'Each block begins when you click "I\'m Ready" - this triggers quantum data retrieval while your target color pulses on screen.',
+            'You will receive a target color assignment (blue or orange)',
+            'Your task is to get your target color above 50%. Concentrate your attention on your target color right before and during the moment quantum data is fetched from a quantum random number generator.',
+            'When focused and ready, press "I\'m Ready" and keep focusing as your color pulses. This triggers the quantum random number generator and the sigantures in the QRNG during your focused intention is what we\'re testing.', 
             'We collect data on quantum random sequences, your performance metrics, timing patterns, and your questionnaire responses.',
             'Participation is completely voluntary; you may exit at any time using the door button.',
             'All data is stored anonymously and securely for research purposes.',
@@ -1029,30 +1029,15 @@ export default function MainApp() {
         <h2>Research Background</h2>
         <div style={{ border: '1px solid #ddd', padding: 20, borderRadius: 12, background: '#f9f9f9', minHeight: 300 }}>
           <div>
-            <h3 style={{ marginTop: 0, color: '#2c3e50' }}>PK Research: Moving Beyond "Does It Exist?"</h3>
+            <h3 style={{ marginTop: 0, color: '#2c3e50' }}>PK Research: Moving Beyond "Does PSI Exist?"</h3>
             <div style={{ lineHeight: 1.6, fontSize: 15 }}>
-              <p>Between 1959 and 2000, researchers conducted 515 carefully controlled laboratory experiments testing whether human intention could influence random number generators. The combined results deviated more than 16 standard deviations from pure chance. To put that in perspective: the odds of this happening by accident are essentially zero. The effect is tiny—less than 1% deviation on average. But here's what matters: it never goes away.</p>
-
-              <p>Studies published after 1987 showed nearly identical effect sizes to earlier work (z-scores of 0.61 vs 0.73), even as experimental quality dramatically improved over this period. As scientists got better at controlling for errors and tightening protocols, the effect remained rock-solid stable.</p>
-
-              <p>The skeptics' objections don't add up. To dismiss these results as publication bias, you'd need to believe that 91 researchers collectively conducted and hid nearly 3,000 failed experiments. When three independent labs—Princeton, Giessen, and Freiburg—ran a strict replication with identical equipment, all three found effects in the predicted direction with "substantial structural anomalies well beyond chance expectation". </p>
-              <p>Four decades. Nearly 100 researchers. Multiple continents. Increasingly rigorous controls. The same small, persistent deviation from randomness, appearing again and again and again.</p>
-              <p>Because the effect of human intention on RNG's is so small, we're now examining its statistical signatures including the temporal patterns, correlation structures, and relationships to other variables—to distinguish genuine anomalies from methodological artifacts and develop more specific, testable hypotheses about what's actually happening.</p>
+              <p>Between 1959 and 2000, researchers conducted 515 controlled experiments testing whether human intention could influence random number generators. Dean Radin and Roger Nelson's meta-analysis found effects deviating more than 16 standard deviations from chance. That's a cumulative result across nearly 100 independent researchers, multiple continents, and increasingly rigorous protocols. The effect is small (less than 1% deviation) but persistent: studies published after 1987 showed nearly identical effect sizes to earlier work (z-scores 0.61 vs 0.73) even as experimental quality improved. Now we're testing whether similar patterns appear in AI systems alongside human participants.</p>
 
               <p style={{ fontStyle: 'italic', color: '#555', marginBottom: 0 }}>Your participation helps map the landscape of consciousness-matter interaction.</p>
             </div>
           </div>
 
-          <div style={{ marginTop: 8}}>
-            <h3 style={{ marginTop: 0, color: '#2c3e50' }}>Instructions</h3>
-            <ul style={{ lineHeight: 1.6 }}>
-              <li>This experiment uses quantum random number generators for true randomness.</li>
-              <li>You'll focus on influencing random color sequences toward your assigned target color.</li>
-              <li>Use your mental intention to nudge the quantum processes toward your target.</li>
-              <li>Statistical analysis will examine patterns in the data for signatures of your influence.</li>
-              <li>Take your time and maintain relaxed focus during each block.</li>
-            </ul>
-          </div>
+        
         </div>
         <div style={{ marginTop: 8 }}>
           <button
@@ -1192,10 +1177,10 @@ export default function MainApp() {
         <div style={{ marginBottom: 30, marginTop: 30 }}>
           <h3 style={{ color: '#2c3e50', marginBottom: 15 }}>What to Expect:</h3>
           <ul style={{ fontSize: 16, lineHeight: 1.8 }}>
-            <li>You'll complete 30 short blocks with breaks between each. Before each block begins, take a moment to settle and direct your attention toward your chosen target color. This focus should begin just before you start the block and continue through the fetch period.</li>
-            <li><strong>Critical moment:</strong> Immediately before and as you click <em>"I'm Ready"</em>, the system will retrieve quantum random data while your target color pulses on the screen. <strong>This is the period to sustain clear, steady focus on your target color—prepare your intention in advance so your attention is already engaged at the instant of the click.</strong></li>
+            <li>You'll complete 30 short blocks with breaks between each. <b>Before </b>each block begins, take a moment to settle and direct your attention toward your chosen target color. This focus should begin just before you start the block and continue through the fetch period.</li>
+            <li><strong>Critical moment:</strong> Immediately before and as you click <em>"I'm Ready"</em>, the system will retrieve quantum random data while your target color pulses on the screen. <strong>This is the period to sustain clear, steady focus on your target color. Focus your intention before and during your click of the I'm Ready button.</strong></li>
 
-            <li>After the quantum data is retrieved, results appear instantly. The goal is to score over 50% as often as possible.</li>
+            <li>You will see your target color flashing during the fetch. After the quantum data is retrieved, results appear instantly. The goal is to score over 50% as often as possible.</li>
             <li>During breaks take a moment to breathe and clear your mind.</li>
           </ul>
         </div>
