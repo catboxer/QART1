@@ -6092,21 +6092,21 @@ export default function QAExport() {
                 return (
                   <tr key={session.id}>
                     <td style={{ border: '1px solid #d1d5db', padding: 8 }}>
-                      <code style={{ fontSize: 11 }}>{session.id.slice(-8)}</code>
+                      <code style={{ fontSize: 11 }}>{session.id.slice(0, 5)}</code>
                     </td>
                     <td style={{ border: '1px solid #d1d5db', padding: 8 }}>
                       {session.createdAt?.toDate?.()?.toLocaleDateString() || '—'}
                     </td>
                     <td style={{ border: '1px solid #d1d5db', padding: 8 }}>
                       <code style={{ fontSize: 11 }}>
-                        {session.participant_id?.slice(-8) || '—'}
+                        {session.participant_id?.slice(0, 5) || '—'}
                       </code>
                     </td>
                     <td style={{ border: '1px solid #d1d5db', padding: 8 }}>
                       {session.completed ? '✅ Complete' : '⏳ In Progress'}
                     </td>
                     <td style={{ border: '1px solid #d1d5db', padding: 8 }}>
-                      {session.minutes?.length || 0}
+                      {session.minutes?.length || session.aggregates?.blocksCompleted || 0}
                     </td>
                     <td style={{ border: '1px solid #d1d5db', padding: 8 }}>
                       {sessionStats
@@ -6120,7 +6120,7 @@ export default function QAExport() {
                     <td style={{ border: '1px solid #d1d5db', padding: 8 }}>
                       {session.session_type === 'baseline' || session.session_type === 'session_runner'
                         ? `Baseline (${session.mode || 'auto'})`
-                        : `${(session.minutes || []).length} live`}
+                        : `${session.minutes?.length || session.aggregates?.blocksCompleted || 0} live`}
                     </td>
                     <td style={{ border: '1px solid #d1d5db', padding: 8 }}>
                       {session.session_type === 'ai_agent' ? '🤖 AI' :
