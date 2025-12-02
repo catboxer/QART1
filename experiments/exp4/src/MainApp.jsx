@@ -1649,6 +1649,9 @@ export default function MainApp() {
           <p style={{ marginTop: 16 }}>
             Redeem Survey Code with one click: <a href="https://www.surveycircle.com/ZZ4P-RCF3-P54R-7DVE/" target="_blank" rel="noopener noreferrer">https://www.surveycircle.com/ZZ4P-RCF3-P54R-7DVE/</a>
           </p>
+          <p style={{ marginTop: 16 }}>
+            <a href="https://whatthequark.com/human-ai-quantum-test/" target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6', textDecoration: 'underline' }}>Read about the methodology behind this experiment</a>
+          </p>
           <p>To keep the study fair and unbiased for future participants, we're holding back full details until data collection is complete.</p>
 
           <ul style={{ textAlign: 'left', marginTop: 16 }}>
