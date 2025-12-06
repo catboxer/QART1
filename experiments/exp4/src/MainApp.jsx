@@ -1647,7 +1647,10 @@ export default function MainApp() {
         <div style={{ marginTop: 24, padding: '16px', background: '#fff', border: '1px solid #ddd', borderRadius: 8 }}>
           <p>Session ID: <code>{runRef?.id}</code></p>
           <p style={{ marginTop: 16 }}>
-            Redeem Survey Code with one click: <a href="https://www.surveycircle.com/ZZ4P-RCF3-P54R-7DVE/" target="_blank" rel="noopener noreferrer">https://www.surveycircle.com/ZZ4P-RCF3-P54R-7DVE/</a>
+            Redeem Survey Circle Code with one click: <a href="https://www.surveycircle.com/ZZ4P-RCF3-P54R-7DVE/" target="_blank" rel="noopener noreferrer">https://www.surveycircle.com/ZZ4P-RCF3-P54R-7DVE/</a>
+          </p>
+          <p style={{ marginTop: 16 }}>
+            Get Karma for free research participants at SurveySwap.io: <a href="https://surveyswap.io/sr/Y3MS-6Z81-IQDK" target="_blank" rel="noopener noreferrer">https://surveyswap.io/sr/Y3MS-6Z81-IQDK</a> (or enter code manually: <strong>Y3MS-6Z81-IQDK</strong>)
           </p>
           <p style={{ marginTop: 16 }}>
             <a href="https://whatthequark.com/human-ai-quantum-test/" target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6', textDecoration: 'underline' }}>Read about the methodology behind this experiment</a>
