@@ -1571,15 +1571,15 @@ export default function MainApp() {
 
         <div style={{ textAlign: 'left', marginBottom: 32, padding: '16px', background: '#f8f9fa', borderRadius: 8 }}>
           <h4>What This Study Investigated</h4>
-          <p>This experiment tested whether focused mental intention could reduce entropy (increase order) in randomly generated sequences. You were asked to focus attention on specific target symbols while observing rapid visual displays to see if your intention could make the patterns less random.</p>
+          <p>This experiment tested whether focused mental intention could influence quantum random number generators to bias outcomes toward a target color. You were assigned a target color (blue or orange) and asked to focus your attention on that color immediately before and during the moment quantum data was fetched from a real quantum random number generator. Your task was to make your target color appear more than 50% of the time through focused intention alone.</p>
 
           <h4>Understanding Your Score</h4>
-          <p>A single session score doesn't tell us much about whether you have any ability, but repeating the experiment multiple times can reveal meaningful patterns. Very high scores (consistently above 55%) or very low scores (consistently below 45%) across many sessions could indicate an effect.</p>
+          <p>A single session score doesn't tell us much about whether you have any ability, but repeating the experiment multiple times can reveal meaningful patterns. Very high scores (consistently above 55%) or very low scores (consistently below 45%) across many sessions could indicate a significant effect.</p>
 
           <p>To evaluate your personal performance: complete at least 10 sessions, then calculate your average score. If your average is consistently above 52-53% or below 47-48% across multiple sets of 10 sessions, this might indicate a genuine pattern rather than random variation. Remember, low scores are just as telling as high scores—we would simply test you with reversed instructions.</p>
 
           <h4>Next Steps</h4>
-          <p>Your data contributes to a larger dataset that will be analyzed for statistical patterns. Results will be made available once data collection is complete and analysis is finished.</p>
+          <p>Your data contributes to a larger dataset that will be analyzed for statistical patterns, comparing human participants, AI agents, and automated baselines. Results will be made available once data collection is complete and analysis is finished.</p>
         </div>
 
         {/* Hide email capture for auto-mode and AI-mode */}
