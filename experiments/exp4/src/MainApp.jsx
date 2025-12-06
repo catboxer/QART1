@@ -939,12 +939,13 @@ export default function MainApp() {
           bullets={[
             'You will receive a target color assignment (blue or orange)',
             'Your task is to get your target color above 50%. Concentrate your attention on your target color right before and during the moment quantum data is fetched from a quantum random number generator.',
-            'When focused and ready, press "I\'m Ready" and keep focusing as your color pulses. This triggers the quantum random number generator and the sigantures in the QRNG during your focused intention is what we\'re testing.', 
+            'When focused and ready, press "I\'m Ready" and keep focusing as your color pulses. This triggers the quantum random number generator and the sigantures in the QRNG during your focused intention is what we\'re testing.',
             'We collect data on quantum random sequences, your performance metrics, timing patterns, and your questionnaire responses.',
             'Participation is completely voluntary; you may exit at any time using the door button.',
             'All data is stored anonymously and securely for research purposes.',
             'Data will be retained indefinitely to enable scientific replication and analysis.',
             'Hosting providers may log IP addresses for security purposes, but these are not linked to your study data.',
+            'Upon completion, you will receive completion codes for both Survey Swap and Survey Circle.',
           ]}
           onAgree={() => {
             // Double-check localStorage before deciding
