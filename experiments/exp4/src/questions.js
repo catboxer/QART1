@@ -93,7 +93,7 @@ export const postQuestions = [
     id: 'binaural_beats',
     type: 'select',
     question: 'Did you listen to binaural beats during any part of this experiment?',
-    options: ['No', 'Yes - during all blocks', 'Yes - during Block 1 (Physical)', 'Yes - during Block 2 (Quantum)', 'Yes - during Block 3 (Local)', 'What are binaural beats?'],
+    options: ['No', 'Yes', 'What are binaural beats?'],
   },
   {
     id: 'binaural_level',
@@ -103,12 +103,7 @@ export const postQuestions = [
     max: 32,
     showIf: {
       id: 'binaural_beats',
-      values: [
-        'Yes - during all blocks',
-        'Yes - during Block 1 (Physical)',
-        'Yes - during Block 2 (Quantum)',
-        'Yes - during Block 3 (Local)'
-      ]
+      values: ['Yes']
     }
   },
   {
