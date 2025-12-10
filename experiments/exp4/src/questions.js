@@ -75,14 +75,16 @@ export const preQuestions = [
     type: 'select',
     options: ['Often', 'Occasionally', 'Rarely', 'Never'],
   },
-  {
-    id: 'psiBelief',
-    question: 'To what extent do you believe the mind can directly influence physical matter?',
-    type: 'slider',
-    min: 0,
-    max: 10,
-    leftLabel: 'Impossible',
-    rightLabel: 'Certain',
+{
+    id: 'psiPossibility',
+    question: 'Do you think it is possible for humans to gain information or influence matter via "psychic" means?',
+    type: 'select',
+    options: [
+      'Yes, it is definitely possible',
+      'I am open to the possibility',
+      'I am skeptical',
+      'No way / Impossible',
+    ],
   },
   {
     id: 'clarityNow',
