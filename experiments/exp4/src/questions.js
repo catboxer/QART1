@@ -76,6 +76,15 @@ export const preQuestions = [
     options: ['Often', 'Occasionally', 'Rarely', 'Never'],
   },
   {
+    id: 'psiBelief',
+    question: 'To what extent do you believe the mind can directly influence physical matter?',
+    type: 'slider',
+    min: 0,
+    max: 10,
+    leftLabel: 'Impossible',
+    rightLabel: 'Certain',
+  },
+  {
     id: 'clarityNow',
     question: 'Right now, how mentally clear do you feel?',
     type: 'slider',
