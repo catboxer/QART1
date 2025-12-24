@@ -13,9 +13,9 @@ const CORS = {
 };
 
 // timeouts & retry tuning (ms)
-const OUTSHIFT_TIMEOUT_MS = 800;
-const LFDR_TIMEOUT_MS = 1000;
-const ANU_TIMEOUT_MS = 1200;
+const OUTSHIFT_TIMEOUT_MS = 3000;
+const LFDR_TIMEOUT_MS = 6000;
+const ANU_TIMEOUT_MS = 3000;
 const RETRY_DELAY_MS = 200;
 
 // circuit breaker
