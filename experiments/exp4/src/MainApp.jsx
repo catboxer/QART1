@@ -945,7 +945,7 @@ export default function MainApp() {
             'All data is stored anonymously and securely for research purposes.',
             'Data will be retained indefinitely to enable scientific replication and analysis.',
             'Hosting providers may log IP addresses for security purposes, but these are not linked to your study data.',
-            'Upon completion, you will receive completion codes for both Survey Swap and Survey Circle. This survey contains Karma to get free survey responses at SurveySwap.io',
+            'Upon completion, you will receive completion codes for Survey Swap. This survey contains Karma to get free survey responses at SurveySwap.io',
           ]}
           onAgree={() => {
             // Double-check localStorage before deciding
@@ -1646,10 +1646,6 @@ export default function MainApp() {
         </div>
 
         <div style={{ marginTop: 24, padding: '16px', background: '#fff', border: '1px solid #ddd', borderRadius: 8 }}>
-          <p>Session ID: <code>{runRef?.id}</code></p>
-          <p style={{ marginTop: 16 }}>
-            Redeem Survey Circle Code with one click: <a href="https://www.surveycircle.com/ZZ4P-RCF3-P54R-7DVE/" target="_blank" rel="noopener noreferrer">https://www.surveycircle.com/ZZ4P-RCF3-P54R-7DVE/</a>
-          </p>
           <p style={{ marginTop: 16 }}>
             Get Karma for free research participants at SurveySwap.io: <a href="https://surveyswap.io/sr/Y3MS-6Z81-IQDK" target="_blank" rel="noopener noreferrer">https://surveyswap.io/sr/Y3MS-6Z81-IQDK</a> (or enter code manually: <strong>Y3MS-6Z81-IQDK</strong>)
           </p>
