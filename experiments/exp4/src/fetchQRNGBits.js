@@ -21,7 +21,7 @@ function validateRandomness(bits) {
   // Test 2: Runs test (alternations between 0 and 1)
   let runs = 1;
   for (let i = 1; i < n; i++) {
-    if (bits[i] !== bits[i-1]) runs++;
+    if (bits[i] !== bits[i - 1]) runs++;
   }
   const expectedRuns = (2 * ones * (n - ones)) / n + 1;
   const runsStdDev = Math.sqrt((2 * ones * (n - ones) * (2 * ones * (n - ones) - n)) / (n * n * (n - 1)));
@@ -31,7 +31,7 @@ function validateRandomness(bits) {
   // Test 3: Longest run check (shouldn't have extremely long runs of same bit)
   let maxRun = 1, currentRun = 1;
   for (let i = 1; i < n; i++) {
-    if (bits[i] === bits[i-1]) {
+    if (bits[i] === bits[i - 1]) {
       currentRun++;
       maxRun = Math.max(maxRun, currentRun);
     } else {
@@ -152,9 +152,9 @@ export async function fetchQRNGBits(nBits, retries = 3, validateGhost = false) {
 
           // Check if this is a quota/exhaustion error (don't retry these)
           const isQuotaError = reason.toLowerCase().includes('quota') ||
-                              reason.toLowerCase().includes('exhausted') ||
-                              reason.toLowerCase().includes('rate limit') ||
-                              reason.toLowerCase().includes('insufficient');
+            reason.toLowerCase().includes('exhausted') ||
+            reason.toLowerCase().includes('rate limit') ||
+            reason.toLowerCase().includes('insufficient');
 
           if (isQuotaError) {
             console.error(`❌ QRNG quota exhausted: ${reason} (no retry)`);
@@ -203,7 +203,7 @@ export async function fetchQRNGBits(nBits, retries = 3, validateGhost = false) {
 
       // Check if this is a non-retryable error
       const isNonRetryable = error.message.includes('DO NOT RETRY') ||
-                            error.message.includes('quota exhausted');
+        error.message.includes('quota exhausted');
 
       if (isNonRetryable || attempt === retries) {
         // Final attempt failed or non-retryable error

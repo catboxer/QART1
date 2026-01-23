@@ -1,5 +1,5 @@
 // netlify/functions/qrng-race.js
-// Requires: QRNG_OUTSHIFT_API_KEY in env (Netlify or root .env for `netlify dev`)
+// Requires: QRNG_OUTSHIFT_API_KEY, ANU_API_KEY in env (Netlify or root .env for `netlify dev`)
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -39,10 +39,13 @@ exports.handler = async (event) => {
 
   // --- quick env/debug check (safe: never returns the key) ---
   if (qs.debug === '1') {
-    const k = process.env.QRNG_OUTSHIFT_API_KEY || '';
+    const outshiftKey = process.env.QRNG_OUTSHIFT_API_KEY || '';
+    const anuKey = process.env.ANU_API_KEY || '';
     return ok({
-      hasOutshiftKey: Boolean(k),
-      keyLength: k ? k.length : 0,
+      hasOutshiftKey: Boolean(outshiftKey),
+      outshiftKeyLength: outshiftKey ? outshiftKey.length : 0,
+      hasAnuKey: Boolean(anuKey),
+      anuKeyLength: anuKey ? anuKey.length : 0,
       nodeVersion: process.version,
       when: new Date().toISOString(),
     });
@@ -300,8 +303,19 @@ async function fromLFDR(n, timeoutMs) {
 }
 
 async function fromANU(n, timeoutMs) {
-  const url = `https://qrng.anu.edu.au/API/jsonI.php?length=${n}&type=uint8`;
-  const res = await fetchWithTimeout(url, {}, timeoutMs);
+  const apiKey = process.env.ANU_API_KEY;
+  if (!apiKey) throw new Error('anu_no_key');
+
+  const url = `https://api.quantumnumbers.anu.edu.au/?length=${n}&type=uint8`;
+  const res = await fetchWithTimeout(
+    url,
+    {
+      headers: {
+        'x-api-key': apiKey,
+      },
+    },
+    timeoutMs
+  );
   if (!res.ok) throw new Error(`anu_http_${res.status}`);
   const j = await res.json();
   if (!Array.isArray(j?.data)) throw new Error('anu_bad_shape');
@@ -372,9 +386,9 @@ async function sequentialFallback(n) {
   const r2 = await tryProvider('lfdr', fromLFDR, LFDR_TIMEOUT_MS, 1);
   if (r2) return r2;
 
-  // ANU not yet validated, keeping commented out
-  // const r3 = await tryProvider('anu', fromANU, ANU_TIMEOUT_MS, 0);
-  // if (r3) return r3;
+  // Fall back to ANU
+  const r3 = await tryProvider('anu', fromANU, ANU_TIMEOUT_MS, 0);
+  if (r3) return r3;
 
   throw new Error(errors.join('; '));
 }
