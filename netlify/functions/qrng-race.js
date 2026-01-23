@@ -21,6 +21,7 @@ const RETRY_DELAY_MS = 200;
 // circuit breaker
 const CB_FAIL_THRESHOLD = 3;
 const CB_OPEN_MS = 30_000;
+const CB_RATE_LIMIT_MS = 3_600_000; // 1 hour for 429 rate limit errors
 const crypto = require('crypto');
 
 // warm-instance memory
@@ -350,11 +351,11 @@ async function sequentialFallback(n) {
       } catch (e) {
         const errMsg = String(e?.message || e);
 
-        // For 429 rate limit errors, immediately fail without retry
-        // Quota exhausted, so switch to next provider immediately
+        // For 429 rate limit errors, open circuit for 1 hour and skip to next provider
         if (errMsg.includes('_429')) {
-          errors.push(`${tag}:${errMsg}`);
-          return null; // Skip to next provider
+          circ.openUntil = Date.now() + CB_RATE_LIMIT_MS;
+          errors.push(`${tag}:${errMsg}:circuit_open_1h`);
+          return null;
         }
 
         circ.fail += 1;
