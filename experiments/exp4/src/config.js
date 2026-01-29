@@ -39,7 +39,7 @@ config.experiments = {
     BLOCK_HIGHLIGHT_PCT: 52, //what score gets a congrats
     FINALIST_MIN_PCT: 54, // 54 email capture high score gate opens at or above this percent
     FINALIST_MAX_PCT: 46, // 46 email capture low score gate opens at or below this percent
-    AUTO_MODE_SESSIONS: 1, // Number of automated baseline sessions to run (access via #auto URL /exp4#auto)
+    AUTO_MODE_SESSIONS: 20, // Number of automated baseline sessions to run (access via #auto URL /exp4#auto)
     AUTO_MODE_REST_MS: 1000, // 1 second auto-continue delay between blocks in auto-mode
     AI_MODE_SESSIONS: 12, // Set this in ai-config.js as it reads it from there. Number of AI agent sessions to run (access via #ai URL /exp4#ai) - run 'sh experiments/exp4/run-ai.sh' first
   },
