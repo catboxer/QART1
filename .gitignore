@@ -37,6 +37,10 @@ _site/
 experiments/*/node_modules/
 experiments/*/dist/
 experiments/*/build/
+
+# QRNG validation output
+lfdr-validation-*.json
+qrng-validation-*.json
 .env
 /experiments/exp0/
 /experiments/exp3-old/
