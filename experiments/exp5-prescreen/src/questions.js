@@ -15,14 +15,14 @@ export const preQuestions = [
     options: ['Female', 'Male', 'Nonbinary', 'Prefer not to say'],
   },
   {
-    id: 'meditation',
-    question: 'Do you meditate or have a regular awareness practice?',
+    id: 'meditationLevel',
+    question: 'What is your level of experience with meditation or deep-focus practice?',
     type: 'select',
     options: [
-      'Yes, daily',
-      'Yes, a few times per week',
-      'Occasionally',
-      'Rarely or never',
+      'Daily practice (Long-term / 1+ years)',
+      'Regular practice (Daily or weekly / Recent)',
+      'Occasional / Beginner',
+      'None / Rarely',
     ],
   },
   {
@@ -32,8 +32,8 @@ export const preQuestions = [
     type: 'slider',
     min: 0,
     max: 10,
-    leftLabel: 'Yes, absolutely',
-    rightLabel: 'No, absolutely not',
+    leftLabel: 'No, absolutely not',
+    rightLabel: 'Yes, absolutely',
   },
 ];
 
@@ -41,39 +41,49 @@ export const preQuestions = [
 
 export const postQuestions = [
   {
+    id: 'subjectiveSuccess',
+    question: 'How "connected" did you feel to the target? (0 = none, 10 = total resonance)',
+    type: 'slider',
+    min: 0,
+    max: 10,
+    leftLabel: 'None',
+    rightLabel: 'Strong Connection',
+  },
+  {
     id: 'focusLevel',
-    question:
-      'How focused did you feel? (0 = not at all, 10 = extremely focused)',
+    question: 'How focused were you? (0 = distracted, 10 = lasered in)',
     type: 'slider',
     min: 0,
     max: 10,
-    leftLabel: 'Not at all',
-    rightLabel: 'Extremely focused',
+    leftLabel: 'Distracted',
+    rightLabel: 'Lasered In',
   },
   {
-    id: 'calmLevel',
-    question:
-      'How calm did you feel? (0 = not at all, 10 = extremely calm)',
-    type: 'slider',
-    min: 0,
-    max: 10,
-    leftLabel: 'Not at all',
-    rightLabel: 'Extremely calm',
+    id: 'focusStyle',
+    question: 'Primary mental approach:',
+    type: 'radio',
+    options: [
+      { label: 'Active: Pushing/Willing', value: 'active_push' },
+      { label: 'Passive: Allowing/Observing', value: 'passive_allow' },
+      { label: 'Visual: Purely watching', value: 'visual' },
+      { label: 'Detached: Meditative/Auto-pilot', value: 'detached' }
+    ],
   },
   {
-    id: 'confidenceLevel',
-    question:
-      'How confident did you feel that you were nudging the results? (0 = not at all, 10 = extremely confident)',
-    type: 'slider',
-    min: 0,
-    max: 10,
-    leftLabel: 'Not at all',
-    rightLabel: 'Extremely confident',
+    id: 'auditoryEnvironment',
+    question: 'Auditory environment for this session:',
+    type: 'radio',
+    options: [
+      { label: 'Silence', value: 'silence' },
+      { label: 'Music', value: 'music' },
+      { label: 'Binaural Beats / Tones', value: 'binaural' },
+      { label: 'Chanting / Mantra', value: 'chanting' },
+      { label: 'Ambient Noise / Other', value: 'other' }
+    ],
   },
   {
     id: 'finalThoughts',
-    question:
-      "Any final thoughts or feedback you'd like to share? (optional)",
+    question: "Any notable physical sensations (heat, tingling) or thoughts? (optional)",
     type: 'textarea',
   },
 ];
