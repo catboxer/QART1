@@ -206,6 +206,39 @@ export function QuestionsForm({
                 </div>
               )}
 
+              {q.type === 'radio' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 8 }}>
+                  {(q.options || []).map((opt) => {
+                    const optValue = typeof opt === 'object' ? opt.value : opt;
+                    const optLabel = typeof opt === 'object' ? opt.label : opt;
+                    const checked = value === optValue;
+                    return (
+                      <label
+                        key={optValue}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 10,
+                          cursor: 'pointer', fontSize: 15,
+                          background: checked ? 'rgba(99,102,241,0.12)' : 'transparent',
+                          borderRadius: 6, padding: '6px 10px',
+                          border: checked ? '1px solid rgba(99,102,241,0.4)' : '1px solid transparent',
+                          transition: 'all 120ms',
+                        }}
+                      >
+                        <input
+                          type="radio"
+                          name={q.id}
+                          value={optValue}
+                          checked={checked}
+                          onChange={() => setAnswer(q.id, optValue)}
+                          style={{ accentColor: '#6366f1', width: 16, height: 16 }}
+                        />
+                        {optLabel}
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+
               {q.type === 'textarea' && (
                 <textarea
                   id={q.id}
