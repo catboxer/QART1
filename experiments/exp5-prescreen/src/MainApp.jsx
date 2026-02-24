@@ -472,7 +472,7 @@ export default function MainApp() {
     if (phase !== 'fetching') return;
     // Guard: Don't fetch if we've already completed all blocks
     if (blockIdx >= C.BLOCKS_TOTAL) {
-      setPhase('done');
+      setPhase('results');
       return;
     }
 
@@ -696,9 +696,9 @@ export default function MainApp() {
     } else if (phase === 'score' && isAutoMode) {
       // Auto-continue score screens in auto-mode
       const timer = setTimeout(() => {
-        // Check if session is complete (all 30 blocks done)
+        // Check if session is complete (all 40 blocks done)
         if (blockIdx >= C.BLOCKS_TOTAL) {
-          setPhase('done');
+          setPhase('results');
         } else {
           // Check if audit is needed based on the just-completed block (not the incremented blockIdx)
           const completedBlockIdx = blockIdxToPersist.current;
@@ -719,28 +719,20 @@ export default function MainApp() {
         setPhase('target_announce');
       }, C.AUTO_MODE_REST_MS);
       return () => clearTimeout(timer);
-    } else if (phase === 'done') {
-      // Skip post-questionnaire in auto/AI mode, go to results
-      // Mark session as completed since we're skipping the post-questionnaire
+    } else if (phase === 'results') {
+      // Mark session as completed and advance (skip results/postQ/summary in auto/AI mode)
       if (runRef) {
         Promise.all([
           saveSessionAggregates(),
           setDoc(runRef, { completed: true }, { merge: true })
         ])
-          .then(() => {
-            console.warn('✅ Session marked as completed:', runRef.id);
-            setPhase('results');
-          })
-          .catch(err => {
-            console.error('❌ Failed to mark session as completed:', err);
-            setPhase('results'); // Continue anyway even if save fails
-          });
+          .then(() => setPhase('next'))
+          .catch(() => setPhase('next'));
       } else {
-        console.warn('⚠️ No runRef available to mark as completed');
-        setPhase('results');
+        setPhase('next');
       }
-    } else if (phase === 'results' || phase === 'summary') {
-      // Skip results/summary screens in auto/AI mode, go to next session
+    } else if (phase === 'done' || phase === 'summary') {
+      // Skip post-questionnaire and summary in auto/AI mode
       setPhase('next');
     } else if (phase === 'next') {
       // Immediately transition to avoid re-triggering
@@ -1285,7 +1277,7 @@ export default function MainApp() {
         <button
           onClick={() => {
             if (blockIdx >= C.BLOCKS_TOTAL) {
-              setPhase('done');
+              setPhase('results');
             } else if (needsAudit) {
               setPhase('audit');
             } else {
@@ -1511,12 +1503,11 @@ export default function MainApp() {
 
   // RUNNING phase removed - trials process instantly now
 
-  // POST QUESTIONS
+  // POST QUESTIONS (shown after results screen — scoring already saved)
   if (phase === 'done') {
-    // Auto/AI modes are handled by useEffect above, which marks completed:true before transition
-    // This render block only handles human mode
+    // Auto/AI modes skip post-questionnaire entirely (handled by useEffect)
     if (isAutoMode || isAIMode) {
-      return null; // useEffect will handle transition
+      return null;
     }
 
     return (
@@ -1526,7 +1517,7 @@ export default function MainApp() {
           questions={postQuestions}
           onSubmit={async (answers, { valid }) => {
             if (!valid) return;
-            setPhase('results');
+            setPhase('summary');
             try {
               if (runRef) {
                 await saveSessionAggregates();
@@ -1688,7 +1679,7 @@ export default function MainApp() {
 
         <button
           className="primary-btn"
-          onClick={() => setPhase('summary')}
+          onClick={() => setPhase('done')}
           style={{ marginTop: 8 }}
         >
           Continue
