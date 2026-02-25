@@ -367,128 +367,6 @@ export default function MainApp() {
     }
   }, [runRef, totals, totalGhostHits, deltaHurstHistory]);
 
-  // Calculate and save session-level temporal entropy (k=2 and k=3 windows)
-  const calculateSessionTemporalEntropy = useCallback(async () => {
-    if (!runRef) return;
-
-    try {
-      const allSubjectBits = [];
-      const allGhostBits = [];
-
-      // Fetch all minutes to get their indices
-      const minutesSnapshot = await getDocs(collection(runRef, 'minutes'));
-      const sortedMinutes = minutesSnapshot.docs
-        .map(d => ({ id: d.id, ref: d.ref, data: d.data(), idx: d.data().idx || 0 }))
-        .sort((a, b) => a.idx - b.idx);
-
-      // For each minute, read trial_data arrays directly from minute docs
-      for (const minute of sortedMinutes) {
-        const minuteData = minute.data;
-
-        // Extract bits from trial_data arrays stored in each minute doc
-        if (minuteData.trial_data?.subject_bits && minuteData.trial_data?.demon_bits) {
-          allSubjectBits.push(...minuteData.trial_data.subject_bits);
-          allGhostBits.push(...minuteData.trial_data.demon_bits);
-        }
-      }
-
-      const n = allSubjectBits.length;
-
-      if (n === 0) {
-        console.warn('No subject bits found for session-level entropy calculation');
-        return;
-      }
-
-      // NEW: Aggregate block-level entropy trajectories for H(t) fitting
-      const allBlockEntropySubj = [];
-      const allBlockEntropyGhost = [];
-
-      // Fetch block-level entropy from each minute
-      for (const minute of sortedMinutes) {
-        const minuteDoc = await getDoc(minute.ref);
-        const minuteData = minuteDoc.data();
-
-        if (minuteData?.entropy?.block_entropy_subj !== undefined) {
-          allBlockEntropySubj.push({
-            blockIdx: minuteData.entropy.block_idx ?? null,
-            entropy: minuteData.entropy.block_entropy_subj,
-            timestamp: minuteData.entropy.block_timestamp || minuteData.timing?.block_start_time || null,
-          });
-        }
-
-        if (minuteData?.entropy?.block_entropy_ghost !== undefined) {
-          allBlockEntropyGhost.push({
-            blockIdx: minuteData.entropy.block_idx ?? null,
-            entropy: minuteData.entropy.block_entropy_ghost,
-            timestamp: minuteData.entropy.block_timestamp || minuteData.timing?.block_start_time || null,
-          });
-        }
-      }
-
-
-      // Minimum window size: one full block's worth of bits (576).
-      // k=2 fires for early exits before block 2; k=3 before block 3.
-      const MIN_WINDOW_SIZE = C.TRIALS_PER_BLOCK;
-
-      // k=2: split into first/second half (each = n/2 bits)
-      const half = Math.floor(n / 2);
-      if (half < MIN_WINDOW_SIZE) {
-        console.warn(`Insufficient bits for k=2 temporal entropy: ${n} bits (need ${MIN_WINDOW_SIZE * 2}+ for meaningful windows)`);
-        return;
-      }
-      const entropy_k2 = [
-        shannonEntropy(allSubjectBits.slice(0, half)),
-        shannonEntropy(allSubjectBits.slice(half, n))
-      ];
-      const ghost_entropy_k2 = [
-        shannonEntropy(allGhostBits.slice(0, half)),
-        shannonEntropy(allGhostBits.slice(half, n))
-      ];
-
-      // k=3: split into thirds (each = n/3 bits)
-      const third = Math.floor(n / 3);
-      if (third < MIN_WINDOW_SIZE) {
-        console.warn(`Insufficient bits for k=3 temporal entropy: ${n} bits (need ${MIN_WINDOW_SIZE * 3}+ for meaningful windows)`);
-        return;
-      }
-      const entropy_k3 = [
-        shannonEntropy(allSubjectBits.slice(0, third)),
-        shannonEntropy(allSubjectBits.slice(third, 2 * third)),
-        shannonEntropy(allSubjectBits.slice(2 * third, n))
-      ];
-      const ghost_entropy_k3 = [
-        shannonEntropy(allGhostBits.slice(0, third)),
-        shannonEntropy(allGhostBits.slice(third, 2 * third)),
-        shannonEntropy(allGhostBits.slice(2 * third, n))
-      ];
-
-
-      // Save to session document
-      await setDoc(runRef, {
-        entropy: {
-          temporal: {
-            subj_bits_count: n,
-            entropy_k2: entropy_k2,
-            entropy_k3: entropy_k3,
-            ghost_entropy_k2: ghost_entropy_k2,
-            ghost_entropy_k3: ghost_entropy_k3,
-          },
-          temporal_trajectories: {
-            block_level_subj: allBlockEntropySubj,
-            block_level_ghost: allBlockEntropyGhost,
-            // This enables H_subject(t) and H_ghost(t) fitting for thermalization analysis
-          }
-        }
-      }, { merge: true });
-
-      // Reset all accumulators to prevent bleed into next session
-      bitsRef.current = [];
-      demonBitsRef.current = [];
-      alignedRef.current = [];
-    } catch (error) {
-      console.error('Error calculating session temporal entropy:', error);
-    }
-  }, [runRef]);
 
   // Fetch subject+demon tape when entering fetching phase, then process trials
   const [needsPersist, setNeedsPersist] = useState(false);
@@ -555,12 +433,6 @@ export default function MainApp() {
         // Always go to score phase first to show results
         setPhase('score');
 
-        // If this was the final block, calculate session entropy in background
-        if (nextBlockIdx >= C.BLOCKS_TOTAL) {
-          calculateSessionTemporalEntropy().catch(err =>
-            console.error('Failed to calculate final entropy:', err)
-          );
-        }
 
       } catch (error) {
         console.error('❌ Failed to fetch bits:', error);
@@ -607,7 +479,7 @@ export default function MainApp() {
     return () => {
       isCancelled = true;
     };
-  }, [phase, blockIdx, processTrials, calculateSessionTemporalEntropy, isAutoMode, isAIMode, runRef, target]);
+  }, [phase, blockIdx, processTrials, isAutoMode, isAIMode, runRef, target]);
 
   // Audit phase: Fetch audit bits in background and randomize target
   useEffect(() => {
@@ -884,6 +756,8 @@ export default function MainApp() {
 
       // Entropy
       entropy: {
+        block_idx: saveBlockIdx,
+        block_timestamp: new Date().toISOString(),
         block_entropy_subj: blockSubjEntropy,
         block_entropy_demon: blockDemonEntropy,
         block_k2_subj: blockK2Subj,
@@ -1003,6 +877,37 @@ export default function MainApp() {
     setSessionAnalysis(result);
   }, [phase, sessionAnalysis, subjectBitsHistory, hurstSubjectHistory, hurstDemonHistory, totalGhostHits, totals.n]);
 
+  // Compute cumulative analysis when entering results phase for session 5+
+  useEffect(() => {
+    if (phase !== 'results') return;
+    const newCount = sessionCount + 1;
+    if (newCount < C.MIN_SESSIONS_FOR_DECISION) return;
+    if (cumulativeAnalysis) return; // already computed
+
+    const prevH_s        = participantProfile?.cumulative_h_subject ?? [];
+    const prevH_d        = participantProfile?.cumulative_h_demon ?? [];
+    const prevBits       = participantProfile?.cumulative_bits_subject ?? [];
+    const prevDemonHits  = participantProfile?.cumulative_demon_hits ?? 0;
+    const prevDemonTrials = participantProfile?.cumulative_demon_trials ?? 0;
+    const newH_s         = [...prevH_s, ...hurstSubjectHistory];
+    const newH_d         = [...prevH_d, ...hurstDemonHistory];
+    const newBits        = [...prevBits, ...subjectBitsHistory.map(arr => arr.join(''))];
+    const newDemonHits   = prevDemonHits + totalGhostHits;
+    const newDemonTrials = prevDemonTrials + totals.n;
+
+    if (newH_s.length === 0) return;
+
+    const reconstructedBits = newBits.map(s => s.split('').map(Number));
+    const cumAnalysis = computeSessionAnalysis(
+      reconstructedBits, newH_s, newH_d,
+      { mean: C.NULL_HURST_MEAN, sd: C.NULL_HURST_SD },
+      C.N_SHUFFLES,
+      newDemonHits,
+      newDemonTrials,
+    );
+    setCumulativeAnalysis(cumAnalysis);
+  }, [phase, sessionCount, cumulativeAnalysis, participantProfile, hurstSubjectHistory, hurstDemonHistory, subjectBitsHistory, totalGhostHits, totals.n]);
+
   // Save rank to session document once sessionAnalysis is ready
   useEffect(() => {
     if (!sessionAnalysis || !runRef) return;
@@ -1064,6 +969,8 @@ export default function MainApp() {
             'Hosting providers may log IP addresses for security purposes; these logs are not linked to your study data.',
           ]}
           onAgree={async ({ email } = {}) => {
+            // Reset cumulative analysis so it's recomputed fresh for this session
+            setCumulativeAnalysis(null);
             let profile = null;
             if (email) {
               setEmailPlaintext(email);
@@ -1598,12 +1505,16 @@ export default function MainApp() {
               }
 
               // Build updated cumulative arrays
-              const prevH_s  = participantProfile?.cumulative_h_subject ?? [];
-              const prevH_d  = participantProfile?.cumulative_h_demon ?? [];
-              const prevBits = participantProfile?.cumulative_bits_subject ?? [];
-              const newH_s   = [...prevH_s, ...hurstSubjectHistory];
-              const newH_d   = [...prevH_d, ...hurstDemonHistory];
-              const newBits  = [...prevBits, ...subjectBitsHistory.map(arr => arr.join(''))];
+              const prevH_s       = participantProfile?.cumulative_h_subject ?? [];
+              const prevH_d       = participantProfile?.cumulative_h_demon ?? [];
+              const prevBits      = participantProfile?.cumulative_bits_subject ?? [];
+              const prevDemonHits = participantProfile?.cumulative_demon_hits ?? 0;
+              const prevDemonTrials = participantProfile?.cumulative_demon_trials ?? 0;
+              const newH_s        = [...prevH_s, ...hurstSubjectHistory];
+              const newH_d        = [...prevH_d, ...hurstDemonHistory];
+              const newBits       = [...prevBits, ...subjectBitsHistory.map(arr => arr.join(''))];
+              const newDemonHits  = prevDemonHits + totalGhostHits;
+              const newDemonTrials = prevDemonTrials + totals.n;
               const newCount = (participantProfile?.session_count ?? 0) + 1;
               const todayUTC = new Date().toISOString().slice(0, 10);
               const lastDate = participantProfile?.last_session_date;
@@ -1621,6 +1532,8 @@ export default function MainApp() {
                   cumulative_h_subject:    newH_s,
                   cumulative_h_demon:      newH_d,
                   cumulative_bits_subject: newBits,
+                  cumulative_demon_hits:   newDemonHits,
+                  cumulative_demon_trials: newDemonTrials,
                   updated_at:              serverTimestamp(),
                   ...(emailPlaintext ? { email: emailPlaintext } : {}),
                   ...(!participantProfile ? { created_at: serverTimestamp() } : {}),
@@ -1644,7 +1557,9 @@ export default function MainApp() {
                 const cumAnalysis = computeSessionAnalysis(
                   reconstructedBits, newH_s, newH_d,
                   { mean: C.NULL_HURST_MEAN, sd: C.NULL_HURST_SD },
-                  C.N_SHUFFLES
+                  C.N_SHUFFLES,
+                  newDemonHits,
+                  newDemonTrials,
                 );
                 setCumulativeAnalysis(cumAnalysis);
               }
@@ -1691,13 +1606,21 @@ export default function MainApp() {
             </div>
           </div>
 
-          <div style={{ padding: 20, background: '#f8fafc', borderRadius: 12, border: '1px solid #e2e8f0', marginBottom: 20, textAlign: 'left' }}>
+          <div style={{ padding: 20, background: '#f8fafc', borderRadius: 12, border: '1px solid #e2e8f0', marginBottom: 16, textAlign: 'left' }}>
             <p style={{ fontSize: 15, color: '#374151', marginBottom: 10 }}>
               We need <strong>{remaining} more session{remaining !== 1 ? 's' : ''}</strong> to establish your cumulative result.
               Each session adds statistical power — results become much more reliable after {C.MIN_SESSIONS_FOR_DECISION} sessions.
             </p>
             <p style={{ fontSize: 13, color: '#6b7280', marginBottom: 0 }}>
               💡 <strong>Tip:</strong> Spread your sessions across different days for best results.
+            </p>
+          </div>
+
+          <div style={{ padding: 16, background: '#eff6ff', borderRadius: 12, border: '1px solid #bfdbfe', marginBottom: 20, textAlign: 'left' }}>
+            <p style={{ fontSize: 13, color: '#1e40af', marginBottom: 0, lineHeight: 1.6 }}>
+              <strong>A note on the score:</strong> The percentage is just a focusing target, not what we're measuring.
+              We're looking at the underlying patterns in how the random numbers were generated during your session,
+              which a simple hit rate doesn't reveal. A score below 50% is just as valuable to the research as one above it.
             </p>
           </div>
 
@@ -1708,15 +1631,16 @@ export default function MainApp() {
       );
     }
 
-    // Session 5+: wait for full analysis then show everything
-    if (!sessionAnalysis) {
-      return <div style={{ padding: 24, textAlign: 'center' }}>Analysing session…</div>;
+    // Session 5+: wait for cumulative analysis
+    if (!cumulativeAnalysis) {
+      return <div style={{ padding: 24, textAlign: 'center' }}>Computing cumulative analysis…</div>;
     }
 
-    const finalDeltaH = runningMeanDeltaH;
-    const analysis = sessionAnalysis;
+    const analysis = cumulativeAnalysis;
+    const cumNBlocks = analysis.nBlocks; // total blocks across all sessions
+    const finalDeltaH = analysis.deltaH.meanDeltaH;
 
-    // ── Evaluation (single source of truth) ──────────────────────────────────
+    // ── Evaluation on cumulative data ─────────────────────────────────────────
     const { ksGate, collapseGate, eligible, rank: rawRank, intensityTier } = evaluatePrescreen(analysis, C);
     const verified   = rawRank === 'gold';
     const shuffleYes = collapseGate;
@@ -1725,8 +1649,8 @@ export default function MainApp() {
     const tierLabels = { 1: 'Subtle', 2: 'Solid Presence', 3: 'Exceptional' };
     const tierLabel  = intensityTier ? tierLabels[intensityTier] : null;
 
-    // Modality (null-based SE for direction classification)
-    const SE       = C.NULL_HURST_SD / Math.sqrt(nBlocks);
+    // Modality (null-based SE for direction classification, cumulative SE)
+    const SE       = C.NULL_HURST_SD / Math.sqrt(cumNBlocks);
     const absDelta = Math.abs(finalDeltaH);
     const isDynamic = ksGate && absDelta < SE;
     let modality = null;
@@ -1754,13 +1678,13 @@ export default function MainApp() {
         {/* ── Hurst Delta Gauge ───────────────────────────────────────────── */}
         <HurstDeltaGauge
           meanDeltaH={finalDeltaH}
-          blockCount={nBlocks}
+          blockCount={cumNBlocks}
         />
         <div style={{ fontSize: 11, color: '#9ca3af', textAlign: 'center', marginTop: 2, marginBottom: 8 }}>
-          The gauge shows directional trend. Statistical confirmation (below) requires a stronger, more consistent signal.
+          Cumulative trend across {Math.round(cumNBlocks / C.BLOCKS_TOTAL)} sessions ({cumNBlocks} blocks). Statistical confirmation below.
         </div>
 
-        {/* ── Session Analysis (smaller, below) ───────────────────────────── */}
+        {/* ── Cumulative Analysis ──────────────────────────────────────────── */}
         {analysis && (() => {
           let irVerdict, irColor, irBg, irDesc;
           if (eligible && verified) {
@@ -1784,7 +1708,7 @@ export default function MainApp() {
           return (
             <div style={{ textAlign: 'left', marginTop: 20, marginBottom: 16, fontSize: 13 }}>
               <div style={{ fontWeight: 600, fontSize: 12, letterSpacing: '0.08em', color: '#9ca3af', textAlign: 'center', marginBottom: 12 }}>
-                SESSION ANALYSIS
+                CUMULATIVE ANALYSIS · {Math.round(cumNBlocks / C.BLOCKS_TOTAL)} SESSIONS
               </div>
 
               {/* Verdict badge */}
