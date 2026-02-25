@@ -2,6 +2,9 @@
 // Utility to fetch quantum bits on-demand using qrng-race or random-org endpoint
 import { config } from './config.js';
 
+// Session-level flag: once Outshift hits its daily limit, skip it for the rest of the session
+let outshiftDailyLimited = false;
+
 /**
  * Test if a bit string passes basic randomness checks
  * @param {string} bits - String of '0' and '1' characters
@@ -140,7 +143,8 @@ export async function fetchQRNGBits(nBits, retries = 3, validateGhost = false) {
       while (remaining > 0) {
         const chunk = Math.min(MAX_CHUNK, remaining);
 
-        const response = await fetch(`/.netlify/functions/${endpoint}?n=${chunk}`);
+        const skipParam = outshiftDailyLimited ? '&skipOutshift=1' : '';
+        const response = await fetch(`/.netlify/functions/${endpoint}?n=${chunk}${skipParam}`);
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
@@ -171,6 +175,9 @@ export async function fetchQRNGBits(nBits, retries = 3, validateGhost = false) {
 
         // Capture the actual provider (outshift / lfdr / anu)
         if (data.source) fetchedSource = data.source;
+
+        // If Outshift hit its daily limit, skip it for the rest of this session
+        if (data.outshift_daily_limit) outshiftDailyLimited = true;
 
         // Convert bytes to bits
         for (const byte of data.bytes) {

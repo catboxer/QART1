@@ -123,12 +123,15 @@ exports.handler = async (event) => {
   }
   n = Math.max(1, Math.min(1024, n)); // clamp to provider limits
 
+  const skipOutshift = qs.skipOutshift === '1';
+
   try {
-    const result = await raceFirstThenFallback(n);
+    const result = await raceFirstThenFallback(n, skipOutshift);
     return ok({
       success: true,
       source: result.source,
       bytes: result.bytes, // length N
+      ...(result.outshiftDailyLimit ? { outshift_daily_limit: true } : {}),
       server_time: new Date().toISOString(),
     });
   } catch (err) {
@@ -327,8 +330,9 @@ async function fromANU(n, timeoutMs) {
 }
 
 // ---------------- sequential fallback with one retry & circuit breaker ----------------
-async function sequentialFallback(n) {
+async function sequentialFallback(n, skipOutshift = false) {
   const errors = [];
+  let outshiftDailyLimit = false;
 
   const tryProvider = async (tag, fn, timeoutMs, retries = 1) => {
     const now = Date.now();
@@ -355,6 +359,7 @@ async function sequentialFallback(n) {
         if (errMsg.includes('_429')) {
           circ.openUntil = Date.now() + CB_RATE_LIMIT_MS;
           errors.push(`${tag}:${errMsg}:circuit_open_1h`);
+          if (tag === 'outshift') outshiftDailyLimit = true;
           return null;
         }
 
@@ -372,32 +377,32 @@ async function sequentialFallback(n) {
     return null;
   };
 
-  // Prefer Outshift (if key present), then LFDR, then ANU
-  if (process.env.QRNG_OUTSHIFT_API_KEY) {
+  // Prefer Outshift (if key present and not skipped), then LFDR, then ANU
+  if (!skipOutshift && process.env.QRNG_OUTSHIFT_API_KEY) {
     const r1 = await tryProvider(
       'outshift',
       fromOutshift,
       OUTSHIFT_TIMEOUT_MS,
       1
     );
-    if (r1) return r1;
+    if (r1) return { ...r1, outshiftDailyLimit };
   }
 
   // Fall back to LFDR (validated and passing all tests as of 2025-10-27)
   const r2 = await tryProvider('lfdr', fromLFDR, LFDR_TIMEOUT_MS, 1);
-  if (r2) return r2;
+  if (r2) return { ...r2, outshiftDailyLimit };
 
   // Fall back to ANU
   const r3 = await tryProvider('anu', fromANU, ANU_TIMEOUT_MS, 0);
-  if (r3) return r3;
+  if (r3) return { ...r3, outshiftDailyLimit };
 
   throw new Error(errors.join('; '));
 }
 // ---- Sequential fallback to eliminate racing-induced correlations ----
-async function raceFirstThenFallback(n) {
+async function raceFirstThenFallback(n, skipOutshift = false) {
   // Use deterministic sequential order to avoid bias from racing
   // Try Outshift first (usually faster), then LFDR, then ANU
-  return sequentialFallback(n);
+  return sequentialFallback(n, skipOutshift);
 }
 
 // ---------------- server-side probe ----------------
