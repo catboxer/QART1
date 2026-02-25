@@ -12,16 +12,18 @@ export default function ConsentGate({
   version = C?.CONSENT_VERSION || 'v1',
   bullets = [], // Accept bullets as props
   studyDescription = null, // Optional override for the main description
+  showBlindingNote = true, // Set false when study purpose is already disclosed
 }) {
   const [isAdult, setIsAdult] = useState(false);
   const [consent, setConsent] = useState(false);
   const [visualWarning, setVisualWarning] = useState(false);
+  const [emailValue, setEmailValue] = useState('');
 
   const ready = isAdult && consent && visualWarning;
 
   const handleContinue = () => {
     if (!ready) return;
-    onAgree?.();
+    onAgree?.({ email: emailValue.trim() });
   };
 
   // Default study description if none provided
@@ -35,11 +37,13 @@ export default function ConsentGate({
         {studyDescription || defaultDescription}
       </p>
 
-      <p>
-        <strong>Important:</strong> To preserve the scientific validity of the study, some details cannot be fully explained
-        until after participation. A full explanation will be provided after data collection for the entire study is
-        complete.
-      </p>
+      {showBlindingNote && (
+        <p>
+          <strong>Important:</strong> To preserve the scientific validity of the study, some details cannot be fully explained
+          until after participation. A full explanation will be provided after data collection for the entire study is
+          complete.
+        </p>
+      )}
 
       {/* Render bullets if provided, otherwise show default list */}
       {bullets && bullets.length > 0 ? (
@@ -105,6 +109,24 @@ export default function ConsentGate({
           />
           I consent to participate and understand some details will be explained after participation.
         </label>
+      </div>
+
+      {/* Email for session linking */}
+      <div style={{ marginTop: '1rem' }}>
+        <label style={{ display: 'block', fontSize: 14, marginBottom: 4 }}>
+          <strong>Your email</strong>
+          <span style={{ color: '#374151', fontWeight: 400 }}> — needed to link your sessions for prescreening. Please use the same email every time you participate.</span>
+        </label>
+        <input
+          type="email"
+          value={emailValue}
+          onChange={e => setEmailValue(e.target.value)}
+          placeholder="you@example.com"
+          style={{ width: '100%', padding: '8px 10px', fontSize: 14, borderRadius: 6, border: '1px solid #d1d5db', boxSizing: 'border-box' }}
+        />
+        <div style={{ fontSize: 12, color: '#6b7280', marginTop: 4 }}>
+          Without an email, your sessions won't be linked and each will be scored independently.
+        </div>
       </div>
 
       {/* hint line, visible until all are checked */}

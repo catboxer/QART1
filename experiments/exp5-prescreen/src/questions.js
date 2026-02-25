@@ -63,10 +63,10 @@ export const postQuestions = [
     question: 'Primary mental approach:',
     type: 'radio',
     options: [
-      { label: 'Active: Pushing/Willing', value: 'active_push' },
-      { label: 'Passive: Allowing/Observing', value: 'passive_allow' },
-      { label: 'Visual: Purely watching', value: 'visual' },
-      { label: 'Detached: Meditative/Auto-pilot', value: 'detached' }
+      { label: 'Active: Pushing / Willing', value: 'active_push' },
+      { label: 'Passive: Allowing / Observing', value: 'passive_allow' },
+      { label: 'Meditative: Present / Non-attached', value: 'meditative' },
+      { label: 'Flow / Auto-pilot: Effortless / Zoned out', value: 'flow_autopilot' }
     ],
   },
   {

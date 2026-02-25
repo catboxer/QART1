@@ -19,7 +19,7 @@ import {
 } from './stats/index.js';
 import { db, ensureSignedIn } from './firebase.js';
 import {
-  collection, doc, addDoc, setDoc, getDoc, getDocs, updateDoc, serverTimestamp,
+  collection, doc, addDoc, setDoc, getDoc, getDocs, updateDoc, serverTimestamp, arrayUnion,
 } from 'firebase/firestore';
 import { fetchQRNGBits } from './fetchQRNGBits.js';
 import { runNISTAudit } from './nistTests.js';
@@ -29,6 +29,15 @@ import { QuestionsForm } from './Forms.jsx';
 import { HurstDeltaGauge } from './Scoring.jsx';
 import confetti from 'canvas-confetti';
 import ConsentGate from './ui/ConsentGate.jsx';
+
+async function hashEmail(email) {
+  const encoded = new TextEncoder().encode(email.toLowerCase().trim());
+  const buf = await crypto.subtle.digest('SHA-256', encoded);
+  return Array.from(new Uint8Array(buf))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('')
+    .slice(0, 32);
+}
 
 // Runtime configuration validation
 function validateConfig() {
@@ -63,6 +72,8 @@ export default function MainApp() {
   const isAutoMode = window.location.hash.includes('auto');
   // AI-mode for AI agent sessions (activated via URL hash #ai)
   const isAIMode = window.location.hash.includes('ai');
+  // Preview mode: jump straight to the invite/summary screen for UI review (activated via URL hash #preview)
+  const isPreviewMode = window.location.hash.includes('preview');
   const [autoSessionCount, setAutoSessionCount] = useState(0);
   const [autoSessionTarget, setAutoSessionTarget] = useState(isAIMode ? C.AI_MODE_SESSIONS : C.AUTO_MODE_SESSIONS);
 
@@ -92,6 +103,12 @@ export default function MainApp() {
   useEffect(() => {
     targetRef.current = target;
   }, [target]);
+
+  // Preview mode: jump to summary screen as soon as app is ready
+  useEffect(() => {
+    if (!isPreviewMode || !userReady || !target) return;
+    setPhase('summary');
+  }, [isPreviewMode, userReady, target]);
 
   // ---- returning participant (skip preQ on same device)
   const [preDone, setPreDone] = useState(() => {
@@ -211,6 +228,14 @@ export default function MainApp() {
   const [inviteForm, setInviteForm] = useState({ firstName: '', lastName: '', location: '', age: '', email: '' });
   const [inviteSubmitted, setInviteSubmitted] = useState(false);
   const [inviteSubmitting, setInviteSubmitting] = useState(false);
+  const [inviteError, setInviteError] = useState(null);
+
+  // Multi-session accumulation
+  const [participantHash, setParticipantHash]             = useState(null);
+  const [participantProfile, setParticipantProfile]       = useState(null);
+  const [emailPlaintext, setEmailPlaintext]               = useState('');
+  const [sessionCount, setSessionCount]                   = useState(0);
+  const [cumulativeAnalysis, setCumulativeAnalysis]       = useState(null);
 
   const bitsRef = useRef([]);
   const demonBitsRef = useRef([]);
@@ -385,17 +410,17 @@ export default function MainApp() {
 
         if (minuteData?.entropy?.block_entropy_subj !== undefined) {
           allBlockEntropySubj.push({
-            blockIdx: minuteData.entropy.block_idx,
+            blockIdx: minuteData.entropy.block_idx ?? null,
             entropy: minuteData.entropy.block_entropy_subj,
-            timestamp: minuteData.entropy.block_timestamp || minuteData.timing?.block_start_time
+            timestamp: minuteData.entropy.block_timestamp || minuteData.timing?.block_start_time || null,
           });
         }
 
         if (minuteData?.entropy?.block_entropy_ghost !== undefined) {
           allBlockEntropyGhost.push({
-            blockIdx: minuteData.entropy.block_idx,
+            blockIdx: minuteData.entropy.block_idx ?? null,
             entropy: minuteData.entropy.block_entropy_ghost,
-            timestamp: minuteData.entropy.block_timestamp || minuteData.timing?.block_start_time
+            timestamp: minuteData.entropy.block_timestamp || minuteData.timing?.block_start_time || null,
           });
         }
       }
@@ -929,10 +954,19 @@ export default function MainApp() {
 
 
 
+  // Pre-fill invite form email from consent when entering summary
+  useEffect(() => {
+    if (phase !== 'summary') return;
+    if (!emailPlaintext) return;
+    setInviteForm(f => f.email ? f : { ...f, email: emailPlaintext });
+  }, [phase]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Fire confetti on summary screen when subject is invite-eligible (gold or silver)
   useEffect(() => {
-    if (phase !== 'summary' || !sessionAnalysis) return;
-    const { eligible } = evaluatePrescreen(sessionAnalysis, C);
+    if (phase !== 'summary') return;
+    const analysisForConfetti = cumulativeAnalysis || sessionAnalysis;
+    if (!analysisForConfetti) return;
+    const { eligible } = evaluatePrescreen(analysisForConfetti, C);
     if (!eligible) return;
     // Gold confetti burst
     confetti({ particleCount: 120, spread: 80, colors: ['#f59e0b', '#fcd34d', '#fbbf24', '#d97706', '#fff'], origin: { y: 0.5 } });
@@ -1016,26 +1050,52 @@ export default function MainApp() {
       <div style={{ position: 'relative' }}>
         <ConsentGate
           title="Pre-Screening: Potential Participant Qualification"
-          studyDescription="You are participating in a pre-screening session to determine eligibility for a future research study (Experiment 5). This session identifies individuals who show high resonance with quantum random systems. You will complete 40 blocks each ~3 seconds long and brief questionnaires (approximately 5 minutes total)."
+          showBlindingNote={false}
+          studyDescription={`You are participating in a pre-screening session to determine eligibility for a future research study (Experiment 5). This session identifies individuals who show high resonance with quantum random systems. You will complete ${C.BLOCKS_TOTAL} blocks each ~2 seconds long and brief questionnaires (approximately 5 minutes total).`}
           bullets={[
             'You will receive a target color assignment (blue or orange)',
             'Your task is to get your target color above 50%. Concentrate your attention on your target color right before and during the moment quantum data is fetched from a quantum random number generator.',
             'When focused and ready, press "I\'m Ready" and keep focusing as your color pulses. This triggers the quantum random number generator and the sigantures in the QRNG during your focused intention is what we\'re testing.',
             'We collect data on quantum random sequences, your performance metrics, timing patterns, and your questionnaire responses.',
             'Participation is completely voluntary; you may exit at any time.',
-            'All data is stored anonymously and securely for research purposes.',
-            'Data will be retained indefinitely to enable scientific replication and analysis.',
-            'Hosting providers may log IP addresses for security purposes, but these are not linked to your study data.',
+            'If you provide your email, we store it to link your sessions across devices and to contact you if you are selected for the next phase of research. Your email will not be shared with third parties or used for any other purpose.',
+            'To request deletion of your data, email h@whatthequark.com with the subject line "Data Deletion Request". Include the email address you used when participating and we will remove your records.',
+            'Data will be retained indefinitely to enable scientific replication and analysis, unless a deletion request is received.',
+            'Hosting providers may log IP addresses for security purposes; these logs are not linked to your study data.',
           ]}
-          onAgree={() => {
-            // Double-check localStorage before deciding
+          onAgree={async ({ email } = {}) => {
+            let profile = null;
+            if (email) {
+              setEmailPlaintext(email);
+              // Primary: email hash → prescreen_participants profile
+              try {
+                const hash = await hashEmail(email);
+                setParticipantHash(hash);
+                const profRef = doc(db, C.PARTICIPANT_COLLECTION, hash);
+                const profSnap = await getDoc(profRef);
+                profile = profSnap.exists() ? profSnap.data() : null;
+                setParticipantProfile(profile);
+                setSessionCount(profile?.session_count ?? 0);
+              } catch (err) {
+                console.error('Profile load error (non-blocking):', err);
+              }
+            } else if (uid) {
+              // Fallback: UID → exp5-specific counter on participants/{uid}
+              // (scoped to this experiment so it doesn't collide with other studies)
+              try {
+                const uidRef = doc(db, 'participants', uid);
+                const uidSnap = await getDoc(uidRef);
+                if (uidSnap.exists()) {
+                  setSessionCount(uidSnap.data().exp5_prescreen_sessions ?? 0);
+                }
+              } catch (err) {
+                console.error('UID session count load failed (non-blocking):', err);
+              }
+            }
             let localPreDone = false;
-            try {
-              localPreDone = localStorage.getItem(`pre_done_global:${C.EXPERIMENT_ID}`) === '1';
-            } catch {}
-
-            const shouldSkipPre = preDone || localPreDone;
-            setPhase(shouldSkipPre ? 'onboarding' : 'preQ');
+            try { localPreDone = localStorage.getItem(`pre_done_global:${C.EXPERIMENT_ID}`) === '1'; } catch {}
+            const skipPreQ = profile?.pre_q_completed || preDone || localPreDone;
+            setPhase(skipPreQ ? 'onboarding' : 'preQ');
           }}
         />
       </div>
@@ -1248,7 +1308,10 @@ export default function MainApp() {
 
     return (
       <div style={{ padding: 24, textAlign: 'center', maxWidth: 600, margin: '0 auto' }}>
-        <h2 style={{ marginBottom: 20 }}>Block {completedBlockNum} of {C.BLOCKS_TOTAL}</h2>
+        <h2 style={{ marginBottom: sessionCount > 0 ? 4 : 20 }}>Block {completedBlockNum} of {C.BLOCKS_TOTAL}</h2>
+        {sessionCount > 0 && (
+          <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 14 }}>Session {sessionCount + 1}</div>
+        )}
 
         {/* Hero: block hit score */}
         <div style={{ padding: '24px 32px', borderRadius: 16, background: blockBg, border: `2px solid ${blockBorder}`, marginBottom: 12 }}>
@@ -1266,13 +1329,6 @@ export default function MainApp() {
           Session average: <strong style={{ color: parseFloat(sessionPct) > 50 ? '#15803d' : '#6b7280' }}>{sessionPct}%</strong>
           <span style={{ marginLeft: 8 }}>({totals.k} / {totals.n})</span>
         </div>
-
-        {/* Hurst delta gauge — secondary */}
-        <HurstDeltaGauge
-          meanDeltaH={runningMeanDeltaH}
-          blockDeltaH={lastBlock?.deltaH ?? null}
-          blockCount={deltaHurstHistory.length}
-        />
 
         <button
           onClick={() => {
@@ -1386,6 +1442,7 @@ export default function MainApp() {
 
         <div style={{ fontSize: 14, opacity: 0.75, marginTop: 16 }}>
           Block {blockIdx + 1} of {C.BLOCKS_TOTAL}
+          {sessionCount > 0 && <span style={{ marginLeft: 10, fontSize: 11, color: '#9ca3af' }}>· Session {sessionCount + 1}</span>}
         </div>
       </div>
     );
@@ -1442,6 +1499,7 @@ export default function MainApp() {
 
         <p style={{ marginTop: 16, fontSize: 14, color: '#6b7280' }}>
           Block {completedBlockNum} of {C.BLOCKS_TOTAL}
+          {sessionCount > 0 && <span style={{ marginLeft: 10 }}>· Session {sessionCount + 1}</span>}
         </p>
       </div>
     );
@@ -1517,14 +1575,83 @@ export default function MainApp() {
           questions={postQuestions}
           onSubmit={async (answers, { valid }) => {
             if (!valid) return;
-            setPhase('summary');
             try {
               if (runRef) {
                 await saveSessionAggregates();
                 await setDoc(runRef, { post_survey: answers, completed: true }, { merge: true });
               }
+
+              // No email — use UID-based counter in participants/{uid} (same-device only)
+              if (!participantHash) {
+                const newCount = sessionCount + 1;
+                if (uid) {
+                  try {
+                    await setDoc(doc(db, 'participants', uid),
+                      { exp5_prescreen_sessions: newCount }, { merge: true });
+                  } catch (e) {
+                    console.error('UID count update failed (non-blocking):', e);
+                  }
+                }
+                setSessionCount(newCount);
+                setPhase('summary');
+                return;
+              }
+
+              // Build updated cumulative arrays
+              const prevH_s  = participantProfile?.cumulative_h_subject ?? [];
+              const prevH_d  = participantProfile?.cumulative_h_demon ?? [];
+              const prevBits = participantProfile?.cumulative_bits_subject ?? [];
+              const newH_s   = [...prevH_s, ...hurstSubjectHistory];
+              const newH_d   = [...prevH_d, ...hurstDemonHistory];
+              const newBits  = [...prevBits, ...subjectBitsHistory.map(arr => arr.join(''))];
+              const newCount = (participantProfile?.session_count ?? 0) + 1;
+              const todayUTC = new Date().toISOString().slice(0, 10);
+              const lastDate = participantProfile?.last_session_date;
+              const newToday = lastDate === todayUTC
+                ? (participantProfile.sessions_today ?? 0) + 1 : 1;
+
+              // Write updated participant profile (non-blocking on failure)
+              try {
+                const profRef = doc(db, C.PARTICIPANT_COLLECTION, participantHash);
+                await setDoc(profRef, {
+                  session_count:           newCount,
+                  last_session_date:       todayUTC,
+                  sessions_today:          newToday,
+                  pre_q_completed:         true,
+                  cumulative_h_subject:    newH_s,
+                  cumulative_h_demon:      newH_d,
+                  cumulative_bits_subject: newBits,
+                  updated_at:              serverTimestamp(),
+                  ...(emailPlaintext ? { email: emailPlaintext } : {}),
+                  ...(!participantProfile ? { created_at: serverTimestamp() } : {}),
+                  ...(runRef ? { session_ids: arrayUnion(runRef.id) } : {}),
+                }, { merge: true });
+              } catch (profileErr) {
+                console.error('Profile write failed (non-blocking):', profileErr);
+              }
+
+              // Tag session doc with participant hash
+              if (runRef) {
+                setDoc(runRef, { participant_hash: participantHash }, { merge: true })
+                  .catch(e => console.error('Session hash tag failed:', e));
+              }
+
+              setSessionCount(newCount);
+
+              // Session 5+: run cumulative analysis before showing summary
+              if (newCount >= C.MIN_SESSIONS_FOR_DECISION) {
+                const reconstructedBits = newBits.map(s => s.split('').map(Number));
+                const cumAnalysis = computeSessionAnalysis(
+                  reconstructedBits, newH_s, newH_d,
+                  { mean: C.NULL_HURST_MEAN, sd: C.NULL_HURST_SD },
+                  C.N_SHUFFLES
+                );
+                setCumulativeAnalysis(cumAnalysis);
+              }
+              setPhase('summary');
             } catch (e) {
-              console.warn('Post survey save error (non-blocking):', e);
+              console.warn('Post survey save error:', e);
+              setPhase('summary');
             }
           }}
         />
@@ -1532,7 +1659,7 @@ export default function MainApp() {
     );
   }
 
-  // SIMPLE RESULTS
+  // RESULTS
   if (phase === 'results') {
     // If session exited early (not all blocks completed), skip to summary
     const sessionCompleted = blockIdx >= C.BLOCKS_TOTAL;
@@ -1541,14 +1668,52 @@ export default function MainApp() {
       return null;
     }
 
-    // Wait for shuffle-test computation (useEffect above)
+    const nBlocks = deltaHurstHistory.length;
+    const hitRate = totals.n > 0 ? (100 * totals.k / totals.n).toFixed(1) : '50.0';
+    const hr = parseFloat(hitRate);
+    const heroColor  = hr > 50 ? '#15803d' : hr < 50 ? '#b45309' : '#6b7280';
+    const heroBg     = hr > 50 ? '#dcfce7' : hr < 50 ? '#fff7ed' : '#f3f4f6';
+    const heroBorder = hr > 50 ? '#86efac' : hr < 50 ? '#fed7aa' : '#e5e7eb';
+
+    // Sessions 1–4: simplified view — hit rate + "need more sessions" message
+    const isDecisionSession = (sessionCount + 1) >= C.MIN_SESSIONS_FOR_DECISION;
+    if (!isDecisionSession) {
+      const remaining = C.MIN_SESSIONS_FOR_DECISION - (sessionCount + 1);
+      return (
+        <div className="App" style={{ textAlign: 'center', maxWidth: 600, margin: '0 auto', padding: 24 }}>
+          <h1>Session Average</h1>
+
+          <div style={{ padding: '28px 32px', borderRadius: 16, background: heroBg, border: `2px solid ${heroBorder}`, marginBottom: 20 }}>
+            <div style={{ fontSize: 13, color: '#6b7280', marginBottom: 4, letterSpacing: '0.05em' }}>TARGET: EXCEED 50%</div>
+            <div style={{ fontSize: 72, fontWeight: 900, color: heroColor, lineHeight: 1, marginBottom: 6 }}>{hitRate}%</div>
+            <div style={{ fontSize: 14, color: '#6b7280' }}>
+              {totals.k.toLocaleString()} hits out of {totals.n.toLocaleString()} trials · {nBlocks} blocks
+            </div>
+          </div>
+
+          <div style={{ padding: 20, background: '#f8fafc', borderRadius: 12, border: '1px solid #e2e8f0', marginBottom: 20, textAlign: 'left' }}>
+            <p style={{ fontSize: 15, color: '#374151', marginBottom: 10 }}>
+              We need <strong>{remaining} more session{remaining !== 1 ? 's' : ''}</strong> to establish your cumulative result.
+              Each session adds statistical power — results become much more reliable after {C.MIN_SESSIONS_FOR_DECISION} sessions.
+            </p>
+            <p style={{ fontSize: 13, color: '#6b7280', marginBottom: 0 }}>
+              💡 <strong>Tip:</strong> Spread your sessions across different days for best results.
+            </p>
+          </div>
+
+          <button className="primary-btn" onClick={() => setPhase('done')} style={{ marginTop: 8 }}>
+            Continue
+          </button>
+        </div>
+      );
+    }
+
+    // Session 5+: wait for full analysis then show everything
     if (!sessionAnalysis) {
       return <div style={{ padding: 24, textAlign: 'center' }}>Analysing session…</div>;
     }
 
     const finalDeltaH = runningMeanDeltaH;
-    const nBlocks = deltaHurstHistory.length;
-    const hitRate = totals.n > 0 ? (100 * totals.k / totals.n).toFixed(1) : '50.0';
     const analysis = sessionAnalysis;
 
     // ── Evaluation (single source of truth) ──────────────────────────────────
@@ -1574,32 +1739,26 @@ export default function MainApp() {
         <h1>Prescreening Results</h1>
 
         {/* ── Hero: Hit Score ─────────────────────────────────────────────── */}
-        {(() => {
-          const hr = parseFloat(hitRate);
-          const above = hr > 50;
-          const heroColor = above ? '#15803d' : hr < 50 ? '#b45309' : '#6b7280';
-          const heroBg    = above ? '#dcfce7'  : hr < 50 ? '#fff7ed'  : '#f3f4f6';
-          const heroBorder= above ? '#86efac'  : hr < 50 ? '#fed7aa'  : '#e5e7eb';
-          return (
-            <div style={{ padding: '28px 32px', borderRadius: 16, background: heroBg, border: `2px solid ${heroBorder}`, marginBottom: 20 }}>
-              <div style={{ fontSize: 13, color: '#6b7280', marginBottom: 4, letterSpacing: '0.05em' }}>
-                TARGET: EXCEED 50%
-              </div>
-              <div style={{ fontSize: 72, fontWeight: 900, color: heroColor, lineHeight: 1, marginBottom: 6 }}>
-                {hitRate}%
-              </div>
-              <div style={{ fontSize: 14, color: '#6b7280' }}>
-                {totals.k.toLocaleString()} hits out of {totals.n.toLocaleString()} trials · {nBlocks} blocks
-              </div>
-            </div>
-          );
-        })()}
+        <div style={{ padding: '28px 32px', borderRadius: 16, background: heroBg, border: `2px solid ${heroBorder}`, marginBottom: 20 }}>
+          <div style={{ fontSize: 13, color: '#6b7280', marginBottom: 4, letterSpacing: '0.05em' }}>
+            TARGET: EXCEED 50%
+          </div>
+          <div style={{ fontSize: 72, fontWeight: 900, color: heroColor, lineHeight: 1, marginBottom: 6 }}>
+            {hitRate}%
+          </div>
+          <div style={{ fontSize: 14, color: '#6b7280' }}>
+            {totals.k.toLocaleString()} hits out of {totals.n.toLocaleString()} trials · {nBlocks} blocks
+          </div>
+        </div>
 
         {/* ── Hurst Delta Gauge ───────────────────────────────────────────── */}
         <HurstDeltaGauge
           meanDeltaH={finalDeltaH}
           blockCount={nBlocks}
         />
+        <div style={{ fontSize: 11, color: '#9ca3af', textAlign: 'center', marginTop: 2, marginBottom: 8 }}>
+          The gauge shows directional trend. Statistical confirmation (below) requires a stronger, more consistent signal.
+        </div>
 
         {/* ── Session Analysis (smaller, below) ───────────────────────────── */}
         {analysis && (() => {
@@ -1649,7 +1808,7 @@ export default function MainApp() {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', borderRadius: 8, marginBottom: 6, background: '#f8f9fa', border: '1px solid #e5e7eb' }}>
                 <div>
                   <span style={{ fontWeight: 600 }}>Signal Presence</span>
-                  <span style={{ color: '#9ca3af', marginLeft: 8, fontSize: 12 }}>Did your stream differ from the control?</span>
+                  <span style={{ color: '#9ca3af', marginLeft: 8, fontSize: 12 }}>Did your Hurst pattern differ from the uninfluenced control stream?</span>
                 </div>
                 <div style={{ fontWeight: 700, color: ksGate ? '#15803d' : '#9ca3af', flexShrink: 0, marginLeft: 12 }}>
                   {ksGate ? 'YES' : 'NO'}
@@ -1715,12 +1874,15 @@ export default function MainApp() {
   // FINAL SCREEN
   if (phase === 'summary') {
     // Compute invite eligibility from sessionAnalysis (single source of truth)
-    let inviteEligible = false;
-    let summaryRank = null;
-    if (sessionAnalysis) {
-      const { rank: r, eligible } = evaluatePrescreen(sessionAnalysis, C);
+    // In preview mode (#preview) force gold so the invite UI is visible for review
+    const isCumulativeSession = sessionCount >= C.MIN_SESSIONS_FOR_DECISION;
+    const analysisToUse = cumulativeAnalysis || sessionAnalysis;
+    let inviteEligible = isPreviewMode;
+    let summaryRank = isPreviewMode ? 'gold' : null;
+    if (!isPreviewMode && analysisToUse) {
+      const { rank: r, eligible } = evaluatePrescreen(analysisToUse, C);
       summaryRank = r;
-      inviteEligible = eligible; // gold or silver only (candidate gets no invite)
+      inviteEligible = eligible || r === 'candidate'; // gold, silver, and candidate all get invite
     }
 
     return (
@@ -1735,37 +1897,50 @@ export default function MainApp() {
           <p>If you have any questions about this research, please contact the research team at <a href="mailto:h@whatthequark.com">h@whatthequark.com</a></p>
         </div>
 
-        {/* Invite box — only for verified temporal influencers with minimum signal */}
-        {inviteEligible && (
-          <div style={{
-            position: 'relative',
-            marginBottom: 24, padding: '24px 28px',
-            background: '#fffbeb',
-            border: '3px solid #f59e0b',
-            borderRadius: 14,
-            boxShadow: '0 0 24px #f59e0b55',
-          }}>
-            <span style={{ position: 'absolute', top: -14, left:  10, fontSize: 24 }}>⭐</span>
-            <span style={{ position: 'absolute', top: -14, left:  '50%', transform: 'translateX(-50%)', fontSize: 24 }}>⭐</span>
-            <span style={{ position: 'absolute', top: -14, right: 10, fontSize: 24 }}>⭐</span>
-            <span style={{ position: 'absolute', bottom: -14, left:  10, fontSize: 24 }}>⭐</span>
-            <span style={{ position: 'absolute', bottom: -14, left:  '50%', transform: 'translateX(-50%)', fontSize: 24 }}>⭐</span>
-            <span style={{ position: 'absolute', bottom: -14, right: 10, fontSize: 24 }}>⭐</span>
-            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', color: '#b45309', marginBottom: 6 }}>
-              STATUS: HIGH-RESONANCE SIGNATURE DETECTED
-            </div>
-            <div style={{ fontWeight: 700, fontSize: 17, color: '#92400e', marginBottom: 12 }}>
-              You are a strong candidate for Experiment 5
-            </div>
-            <p style={{ margin: '0 0 10px', color: '#78350f', fontSize: 14, textAlign: 'left' }}>
-              Your interaction with the quantum stream has met the criteria for the next phase of our research.
-            </p>
-            <p style={{ margin: '0 0 10px', color: '#78350f', fontSize: 14, textAlign: 'left' }}>
-              To maintain experimental control, we do not provide individual performance metrics or raw data. However, upon the conclusion of the study, a formal write-up and summary of the aggregate findings will be distributed to our participant list.
-            </p>
-            <p style={{ margin: '0 0 16px', color: '#78350f', fontSize: 14, textAlign: 'left' }}>
-              If you would like to be considered for the next stage of this study and receive a copy of the final research paper once published, please provide your contact details below:
-            </p>
+        {/* Invite box — gold/silver (strong signal) or candidate (anomalous pattern, manual review) */}
+        {inviteEligible && (() => {
+          const isCandidate = summaryRank === 'candidate';
+          const boxStyle = isCandidate ? {
+            position: 'relative', marginBottom: 24, padding: '24px 28px',
+            background: '#eff6ff', border: '2px solid #60a5fa',
+            borderRadius: 14, boxShadow: '0 0 16px #60a5fa33',
+          } : {
+            position: 'relative', marginBottom: 24, padding: '24px 28px',
+            background: '#fffbeb', border: '3px solid #f59e0b',
+            borderRadius: 14, boxShadow: '0 0 24px #f59e0b55',
+          };
+          const labelColor  = isCandidate ? '#1d4ed8' : '#b45309';
+          const headColor   = isCandidate ? '#1e3a8a' : '#92400e';
+          const bodyColor   = isCandidate ? '#1e40af' : '#78350f';
+          return (
+            <div style={boxStyle}>
+              {!isCandidate && (<>
+                <span style={{ position: 'absolute', top: -14, left:  10, fontSize: 24 }}>⭐</span>
+                <span style={{ position: 'absolute', top: -14, left:  '50%', transform: 'translateX(-50%)', fontSize: 24 }}>⭐</span>
+                <span style={{ position: 'absolute', top: -14, right: 10, fontSize: 24 }}>⭐</span>
+                <span style={{ position: 'absolute', bottom: -14, left:  10, fontSize: 24 }}>⭐</span>
+                <span style={{ position: 'absolute', bottom: -14, left:  '50%', transform: 'translateX(-50%)', fontSize: 24 }}>⭐</span>
+                <span style={{ position: 'absolute', bottom: -14, right: 10, fontSize: 24 }}>⭐</span>
+              </>)}
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', color: labelColor, marginBottom: 6 }}>
+                {isCandidate ? 'INTERESTING PATTERN DETECTED' : 'STATUS: HIGH-RESONANCE SIGNATURE DETECTED'}
+              </div>
+              <div style={{ fontWeight: 700, fontSize: 17, color: headColor, marginBottom: 12 }}>
+                {isCandidate ? "We'd like to learn more about your session" : 'You are a strong candidate for Experiment 5'}
+              </div>
+              <p style={{ margin: '0 0 10px', color: bodyColor, fontSize: 14, textAlign: 'left' }}>
+                {isCandidate
+                  ? "Your session showed an unusual pattern in the quantum stream that our research team would like to review."
+                  : "Your interaction with the quantum stream has met the criteria for the next phase of our research."}
+              </p>
+              <p style={{ margin: '0 0 10px', color: bodyColor, fontSize: 14, textAlign: 'left' }}>
+                Participants who participate in Experiment 5 will receive a personal performance report including your individual scores and how your results compare to the broader participant pool.
+              </p>
+              <p style={{ margin: '0 0 16px', color: bodyColor, fontSize: 14, textAlign: 'left' }}>
+                {isCandidate
+                  ? "Leave your details below and we'll be in touch:"
+                  : "Leave your details below to secure your place and receive your personal results when the study concludes:"}
+              </p>
 
             {inviteSubmitted ? (
               <div style={{ padding: '12px 16px', background: '#dcfce7', borderRadius: 8, color: '#15803d', fontWeight: 600, fontSize: 14 }}>
@@ -1776,6 +1951,7 @@ export default function MainApp() {
                 onSubmit={async e => {
                   e.preventDefault();
                   setInviteSubmitting(true);
+                  setInviteError(null);
                   try {
                     await addDoc(collection(db, 'exp5_invites'), {
                       ...inviteForm,
@@ -1788,6 +1964,7 @@ export default function MainApp() {
                     setInviteSubmitted(true);
                   } catch (err) {
                     console.error('Invite save failed:', err);
+                    setInviteError(err?.message || 'Submission failed — please try again.');
                   }
                   setInviteSubmitting(false);
                 }}
@@ -1804,8 +1981,8 @@ export default function MainApp() {
                     style={{ width: '100%', padding: '7px 10px', borderRadius: 6, border: '1px solid #f59e0b', fontSize: 14, boxSizing: 'border-box' }} />
                 </div>
                 <div>
-                  <label style={{ fontSize: 12, fontWeight: 600, color: '#92400e', display: 'block', marginBottom: 3 }}>Location</label>
-                  <input required placeholder="City, Country" value={inviteForm.location} onChange={e => setInviteForm(f => ({ ...f, location: e.target.value }))}
+                  <label style={{ fontSize: 12, fontWeight: 600, color: '#92400e', display: 'block', marginBottom: 3 }}>Country</label>
+                  <input required placeholder="Country" value={inviteForm.location} onChange={e => setInviteForm(f => ({ ...f, location: e.target.value }))}
                     style={{ width: '100%', padding: '7px 10px', borderRadius: 6, border: '1px solid #f59e0b', fontSize: 14, boxSizing: 'border-box' }} />
                 </div>
                 <div>
@@ -1818,6 +1995,11 @@ export default function MainApp() {
                   <input required type="email" value={inviteForm.email} onChange={e => setInviteForm(f => ({ ...f, email: e.target.value }))}
                     style={{ width: '100%', padding: '7px 10px', borderRadius: 6, border: '1px solid #f59e0b', fontSize: 14, boxSizing: 'border-box' }} />
                 </div>
+                {inviteError && (
+                  <div style={{ gridColumn: '1 / -1', padding: '10px 14px', background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 8, color: '#dc2626', fontSize: 13 }}>
+                    {inviteError}
+                  </div>
+                )}
                 <div style={{ gridColumn: '1 / -1', textAlign: 'center', marginTop: 4 }}>
                   <button type="submit" disabled={inviteSubmitting}
                     style={{ padding: '10px 28px', background: '#f59e0b', color: '#fff', border: 'none', borderRadius: 8, fontWeight: 700, fontSize: 14, cursor: inviteSubmitting ? 'wait' : 'pointer' }}>
@@ -1827,24 +2009,32 @@ export default function MainApp() {
               </form>
             )}
           </div>
-        )}
+          );
+        })()}
 
         <div style={{ padding: '16px', background: '#fff', border: '1px solid #ddd', borderRadius: 8 }}>
           <p style={{ marginTop: 0 }}>
             <a href="https://zenodo.org/records/18714884" target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6', textDecoration: 'underline' }}>Read about the methodology behind this pre-screening for Experiment 5.</a>
           </p>
 
-          <ul style={{ textAlign: 'left', marginTop: 16 }}>
-            <li>Repeat this experiment at least 5 times.</li>
-            <li>Share with friends and family interested in participating in our study — large datasets matter here.</li>
-          </ul>
+          {isCumulativeSession ? (
+            <p style={{ textAlign: 'left', fontSize: 14, color: '#374151' }}>
+              Each session adds statistical power — feel free to run more sessions to refine your result.
+              Spread sessions across different days for best results.
+            </p>
+          ) : (
+            <ul style={{ textAlign: 'left', marginTop: 16 }}>
+              <li>Repeat this experiment at least 5 times — results become much more reliable across sessions.</li>
+              <li>Share with friends and family interested in participating in our study — large datasets matter here.</li>
+            </ul>
+          )}
 
           <button
             onClick={() => window.location.reload()}
             className="primary-btn"
             style={{ marginTop: '1em' }}
           >
-            Run It Again
+            Retake
           </button>
         </div>
       </div>
