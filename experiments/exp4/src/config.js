@@ -14,15 +14,15 @@ export const config = {
 config.experiments = {
   pk: {
     EXPERIMENT_ID: 'pk_focus_fetch_v2',
-    VISUAL_HZ: 5,                  // 5 Hz pulse frequency for loading screen
-    REST_MS: 2500,                 // 2.5 s breather
-    BLOCKS_TOTAL: 30,             // 30 blocks of focus → fetch → results
-    TRIALS_PER_BLOCK: 150,        // 150 trials per block (instant processing)
-    BITS_PER_BLOCK: 301,          // 301 bits: 1 for assignment + 300 for trials (150 subject, 150 demon)
+    VISUAL_HZ: 5, // 5 Hz pulse frequency for loading screen
+    REST_MS: 2500, // 2.5 s breather
+    BLOCKS_TOTAL: 30, // 30 blocks of focus → fetch → results
+    TRIALS_PER_BLOCK: 150, // 150 trials per block (instant processing)
+    BITS_PER_BLOCK: 301, // 301 bits: 1 for assignment + 300 for trials (150 subject, 150 demon)
 
     // Audit configuration (NIST SP 800-22 Randomness Testing)
-    AUDIT_EVERY_N_BLOCKS: 5,      // Run audit break every N blocks
-    AUDIT_BITS_PER_BREAK: 1000,   // Fetch 1000 bits for RNG quality test during audit
+    AUDIT_EVERY_N_BLOCKS: 5, // Run audit break every N blocks
+    AUDIT_BITS_PER_BREAK: 1000, // Fetch 1000 bits for RNG quality test during audit
     // NIST tests run during audit:
     // 1. Frequency (Monobit) Test - checks proportion of 0s vs 1s (p ≥ 0.01 to pass)
     // 2. Runs Test - checks oscillation between bits (p ≥ 0.01 to pass)
@@ -41,7 +41,11 @@ config.experiments = {
     FINALIST_MAX_PCT: 46, // 46 email capture low score gate opens at or below this percent
     AUTO_MODE_SESSIONS: 20, // Number of automated baseline sessions to run (access via #auto URL /exp4#auto)
     AUTO_MODE_REST_MS: 1000, // 1 second auto-continue delay between blocks in auto-mode
+<<<<<<< Updated upstream
     AI_MODE_SESSIONS: 12, // Set this in ai-config.js as it reads it from there. Number of AI agent sessions to run (access via #ai URL /exp4#ai) - run 'sh experiments/exp4/run-ai.sh' first
+=======
+    AI_MODE_SESSIONS: 20, // Set this in ai-config.js as it reads it from there. Number of AI agent sessions to run (access via #ai URL /exp4#ai) - run sh experiments/exp4/run-ai.sh first
+>>>>>>> Stashed changes
   },
 };
 // To test QRNG for bias run node validate-qrng-node.js. This uses 50K bits.

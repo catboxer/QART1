@@ -54,6 +54,50 @@ function shuffled(arr) {
   return a;
 }
 
+// ── Standard normal CDF (Abramowitz & Stegun approximation) ──────────────────
+function normCDF(z) {
+  const a1 =  0.254829592, a2 = -0.284496736, a3 =  1.421413741;
+  const a4 = -1.453152027, a5 =  1.061405429, p  =  0.3275911;
+  const sign = z < 0 ? -1 : 1;
+  z = Math.abs(z) / Math.SQRT2;
+  const t = 1 / (1 + p * z);
+  const y = 1 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-z * z);
+  return 0.5 * (1 + sign * y);
+}
+
+// ── Cliff's delta (non-parametric effect size) ───────────────────────────────
+// Compares raw distributions: P(X > Y) - P(X < Y), bounded [-1, 1].
+// Positive δ means values in `a` tend to exceed values in `b`.
+// Interpretation: |δ| < 0.147 negligible, < 0.33 small, < 0.474 medium, else large.
+// Note: This compares unpaired distributions (like KS), not paired differences.
+function cliffsD(a, b) {
+  if (!a.length || !b.length) return 0;
+  let greater = 0, less = 0;
+  for (const x of a) {
+    for (const y of b) {
+      if (x > y) greater++;
+      else if (x < y) less++;
+    }
+  }
+  return (greater - less) / (a.length * b.length);
+}
+
+// ── Wasserstein distance (1D, L1 / Earth Mover's Distance) ───────────────────
+// For equal-length samples: mean of |sorted_a[i] - sorted_b[i]|.
+// Interpretation: average "work" to transform one distribution into the other,
+// in the same units as the input (Hurst exponent units here).
+function wasserstein1D(a, b) {
+  if (!a.length || !b.length) return 0;
+  const sa = [...a].sort((x, y) => x - y);
+  const sb = [...b].sort((x, y) => x - y);
+  const n = Math.min(sa.length, sb.length);
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    sum += Math.abs(sa[i] - sb[i]);
+  }
+  return sum / n;
+}
+
 // ── Pearson r (diagnostic only — not used in any gate) ───────────────────────
 function pearsonR(a, b) {
   const n = a.length;
@@ -137,19 +181,35 @@ export function computeSessionAnalysis(
   //   Expected ~0.35 due to within-fetch QRNG adjacency — diagnostic only.
   const crossCorr = pearsonR(hurstSubjectHistory, hurstDemonHistory);
 
-  // 4. ΔH intensity (mean and SE across blocks)
+  // 4. ΔH distribution analysis (paired differences per block)
   //    Used by evaluatePrescreen to assign Tier 1/2/3 within eligible ranks.
   const deltaHList = hurstSubjectHistory.map((h, i) => h - hurstDemonHistory[i]);
   const meanDeltaH = deltaHList.reduce((a, b) => a + b, 0) / nBlocks;
   const varDeltaH  = deltaHList.reduce((s, v) => s + (v - meanDeltaH) ** 2, 0) / nBlocks;
   const seDeltaH   = nBlocks > 1 ? Math.sqrt(varDeltaH) / Math.sqrt(nBlocks) : 0;
 
+  // Sign test: fraction of blocks where ΔH > 0 (subject beat demon)
+  // Under null, ~50%. Binomial test for systematic bias.
+  const nPositive = deltaHList.filter(d => d > 0).length;
+  const signRate  = nPositive / nBlocks;
+  // Two-tailed binomial p-value: P(|X - n/2| >= |nPositive - n/2|) under p=0.5
+  // Using normal approximation for large n: Z = (nPositive - n/2) / sqrt(n/4)
+  const signZ = (nPositive - nBlocks / 2) / Math.sqrt(nBlocks / 4);
+  const signP = 2 * (1 - normCDF(Math.abs(signZ)));
+
+  // 5. Effect size diagnostics (metadata only — not used in any gate)
+  //    Cliff's δ: compares raw H distributions, P(H_subj > H_demon) - P(H_subj < H_demon).
+  //    Wasserstein: EMD in Hurst units, captures distribution shift magnitude.
+  const cliffsDelta = cliffsD(hurstSubjectHistory, hurstDemonHistory);
+  const wassersteinDist = wasserstein1D(hurstSubjectHistory, hurstDemonHistory);
+
   return {
     nBlocks,
     ks: { originalD, originalP },
+    effectSize: { cliffsDelta, wassersteinDist },
     shuffle: { collapseP, meanShuffledD, dDrop, nShuffles },
     pcs: { demonMean, demonSD, nullZ, ghostZ, sdRatio, crossCorr },
-    deltaH: { meanDeltaH, seDeltaH },
+    deltaH: { meanDeltaH, seDeltaH, signRate, signP },
   };
 }
 
@@ -185,9 +245,11 @@ export function evaluatePrescreen(analysis, C) {
 
   // Database rank (first-match, strictest first)
   // Candidate is exactly: ksGate passes but collapseGate fails — no other conditions
+  // Gold: strong evidence via probability (collapseP) OR magnitude (dDrop)
   let rank = 'none';
   if (eligible) {
-    rank = shuffle.dDrop > 0.30 ? 'gold' : 'silver';
+    const isGold = shuffle.collapseP < C.PRESCREEN_COLLAPSE_GOLD || shuffle.dDrop >= C.PRESCREEN_DDROP_GOLD;
+    rank = isGold ? 'gold' : 'silver';
   } else if (ksGate && !collapseGate) {
     rank = 'candidate'; // signal without confirmed temporal structure — manual review
   }

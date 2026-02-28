@@ -1716,11 +1716,13 @@ export default function MainApp() {
   if (phase === 'summary') {
     // Compute invite eligibility from sessionAnalysis (single source of truth)
     let inviteEligible = false;
+    let isCandidate = false;
     let summaryRank = null;
     if (sessionAnalysis) {
       const { rank: r, eligible } = evaluatePrescreen(sessionAnalysis, C);
       summaryRank = r;
-      inviteEligible = eligible; // gold or silver only (candidate gets no invite)
+      isCandidate = r === 'candidate';
+      inviteEligible = eligible || isCandidate; // gold, silver, OR candidate (all get invited)
     }
 
     return (
@@ -1735,36 +1737,44 @@ export default function MainApp() {
           <p>If you have any questions about this research, please contact the research team at <a href="mailto:h@whatthequark.com">h@whatthequark.com</a></p>
         </div>
 
-        {/* Invite box — only for verified temporal influencers with minimum signal */}
+        {/* Invite box — for eligible (gold/silver) or candidate participants */}
         {inviteEligible && (
           <div style={{
             position: 'relative',
             marginBottom: 24, padding: '24px 28px',
-            background: '#fffbeb',
-            border: '3px solid #f59e0b',
+            background: isCandidate ? '#fff7ed' : '#fffbeb',
+            border: isCandidate ? '3px solid #ea580c' : '3px solid #f59e0b',
             borderRadius: 14,
-            boxShadow: '0 0 24px #f59e0b55',
+            boxShadow: isCandidate ? '0 0 24px #ea580c44' : '0 0 24px #f59e0b55',
           }}>
-            <span style={{ position: 'absolute', top: -14, left:  10, fontSize: 24 }}>⭐</span>
-            <span style={{ position: 'absolute', top: -14, left:  '50%', transform: 'translateX(-50%)', fontSize: 24 }}>⭐</span>
-            <span style={{ position: 'absolute', top: -14, right: 10, fontSize: 24 }}>⭐</span>
-            <span style={{ position: 'absolute', bottom: -14, left:  10, fontSize: 24 }}>⭐</span>
-            <span style={{ position: 'absolute', bottom: -14, left:  '50%', transform: 'translateX(-50%)', fontSize: 24 }}>⭐</span>
-            <span style={{ position: 'absolute', bottom: -14, right: 10, fontSize: 24 }}>⭐</span>
-            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', color: '#b45309', marginBottom: 6 }}>
-              STATUS: HIGH-RESONANCE SIGNATURE DETECTED
+            {!isCandidate && (
+              <>
+                <span style={{ position: 'absolute', top: -14, left:  10, fontSize: 24 }}>⭐</span>
+                <span style={{ position: 'absolute', top: -14, left:  '50%', transform: 'translateX(-50%)', fontSize: 24 }}>⭐</span>
+                <span style={{ position: 'absolute', top: -14, right: 10, fontSize: 24 }}>⭐</span>
+                <span style={{ position: 'absolute', bottom: -14, left:  10, fontSize: 24 }}>⭐</span>
+                <span style={{ position: 'absolute', bottom: -14, left:  '50%', transform: 'translateX(-50%)', fontSize: 24 }}>⭐</span>
+                <span style={{ position: 'absolute', bottom: -14, right: 10, fontSize: 24 }}>⭐</span>
+              </>
+            )}
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', color: isCandidate ? '#c2410c' : '#b45309', marginBottom: 6 }}>
+              {isCandidate ? 'STATUS: POSSIBLE SIGNAL — INCONCLUSIVE' : 'STATUS: HIGH-RESONANCE SIGNATURE DETECTED'}
             </div>
-            <div style={{ fontWeight: 700, fontSize: 17, color: '#92400e', marginBottom: 12 }}>
-              You are a strong candidate for Experiment 5
+            <div style={{ fontWeight: 700, fontSize: 17, color: isCandidate ? '#9a3412' : '#92400e', marginBottom: 12 }}>
+              {isCandidate ? 'You may be a candidate for Experiment 5' : 'You are a strong candidate for Experiment 5'}
             </div>
-            <p style={{ margin: '0 0 10px', color: '#78350f', fontSize: 14, textAlign: 'left' }}>
-              Your interaction with the quantum stream has met the criteria for the next phase of our research.
+            <p style={{ margin: '0 0 10px', color: isCandidate ? '#9a3412' : '#78350f', fontSize: 14, textAlign: 'left' }}>
+              {isCandidate
+                ? 'Your stream showed an unusual distribution, but the confirmation test was inconclusive. We would like to invite you for further testing to determine if you qualify for the next phase.'
+                : 'Your interaction with the quantum stream has met the criteria for the next phase of our research.'}
             </p>
-            <p style={{ margin: '0 0 10px', color: '#78350f', fontSize: 14, textAlign: 'left' }}>
+            <p style={{ margin: '0 0 10px', color: isCandidate ? '#9a3412' : '#78350f', fontSize: 14, textAlign: 'left' }}>
               To maintain experimental control, we do not provide individual performance metrics or raw data. However, upon the conclusion of the study, a formal write-up and summary of the aggregate findings will be distributed to our participant list.
             </p>
-            <p style={{ margin: '0 0 16px', color: '#78350f', fontSize: 14, textAlign: 'left' }}>
-              If you would like to be considered for the next stage of this study and receive a copy of the final research paper once published, please provide your contact details below:
+            <p style={{ margin: '0 0 16px', color: isCandidate ? '#9a3412' : '#78350f', fontSize: 14, textAlign: 'left' }}>
+              {isCandidate
+                ? 'If you would like to participate in additional testing and receive a copy of the final research paper once published, please provide your contact details below:'
+                : 'If you would like to be considered for the next stage of this study and receive a copy of the final research paper once published, please provide your contact details below:'}
             </p>
 
             {inviteSubmitted ? (
@@ -1820,8 +1830,8 @@ export default function MainApp() {
                 </div>
                 <div style={{ gridColumn: '1 / -1', textAlign: 'center', marginTop: 4 }}>
                   <button type="submit" disabled={inviteSubmitting}
-                    style={{ padding: '10px 28px', background: '#f59e0b', color: '#fff', border: 'none', borderRadius: 8, fontWeight: 700, fontSize: 14, cursor: inviteSubmitting ? 'wait' : 'pointer' }}>
-                    {inviteSubmitting ? 'Submitting…' : 'Join Experiment 5'}
+                    style={{ padding: '10px 28px', background: isCandidate ? '#ea580c' : '#f59e0b', color: '#fff', border: 'none', borderRadius: 8, fontWeight: 700, fontSize: 14, cursor: inviteSubmitting ? 'wait' : 'pointer' }}>
+                    {inviteSubmitting ? 'Submitting…' : (isCandidate ? 'Request Further Testing' : 'Join Experiment 5')}
                   </button>
                 </div>
               </form>

@@ -37,11 +37,13 @@ config.experiments = {
     NULL_HURST_P99:  0.60700,
 
     // ── Prescreen eligibility gates ──────────────────────────────────────────
-    // Layer 1: KS anomaly (soft — catch anything non-null)
-    PRESCREEN_KS_ALPHA: 0.10,
+    // Layer 1: KS anomaly (permissive — catch weak responders)
+    PRESCREEN_KS_ALPHA: 0.15,
     // Layer 2: Shuffle collapse (OR logic)
     PRESCREEN_COLLAPSE_ALPHA: 0.10,   // permutation p-value gate
-    PRESCREEN_DDROP_MIN: 0.15,        // magnitude collapse gate
+    PRESCREEN_DDROP_MIN: 0.15,        // magnitude collapse gate (silver threshold)
+    PRESCREEN_DDROP_GOLD: 0.20,       // gold rank threshold (stronger magnitude)
+    PRESCREEN_COLLAPSE_GOLD: 0.05,    // gold rank threshold (stronger probability)
     // Intensity tier thresholds (SE multiples of |mean ΔH| for eligible sessions)
     // Tier 1: |t| < T2  (subtle — collapseP carried the vote)
     // Tier 2: T2 ≤ |t| < T3  (moderate — ΔH above noise)
@@ -54,8 +56,8 @@ config.experiments = {
     PRESCREEN_PCS_NULLZ_WARN: 1.5,
     // sdRatio: demonSD / null_SD. >1.5 means demon Hurst is 50% more dispersed than expected.
     PRESCREEN_PCS_SD_RATIO_WARN: 1.5,
-    // Shuffle iterations
-    N_SHUFFLES: 200,
+    // Shuffle iterations (500 reduces Monte Carlo noise for cumulative analysis)
+    N_SHUFFLES: 500,
 
     // Firestore collection for prescreen sessions
     PRESCREEN_COLLECTION: 'prescreen_sessions_exp5',
