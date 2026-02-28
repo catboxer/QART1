@@ -19,7 +19,7 @@ import {
 } from './stats/index.js';
 import { db, ensureSignedIn } from './firebase.js';
 import {
-  collection, doc, addDoc, setDoc, getDoc, getDocs, updateDoc, serverTimestamp,
+  collection, doc, addDoc, setDoc, getDoc, getDocs, updateDoc, serverTimestamp, arrayUnion,
 } from 'firebase/firestore';
 import { fetchQRNGBits } from './fetchQRNGBits.js';
 import { runNISTAudit } from './nistTests.js';
@@ -29,6 +29,15 @@ import { QuestionsForm } from './Forms.jsx';
 import { HurstDeltaGauge } from './Scoring.jsx';
 import confetti from 'canvas-confetti';
 import ConsentGate from './ui/ConsentGate.jsx';
+
+async function hashEmail(email) {
+  const encoded = new TextEncoder().encode(email.toLowerCase().trim());
+  const buf = await crypto.subtle.digest('SHA-256', encoded);
+  return Array.from(new Uint8Array(buf))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('')
+    .slice(0, 32);
+}
 
 // Runtime configuration validation
 function validateConfig() {
@@ -63,6 +72,8 @@ export default function MainApp() {
   const isAutoMode = window.location.hash.includes('auto');
   // AI-mode for AI agent sessions (activated via URL hash #ai)
   const isAIMode = window.location.hash.includes('ai');
+  // Preview mode: jump straight to the invite/summary screen for UI review (activated via URL hash #preview)
+  const isPreviewMode = window.location.hash.includes('preview');
   const [autoSessionCount, setAutoSessionCount] = useState(0);
   const [autoSessionTarget, setAutoSessionTarget] = useState(isAIMode ? C.AI_MODE_SESSIONS : C.AUTO_MODE_SESSIONS);
 
@@ -92,6 +103,12 @@ export default function MainApp() {
   useEffect(() => {
     targetRef.current = target;
   }, [target]);
+
+  // Preview mode: jump to summary screen as soon as app is ready
+  useEffect(() => {
+    if (!isPreviewMode || !userReady || !target) return;
+    setPhase('summary');
+  }, [isPreviewMode, userReady, target]);
 
   // ---- returning participant (skip preQ on same device)
   const [preDone, setPreDone] = useState(() => {
@@ -211,6 +228,14 @@ export default function MainApp() {
   const [inviteForm, setInviteForm] = useState({ firstName: '', lastName: '', location: '', age: '', email: '' });
   const [inviteSubmitted, setInviteSubmitted] = useState(false);
   const [inviteSubmitting, setInviteSubmitting] = useState(false);
+  const [inviteError, setInviteError] = useState(null);
+
+  // Multi-session accumulation
+  const [participantHash, setParticipantHash]             = useState(null);
+  const [participantProfile, setParticipantProfile]       = useState(null);
+  const [emailPlaintext, setEmailPlaintext]               = useState('');
+  const [sessionCount, setSessionCount]                   = useState(0);
+  const [cumulativeAnalysis, setCumulativeAnalysis]       = useState(null);
 
   const bitsRef = useRef([]);
   const demonBitsRef = useRef([]);
@@ -342,128 +367,6 @@ export default function MainApp() {
     }
   }, [runRef, totals, totalGhostHits, deltaHurstHistory]);
 
-  // Calculate and save session-level temporal entropy (k=2 and k=3 windows)
-  const calculateSessionTemporalEntropy = useCallback(async () => {
-    if (!runRef) return;
-
-    try {
-      const allSubjectBits = [];
-      const allGhostBits = [];
-
-      // Fetch all minutes to get their indices
-      const minutesSnapshot = await getDocs(collection(runRef, 'minutes'));
-      const sortedMinutes = minutesSnapshot.docs
-        .map(d => ({ id: d.id, ref: d.ref, data: d.data(), idx: d.data().idx || 0 }))
-        .sort((a, b) => a.idx - b.idx);
-
-      // For each minute, read trial_data arrays directly from minute docs
-      for (const minute of sortedMinutes) {
-        const minuteData = minute.data;
-
-        // Extract bits from trial_data arrays stored in each minute doc
-        if (minuteData.trial_data?.subject_bits && minuteData.trial_data?.demon_bits) {
-          allSubjectBits.push(...minuteData.trial_data.subject_bits);
-          allGhostBits.push(...minuteData.trial_data.demon_bits);
-        }
-      }
-
-      const n = allSubjectBits.length;
-
-      if (n === 0) {
-        console.warn('No subject bits found for session-level entropy calculation');
-        return;
-      }
-
-      // NEW: Aggregate block-level entropy trajectories for H(t) fitting
-      const allBlockEntropySubj = [];
-      const allBlockEntropyGhost = [];
-
-      // Fetch block-level entropy from each minute
-      for (const minute of sortedMinutes) {
-        const minuteDoc = await getDoc(minute.ref);
-        const minuteData = minuteDoc.data();
-
-        if (minuteData?.entropy?.block_entropy_subj !== undefined) {
-          allBlockEntropySubj.push({
-            blockIdx: minuteData.entropy.block_idx,
-            entropy: minuteData.entropy.block_entropy_subj,
-            timestamp: minuteData.entropy.block_timestamp || minuteData.timing?.block_start_time
-          });
-        }
-
-        if (minuteData?.entropy?.block_entropy_ghost !== undefined) {
-          allBlockEntropyGhost.push({
-            blockIdx: minuteData.entropy.block_idx,
-            entropy: minuteData.entropy.block_entropy_ghost,
-            timestamp: minuteData.entropy.block_timestamp || minuteData.timing?.block_start_time
-          });
-        }
-      }
-
-
-      // Minimum window size: one full block's worth of bits (576).
-      // k=2 fires for early exits before block 2; k=3 before block 3.
-      const MIN_WINDOW_SIZE = C.TRIALS_PER_BLOCK;
-
-      // k=2: split into first/second half (each = n/2 bits)
-      const half = Math.floor(n / 2);
-      if (half < MIN_WINDOW_SIZE) {
-        console.warn(`Insufficient bits for k=2 temporal entropy: ${n} bits (need ${MIN_WINDOW_SIZE * 2}+ for meaningful windows)`);
-        return;
-      }
-      const entropy_k2 = [
-        shannonEntropy(allSubjectBits.slice(0, half)),
-        shannonEntropy(allSubjectBits.slice(half, n))
-      ];
-      const ghost_entropy_k2 = [
-        shannonEntropy(allGhostBits.slice(0, half)),
-        shannonEntropy(allGhostBits.slice(half, n))
-      ];
-
-      // k=3: split into thirds (each = n/3 bits)
-      const third = Math.floor(n / 3);
-      if (third < MIN_WINDOW_SIZE) {
-        console.warn(`Insufficient bits for k=3 temporal entropy: ${n} bits (need ${MIN_WINDOW_SIZE * 3}+ for meaningful windows)`);
-        return;
-      }
-      const entropy_k3 = [
-        shannonEntropy(allSubjectBits.slice(0, third)),
-        shannonEntropy(allSubjectBits.slice(third, 2 * third)),
-        shannonEntropy(allSubjectBits.slice(2 * third, n))
-      ];
-      const ghost_entropy_k3 = [
-        shannonEntropy(allGhostBits.slice(0, third)),
-        shannonEntropy(allGhostBits.slice(third, 2 * third)),
-        shannonEntropy(allGhostBits.slice(2 * third, n))
-      ];
-
-
-      // Save to session document
-      await setDoc(runRef, {
-        entropy: {
-          temporal: {
-            subj_bits_count: n,
-            entropy_k2: entropy_k2,
-            entropy_k3: entropy_k3,
-            ghost_entropy_k2: ghost_entropy_k2,
-            ghost_entropy_k3: ghost_entropy_k3,
-          },
-          temporal_trajectories: {
-            block_level_subj: allBlockEntropySubj,
-            block_level_ghost: allBlockEntropyGhost,
-            // This enables H_subject(t) and H_ghost(t) fitting for thermalization analysis
-          }
-        }
-      }, { merge: true });
-
-      // Reset all accumulators to prevent bleed into next session
-      bitsRef.current = [];
-      demonBitsRef.current = [];
-      alignedRef.current = [];
-    } catch (error) {
-      console.error('Error calculating session temporal entropy:', error);
-    }
-  }, [runRef]);
 
   // Fetch subject+demon tape when entering fetching phase, then process trials
   const [needsPersist, setNeedsPersist] = useState(false);
@@ -530,12 +433,6 @@ export default function MainApp() {
         // Always go to score phase first to show results
         setPhase('score');
 
-        // If this was the final block, calculate session entropy in background
-        if (nextBlockIdx >= C.BLOCKS_TOTAL) {
-          calculateSessionTemporalEntropy().catch(err =>
-            console.error('Failed to calculate final entropy:', err)
-          );
-        }
 
       } catch (error) {
         console.error('❌ Failed to fetch bits:', error);
@@ -582,7 +479,7 @@ export default function MainApp() {
     return () => {
       isCancelled = true;
     };
-  }, [phase, blockIdx, processTrials, calculateSessionTemporalEntropy, isAutoMode, isAIMode, runRef, target]);
+  }, [phase, blockIdx, processTrials, isAutoMode, isAIMode, runRef, target]);
 
   // Audit phase: Fetch audit bits in background and randomize target
   useEffect(() => {
@@ -859,6 +756,8 @@ export default function MainApp() {
 
       // Entropy
       entropy: {
+        block_idx: saveBlockIdx,
+        block_timestamp: new Date().toISOString(),
         block_entropy_subj: blockSubjEntropy,
         block_entropy_demon: blockDemonEntropy,
         block_k2_subj: blockK2Subj,
@@ -929,10 +828,19 @@ export default function MainApp() {
 
 
 
+  // Pre-fill invite form email from consent when entering summary
+  useEffect(() => {
+    if (phase !== 'summary') return;
+    if (!emailPlaintext) return;
+    setInviteForm(f => f.email ? f : { ...f, email: emailPlaintext });
+  }, [phase]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Fire confetti on summary screen when subject is invite-eligible (gold or silver)
   useEffect(() => {
-    if (phase !== 'summary' || !sessionAnalysis) return;
-    const { eligible } = evaluatePrescreen(sessionAnalysis, C);
+    if (phase !== 'summary') return;
+    const analysisForConfetti = cumulativeAnalysis || sessionAnalysis;
+    if (!analysisForConfetti) return;
+    const { eligible } = evaluatePrescreen(analysisForConfetti, C);
     if (!eligible) return;
     // Gold confetti burst
     confetti({ particleCount: 120, spread: 80, colors: ['#f59e0b', '#fcd34d', '#fbbf24', '#d97706', '#fff'], origin: { y: 0.5 } });
@@ -968,6 +876,37 @@ export default function MainApp() {
     );
     setSessionAnalysis(result);
   }, [phase, sessionAnalysis, subjectBitsHistory, hurstSubjectHistory, hurstDemonHistory, totalGhostHits, totals.n]);
+
+  // Compute cumulative analysis when entering results phase for session 5+
+  useEffect(() => {
+    if (phase !== 'results') return;
+    const newCount = sessionCount + 1;
+    if (newCount < C.MIN_SESSIONS_FOR_DECISION) return;
+    if (cumulativeAnalysis) return; // already computed
+
+    const prevH_s        = participantProfile?.cumulative_h_subject ?? [];
+    const prevH_d        = participantProfile?.cumulative_h_demon ?? [];
+    const prevBits       = participantProfile?.cumulative_bits_subject ?? [];
+    const prevDemonHits  = participantProfile?.cumulative_demon_hits ?? 0;
+    const prevDemonTrials = participantProfile?.cumulative_demon_trials ?? 0;
+    const newH_s         = [...prevH_s, ...hurstSubjectHistory];
+    const newH_d         = [...prevH_d, ...hurstDemonHistory];
+    const newBits        = [...prevBits, ...subjectBitsHistory.map(arr => arr.join(''))];
+    const newDemonHits   = prevDemonHits + totalGhostHits;
+    const newDemonTrials = prevDemonTrials + totals.n;
+
+    if (newH_s.length === 0) return;
+
+    const reconstructedBits = newBits.map(s => s.split('').map(Number));
+    const cumAnalysis = computeSessionAnalysis(
+      reconstructedBits, newH_s, newH_d,
+      { mean: C.NULL_HURST_MEAN, sd: C.NULL_HURST_SD },
+      C.N_SHUFFLES,
+      newDemonHits,
+      newDemonTrials,
+    );
+    setCumulativeAnalysis(cumAnalysis);
+  }, [phase, sessionCount, cumulativeAnalysis, participantProfile, hurstSubjectHistory, hurstDemonHistory, subjectBitsHistory, totalGhostHits, totals.n]);
 
   // Save rank to session document once sessionAnalysis is ready
   useEffect(() => {
@@ -1016,26 +955,54 @@ export default function MainApp() {
       <div style={{ position: 'relative' }}>
         <ConsentGate
           title="Pre-Screening: Potential Participant Qualification"
-          studyDescription="You are participating in a pre-screening session to determine eligibility for a future research study (Experiment 5). This session identifies individuals who show high resonance with quantum random systems. You will complete 40 blocks each ~3 seconds long and brief questionnaires (approximately 5 minutes total)."
+          showBlindingNote={false}
+          studyDescription={`You are participating in a pre-screening session to determine eligibility for a future research study (Experiment 5). This session identifies individuals who show high resonance with quantum random systems. You will complete ${C.BLOCKS_TOTAL} blocks each ~2 seconds long and brief questionnaires (approximately 5 minutes total).`}
           bullets={[
             'You will receive a target color assignment (blue or orange)',
             'Your task is to get your target color above 50%. Concentrate your attention on your target color right before and during the moment quantum data is fetched from a quantum random number generator.',
             'When focused and ready, press "I\'m Ready" and keep focusing as your color pulses. This triggers the quantum random number generator and the sigantures in the QRNG during your focused intention is what we\'re testing.',
             'We collect data on quantum random sequences, your performance metrics, timing patterns, and your questionnaire responses.',
             'Participation is completely voluntary; you may exit at any time.',
-            'All data is stored anonymously and securely for research purposes.',
-            'Data will be retained indefinitely to enable scientific replication and analysis.',
-            'Hosting providers may log IP addresses for security purposes, but these are not linked to your study data.',
+            'If you provide your email, we store it to link your sessions across devices and to contact you if you are selected for the next phase of research. Your email will not be shared with third parties or used for any other purpose.',
+            'To request deletion of your data, email h@whatthequark.com with the subject line "Data Deletion Request". Include the email address you used when participating and we will remove your records.',
+            'Data will be retained indefinitely to enable scientific replication and analysis, unless a deletion request is received.',
+            'Hosting providers may log IP addresses for security purposes; these logs are not linked to your study data.',
           ]}
-          onAgree={() => {
-            // Double-check localStorage before deciding
+          onAgree={async ({ email } = {}) => {
+            // Reset cumulative analysis so it's recomputed fresh for this session
+            setCumulativeAnalysis(null);
+            let profile = null;
+            if (email) {
+              setEmailPlaintext(email);
+              // Primary: email hash → prescreen_participants profile
+              try {
+                const hash = await hashEmail(email);
+                setParticipantHash(hash);
+                const profRef = doc(db, C.PARTICIPANT_COLLECTION, hash);
+                const profSnap = await getDoc(profRef);
+                profile = profSnap.exists() ? profSnap.data() : null;
+                setParticipantProfile(profile);
+                setSessionCount(profile?.session_count ?? 0);
+              } catch (err) {
+                console.error('Profile load error (non-blocking):', err);
+              }
+            } else if (uid) {
+              // Fallback: UID → exp5-specific counter on participants/{uid}
+              // (scoped to this experiment so it doesn't collide with other studies)
+              try {
+                const uidRef = doc(db, 'participants', uid);
+                const uidSnap = await getDoc(uidRef);
+                if (uidSnap.exists()) {
+                  setSessionCount(uidSnap.data().exp5_prescreen_sessions ?? 0);
+                }
+              } catch (err) {
+                console.error('UID session count load failed (non-blocking):', err);
+              }
+            }
             let localPreDone = false;
-            try {
-              localPreDone = localStorage.getItem(`pre_done_global:${C.EXPERIMENT_ID}`) === '1';
-            } catch {}
-
-            const shouldSkipPre = preDone || localPreDone;
-            setPhase(shouldSkipPre ? 'onboarding' : 'preQ');
+            try { localPreDone = localStorage.getItem(`pre_done_global:${C.EXPERIMENT_ID}`) === '1'; } catch {}
+            const skipPreQ = profile?.pre_q_completed || preDone || localPreDone;
+            setPhase(skipPreQ ? 'onboarding' : 'preQ');
           }}
         />
       </div>
@@ -1248,7 +1215,10 @@ export default function MainApp() {
 
     return (
       <div style={{ padding: 24, textAlign: 'center', maxWidth: 600, margin: '0 auto' }}>
-        <h2 style={{ marginBottom: 20 }}>Block {completedBlockNum} of {C.BLOCKS_TOTAL}</h2>
+        <h2 style={{ marginBottom: sessionCount > 0 ? 4 : 20 }}>Block {completedBlockNum} of {C.BLOCKS_TOTAL}</h2>
+        {sessionCount > 0 && (
+          <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 14 }}>Session {sessionCount + 1}</div>
+        )}
 
         {/* Hero: block hit score */}
         <div style={{ padding: '24px 32px', borderRadius: 16, background: blockBg, border: `2px solid ${blockBorder}`, marginBottom: 12 }}>
@@ -1266,13 +1236,6 @@ export default function MainApp() {
           Session average: <strong style={{ color: parseFloat(sessionPct) > 50 ? '#15803d' : '#6b7280' }}>{sessionPct}%</strong>
           <span style={{ marginLeft: 8 }}>({totals.k} / {totals.n})</span>
         </div>
-
-        {/* Hurst delta gauge — secondary */}
-        <HurstDeltaGauge
-          meanDeltaH={runningMeanDeltaH}
-          blockDeltaH={lastBlock?.deltaH ?? null}
-          blockCount={deltaHurstHistory.length}
-        />
 
         <button
           onClick={() => {
@@ -1386,6 +1349,7 @@ export default function MainApp() {
 
         <div style={{ fontSize: 14, opacity: 0.75, marginTop: 16 }}>
           Block {blockIdx + 1} of {C.BLOCKS_TOTAL}
+          {sessionCount > 0 && <span style={{ marginLeft: 10, fontSize: 11, color: '#9ca3af' }}>· Session {sessionCount + 1}</span>}
         </div>
       </div>
     );
@@ -1442,6 +1406,7 @@ export default function MainApp() {
 
         <p style={{ marginTop: 16, fontSize: 14, color: '#6b7280' }}>
           Block {completedBlockNum} of {C.BLOCKS_TOTAL}
+          {sessionCount > 0 && <span style={{ marginLeft: 10 }}>· Session {sessionCount + 1}</span>}
         </p>
       </div>
     );
@@ -1517,14 +1482,91 @@ export default function MainApp() {
           questions={postQuestions}
           onSubmit={async (answers, { valid }) => {
             if (!valid) return;
-            setPhase('summary');
             try {
               if (runRef) {
                 await saveSessionAggregates();
                 await setDoc(runRef, { post_survey: answers, completed: true }, { merge: true });
               }
+
+              // No email — use UID-based counter in participants/{uid} (same-device only)
+              if (!participantHash) {
+                const newCount = sessionCount + 1;
+                if (uid) {
+                  try {
+                    await setDoc(doc(db, 'participants', uid),
+                      { exp5_prescreen_sessions: newCount }, { merge: true });
+                  } catch (e) {
+                    console.error('UID count update failed (non-blocking):', e);
+                  }
+                }
+                setSessionCount(newCount);
+                setPhase('summary');
+                return;
+              }
+
+              // Build updated cumulative arrays
+              const prevH_s       = participantProfile?.cumulative_h_subject ?? [];
+              const prevH_d       = participantProfile?.cumulative_h_demon ?? [];
+              const prevBits      = participantProfile?.cumulative_bits_subject ?? [];
+              const prevDemonHits = participantProfile?.cumulative_demon_hits ?? 0;
+              const prevDemonTrials = participantProfile?.cumulative_demon_trials ?? 0;
+              const newH_s        = [...prevH_s, ...hurstSubjectHistory];
+              const newH_d        = [...prevH_d, ...hurstDemonHistory];
+              const newBits       = [...prevBits, ...subjectBitsHistory.map(arr => arr.join(''))];
+              const newDemonHits  = prevDemonHits + totalGhostHits;
+              const newDemonTrials = prevDemonTrials + totals.n;
+              const newCount = (participantProfile?.session_count ?? 0) + 1;
+              const todayUTC = new Date().toISOString().slice(0, 10);
+              const lastDate = participantProfile?.last_session_date;
+              const newToday = lastDate === todayUTC
+                ? (participantProfile.sessions_today ?? 0) + 1 : 1;
+
+              // Write updated participant profile (non-blocking on failure)
+              try {
+                const profRef = doc(db, C.PARTICIPANT_COLLECTION, participantHash);
+                await setDoc(profRef, {
+                  session_count:           newCount,
+                  last_session_date:       todayUTC,
+                  sessions_today:          newToday,
+                  pre_q_completed:         true,
+                  cumulative_h_subject:    newH_s,
+                  cumulative_h_demon:      newH_d,
+                  cumulative_bits_subject: newBits,
+                  cumulative_demon_hits:   newDemonHits,
+                  cumulative_demon_trials: newDemonTrials,
+                  updated_at:              serverTimestamp(),
+                  ...(emailPlaintext ? { email: emailPlaintext } : {}),
+                  ...(!participantProfile ? { created_at: serverTimestamp() } : {}),
+                  ...(runRef ? { session_ids: arrayUnion(runRef.id) } : {}),
+                }, { merge: true });
+              } catch (profileErr) {
+                console.error('Profile write failed (non-blocking):', profileErr);
+              }
+
+              // Tag session doc with participant hash
+              if (runRef) {
+                setDoc(runRef, { participant_hash: participantHash }, { merge: true })
+                  .catch(e => console.error('Session hash tag failed:', e));
+              }
+
+              setSessionCount(newCount);
+
+              // Session 5+: run cumulative analysis before showing summary
+              if (newCount >= C.MIN_SESSIONS_FOR_DECISION) {
+                const reconstructedBits = newBits.map(s => s.split('').map(Number));
+                const cumAnalysis = computeSessionAnalysis(
+                  reconstructedBits, newH_s, newH_d,
+                  { mean: C.NULL_HURST_MEAN, sd: C.NULL_HURST_SD },
+                  C.N_SHUFFLES,
+                  newDemonHits,
+                  newDemonTrials,
+                );
+                setCumulativeAnalysis(cumAnalysis);
+              }
+              setPhase('summary');
             } catch (e) {
-              console.warn('Post survey save error (non-blocking):', e);
+              console.warn('Post survey save error:', e);
+              setPhase('summary');
             }
           }}
         />
@@ -1532,7 +1574,7 @@ export default function MainApp() {
     );
   }
 
-  // SIMPLE RESULTS
+  // RESULTS
   if (phase === 'results') {
     // If session exited early (not all blocks completed), skip to summary
     const sessionCompleted = blockIdx >= C.BLOCKS_TOTAL;
@@ -1541,17 +1583,64 @@ export default function MainApp() {
       return null;
     }
 
-    // Wait for shuffle-test computation (useEffect above)
-    if (!sessionAnalysis) {
-      return <div style={{ padding: 24, textAlign: 'center' }}>Analysing session…</div>;
-    }
-
-    const finalDeltaH = runningMeanDeltaH;
     const nBlocks = deltaHurstHistory.length;
     const hitRate = totals.n > 0 ? (100 * totals.k / totals.n).toFixed(1) : '50.0';
-    const analysis = sessionAnalysis;
+    const hr = parseFloat(hitRate);
+    const heroColor  = hr > 50 ? '#15803d' : hr < 50 ? '#b45309' : '#6b7280';
+    const heroBg     = hr > 50 ? '#dcfce7' : hr < 50 ? '#fff7ed' : '#f3f4f6';
+    const heroBorder = hr > 50 ? '#86efac' : hr < 50 ? '#fed7aa' : '#e5e7eb';
 
-    // ── Evaluation (single source of truth) ──────────────────────────────────
+    // Sessions 1–4: simplified view — hit rate + "need more sessions" message
+    const isDecisionSession = (sessionCount + 1) >= C.MIN_SESSIONS_FOR_DECISION;
+    if (!isDecisionSession) {
+      const remaining = C.MIN_SESSIONS_FOR_DECISION - (sessionCount + 1);
+      return (
+        <div className="App" style={{ textAlign: 'center', maxWidth: 600, margin: '0 auto', padding: 24 }}>
+          <h1>Session Average</h1>
+
+          <div style={{ padding: '28px 32px', borderRadius: 16, background: heroBg, border: `2px solid ${heroBorder}`, marginBottom: 20 }}>
+            <div style={{ fontSize: 13, color: '#6b7280', marginBottom: 4, letterSpacing: '0.05em' }}>TARGET: EXCEED 50%</div>
+            <div style={{ fontSize: 72, fontWeight: 900, color: heroColor, lineHeight: 1, marginBottom: 6 }}>{hitRate}%</div>
+            <div style={{ fontSize: 14, color: '#6b7280' }}>
+              {totals.k.toLocaleString()} hits out of {totals.n.toLocaleString()} trials · {nBlocks} blocks
+            </div>
+          </div>
+
+          <div style={{ padding: 20, background: '#f8fafc', borderRadius: 12, border: '1px solid #e2e8f0', marginBottom: 16, textAlign: 'left' }}>
+            <p style={{ fontSize: 15, color: '#374151', marginBottom: 10 }}>
+              We need <strong>{remaining} more session{remaining !== 1 ? 's' : ''}</strong> to establish your cumulative result.
+              Each session adds statistical power — results become much more reliable after {C.MIN_SESSIONS_FOR_DECISION} sessions.
+            </p>
+            <p style={{ fontSize: 13, color: '#6b7280', marginBottom: 0 }}>
+              💡 <strong>Tip:</strong> Spread your sessions across different days for best results.
+            </p>
+          </div>
+
+          <div style={{ padding: 16, background: '#eff6ff', borderRadius: 12, border: '1px solid #bfdbfe', marginBottom: 20, textAlign: 'left' }}>
+            <p style={{ fontSize: 13, color: '#1e40af', marginBottom: 0, lineHeight: 1.6 }}>
+              <strong>A note on the score:</strong> The percentage is just a focusing target, not what we're measuring.
+              We're looking at the underlying patterns in how the random numbers were generated during your session,
+              which a simple hit rate doesn't reveal. A score below 50% is just as valuable to the research as one above it.
+            </p>
+          </div>
+
+          <button className="primary-btn" onClick={() => setPhase('done')} style={{ marginTop: 8 }}>
+            Continue
+          </button>
+        </div>
+      );
+    }
+
+    // Session 5+: wait for cumulative analysis
+    if (!cumulativeAnalysis) {
+      return <div style={{ padding: 24, textAlign: 'center' }}>Computing cumulative analysis…</div>;
+    }
+
+    const analysis = cumulativeAnalysis;
+    const cumNBlocks = analysis.nBlocks; // total blocks across all sessions
+    const finalDeltaH = analysis.deltaH.meanDeltaH;
+
+    // ── Evaluation on cumulative data ─────────────────────────────────────────
     const { ksGate, collapseGate, eligible, rank: rawRank, intensityTier } = evaluatePrescreen(analysis, C);
     const verified   = rawRank === 'gold';
     const shuffleYes = collapseGate;
@@ -1560,8 +1649,8 @@ export default function MainApp() {
     const tierLabels = { 1: 'Subtle', 2: 'Solid Presence', 3: 'Exceptional' };
     const tierLabel  = intensityTier ? tierLabels[intensityTier] : null;
 
-    // Modality (null-based SE for direction classification)
-    const SE       = C.NULL_HURST_SD / Math.sqrt(nBlocks);
+    // Modality (null-based SE for direction classification, cumulative SE)
+    const SE       = C.NULL_HURST_SD / Math.sqrt(cumNBlocks);
     const absDelta = Math.abs(finalDeltaH);
     const isDynamic = ksGate && absDelta < SE;
     let modality = null;
@@ -1574,34 +1663,28 @@ export default function MainApp() {
         <h1>Prescreening Results</h1>
 
         {/* ── Hero: Hit Score ─────────────────────────────────────────────── */}
-        {(() => {
-          const hr = parseFloat(hitRate);
-          const above = hr > 50;
-          const heroColor = above ? '#15803d' : hr < 50 ? '#b45309' : '#6b7280';
-          const heroBg    = above ? '#dcfce7'  : hr < 50 ? '#fff7ed'  : '#f3f4f6';
-          const heroBorder= above ? '#86efac'  : hr < 50 ? '#fed7aa'  : '#e5e7eb';
-          return (
-            <div style={{ padding: '28px 32px', borderRadius: 16, background: heroBg, border: `2px solid ${heroBorder}`, marginBottom: 20 }}>
-              <div style={{ fontSize: 13, color: '#6b7280', marginBottom: 4, letterSpacing: '0.05em' }}>
-                TARGET: EXCEED 50%
-              </div>
-              <div style={{ fontSize: 72, fontWeight: 900, color: heroColor, lineHeight: 1, marginBottom: 6 }}>
-                {hitRate}%
-              </div>
-              <div style={{ fontSize: 14, color: '#6b7280' }}>
-                {totals.k.toLocaleString()} hits out of {totals.n.toLocaleString()} trials · {nBlocks} blocks
-              </div>
-            </div>
-          );
-        })()}
+        <div style={{ padding: '28px 32px', borderRadius: 16, background: heroBg, border: `2px solid ${heroBorder}`, marginBottom: 20 }}>
+          <div style={{ fontSize: 13, color: '#6b7280', marginBottom: 4, letterSpacing: '0.05em' }}>
+            TARGET: EXCEED 50%
+          </div>
+          <div style={{ fontSize: 72, fontWeight: 900, color: heroColor, lineHeight: 1, marginBottom: 6 }}>
+            {hitRate}%
+          </div>
+          <div style={{ fontSize: 14, color: '#6b7280' }}>
+            {totals.k.toLocaleString()} hits out of {totals.n.toLocaleString()} trials · {nBlocks} blocks
+          </div>
+        </div>
 
         {/* ── Hurst Delta Gauge ───────────────────────────────────────────── */}
         <HurstDeltaGauge
           meanDeltaH={finalDeltaH}
-          blockCount={nBlocks}
+          blockCount={cumNBlocks}
         />
+        <div style={{ fontSize: 11, color: '#9ca3af', textAlign: 'center', marginTop: 2, marginBottom: 8 }}>
+          Cumulative trend across {Math.round(cumNBlocks / C.BLOCKS_TOTAL)} sessions ({cumNBlocks} blocks). Statistical confirmation below.
+        </div>
 
-        {/* ── Session Analysis (smaller, below) ───────────────────────────── */}
+        {/* ── Cumulative Analysis ──────────────────────────────────────────── */}
         {analysis && (() => {
           let irVerdict, irColor, irBg, irDesc;
           if (eligible && verified) {
@@ -1625,7 +1708,7 @@ export default function MainApp() {
           return (
             <div style={{ textAlign: 'left', marginTop: 20, marginBottom: 16, fontSize: 13 }}>
               <div style={{ fontWeight: 600, fontSize: 12, letterSpacing: '0.08em', color: '#9ca3af', textAlign: 'center', marginBottom: 12 }}>
-                SESSION ANALYSIS
+                CUMULATIVE ANALYSIS · {Math.round(cumNBlocks / C.BLOCKS_TOTAL)} SESSIONS
               </div>
 
               {/* Verdict badge */}
@@ -1649,7 +1732,7 @@ export default function MainApp() {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', borderRadius: 8, marginBottom: 6, background: '#f8f9fa', border: '1px solid #e5e7eb' }}>
                 <div>
                   <span style={{ fontWeight: 600 }}>Signal Presence</span>
-                  <span style={{ color: '#9ca3af', marginLeft: 8, fontSize: 12 }}>Did your stream differ from the control?</span>
+                  <span style={{ color: '#9ca3af', marginLeft: 8, fontSize: 12 }}>Did your Hurst pattern differ from the uninfluenced control stream?</span>
                 </div>
                 <div style={{ fontWeight: 700, color: ksGate ? '#15803d' : '#9ca3af', flexShrink: 0, marginLeft: 12 }}>
                   {ksGate ? 'YES' : 'NO'}
@@ -1715,14 +1798,15 @@ export default function MainApp() {
   // FINAL SCREEN
   if (phase === 'summary') {
     // Compute invite eligibility from sessionAnalysis (single source of truth)
-    let inviteEligible = false;
-    let isCandidate = false;
-    let summaryRank = null;
-    if (sessionAnalysis) {
-      const { rank: r, eligible } = evaluatePrescreen(sessionAnalysis, C);
+    // In preview mode (#preview) force gold so the invite UI is visible for review
+    const isCumulativeSession = sessionCount >= C.MIN_SESSIONS_FOR_DECISION;
+    const analysisToUse = cumulativeAnalysis || sessionAnalysis;
+    let inviteEligible = isPreviewMode;
+    let summaryRank = isPreviewMode ? 'gold' : null;
+    if (!isPreviewMode && analysisToUse) {
+      const { rank: r, eligible } = evaluatePrescreen(analysisToUse, C);
       summaryRank = r;
-      isCandidate = r === 'candidate';
-      inviteEligible = eligible || isCandidate; // gold, silver, OR candidate (all get invited)
+      inviteEligible = eligible || r === 'candidate'; // gold, silver, and candidate all get invite
     }
 
     return (
@@ -1737,45 +1821,50 @@ export default function MainApp() {
           <p>If you have any questions about this research, please contact the research team at <a href="mailto:h@whatthequark.com">h@whatthequark.com</a></p>
         </div>
 
-        {/* Invite box — for eligible (gold/silver) or candidate participants */}
-        {inviteEligible && (
-          <div style={{
-            position: 'relative',
-            marginBottom: 24, padding: '24px 28px',
-            background: isCandidate ? '#fff7ed' : '#fffbeb',
-            border: isCandidate ? '3px solid #ea580c' : '3px solid #f59e0b',
-            borderRadius: 14,
-            boxShadow: isCandidate ? '0 0 24px #ea580c44' : '0 0 24px #f59e0b55',
-          }}>
-            {!isCandidate && (
-              <>
+        {/* Invite box — gold/silver (strong signal) or candidate (anomalous pattern, manual review) */}
+        {inviteEligible && (() => {
+          const isCandidate = summaryRank === 'candidate';
+          const boxStyle = isCandidate ? {
+            position: 'relative', marginBottom: 24, padding: '24px 28px',
+            background: '#eff6ff', border: '2px solid #60a5fa',
+            borderRadius: 14, boxShadow: '0 0 16px #60a5fa33',
+          } : {
+            position: 'relative', marginBottom: 24, padding: '24px 28px',
+            background: '#fffbeb', border: '3px solid #f59e0b',
+            borderRadius: 14, boxShadow: '0 0 24px #f59e0b55',
+          };
+          const labelColor  = isCandidate ? '#1d4ed8' : '#b45309';
+          const headColor   = isCandidate ? '#1e3a8a' : '#92400e';
+          const bodyColor   = isCandidate ? '#1e40af' : '#78350f';
+          return (
+            <div style={boxStyle}>
+              {!isCandidate && (<>
                 <span style={{ position: 'absolute', top: -14, left:  10, fontSize: 24 }}>⭐</span>
                 <span style={{ position: 'absolute', top: -14, left:  '50%', transform: 'translateX(-50%)', fontSize: 24 }}>⭐</span>
                 <span style={{ position: 'absolute', top: -14, right: 10, fontSize: 24 }}>⭐</span>
                 <span style={{ position: 'absolute', bottom: -14, left:  10, fontSize: 24 }}>⭐</span>
                 <span style={{ position: 'absolute', bottom: -14, left:  '50%', transform: 'translateX(-50%)', fontSize: 24 }}>⭐</span>
                 <span style={{ position: 'absolute', bottom: -14, right: 10, fontSize: 24 }}>⭐</span>
-              </>
-            )}
-            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', color: isCandidate ? '#c2410c' : '#b45309', marginBottom: 6 }}>
-              {isCandidate ? 'STATUS: POSSIBLE SIGNAL — INCONCLUSIVE' : 'STATUS: HIGH-RESONANCE SIGNATURE DETECTED'}
-            </div>
-            <div style={{ fontWeight: 700, fontSize: 17, color: isCandidate ? '#9a3412' : '#92400e', marginBottom: 12 }}>
-              {isCandidate ? 'You may be a candidate for Experiment 5' : 'You are a strong candidate for Experiment 5'}
-            </div>
-            <p style={{ margin: '0 0 10px', color: isCandidate ? '#9a3412' : '#78350f', fontSize: 14, textAlign: 'left' }}>
-              {isCandidate
-                ? 'Your stream showed an unusual distribution, but the confirmation test was inconclusive. We would like to invite you for further testing to determine if you qualify for the next phase.'
-                : 'Your interaction with the quantum stream has met the criteria for the next phase of our research.'}
-            </p>
-            <p style={{ margin: '0 0 10px', color: isCandidate ? '#9a3412' : '#78350f', fontSize: 14, textAlign: 'left' }}>
-              To maintain experimental control, we do not provide individual performance metrics or raw data. However, upon the conclusion of the study, a formal write-up and summary of the aggregate findings will be distributed to our participant list.
-            </p>
-            <p style={{ margin: '0 0 16px', color: isCandidate ? '#9a3412' : '#78350f', fontSize: 14, textAlign: 'left' }}>
-              {isCandidate
-                ? 'If you would like to participate in additional testing and receive a copy of the final research paper once published, please provide your contact details below:'
-                : 'If you would like to be considered for the next stage of this study and receive a copy of the final research paper once published, please provide your contact details below:'}
-            </p>
+              </>)}
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', color: labelColor, marginBottom: 6 }}>
+                {isCandidate ? 'INTERESTING PATTERN DETECTED' : 'STATUS: HIGH-RESONANCE SIGNATURE DETECTED'}
+              </div>
+              <div style={{ fontWeight: 700, fontSize: 17, color: headColor, marginBottom: 12 }}>
+                {isCandidate ? "We'd like to learn more about your session" : 'You are a strong candidate for Experiment 5'}
+              </div>
+              <p style={{ margin: '0 0 10px', color: bodyColor, fontSize: 14, textAlign: 'left' }}>
+                {isCandidate
+                  ? "Your session showed an unusual pattern in the quantum stream that our research team would like to review."
+                  : "Your interaction with the quantum stream has met the criteria for the next phase of our research."}
+              </p>
+              <p style={{ margin: '0 0 10px', color: bodyColor, fontSize: 14, textAlign: 'left' }}>
+                Participants who participate in Experiment 5 will receive a personal performance report including your individual scores and how your results compare to the broader participant pool.
+              </p>
+              <p style={{ margin: '0 0 16px', color: bodyColor, fontSize: 14, textAlign: 'left' }}>
+                {isCandidate
+                  ? "Leave your details below and we'll be in touch:"
+                  : "Leave your details below to secure your place and receive your personal results when the study concludes:"}
+              </p>
 
             {inviteSubmitted ? (
               <div style={{ padding: '12px 16px', background: '#dcfce7', borderRadius: 8, color: '#15803d', fontWeight: 600, fontSize: 14 }}>
@@ -1786,6 +1875,7 @@ export default function MainApp() {
                 onSubmit={async e => {
                   e.preventDefault();
                   setInviteSubmitting(true);
+                  setInviteError(null);
                   try {
                     await addDoc(collection(db, 'exp5_invites'), {
                       ...inviteForm,
@@ -1798,6 +1888,7 @@ export default function MainApp() {
                     setInviteSubmitted(true);
                   } catch (err) {
                     console.error('Invite save failed:', err);
+                    setInviteError(err?.message || 'Submission failed — please try again.');
                   }
                   setInviteSubmitting(false);
                 }}
@@ -1814,8 +1905,8 @@ export default function MainApp() {
                     style={{ width: '100%', padding: '7px 10px', borderRadius: 6, border: '1px solid #f59e0b', fontSize: 14, boxSizing: 'border-box' }} />
                 </div>
                 <div>
-                  <label style={{ fontSize: 12, fontWeight: 600, color: '#92400e', display: 'block', marginBottom: 3 }}>Location</label>
-                  <input required placeholder="City, Country" value={inviteForm.location} onChange={e => setInviteForm(f => ({ ...f, location: e.target.value }))}
+                  <label style={{ fontSize: 12, fontWeight: 600, color: '#92400e', display: 'block', marginBottom: 3 }}>Country</label>
+                  <input required placeholder="Country" value={inviteForm.location} onChange={e => setInviteForm(f => ({ ...f, location: e.target.value }))}
                     style={{ width: '100%', padding: '7px 10px', borderRadius: 6, border: '1px solid #f59e0b', fontSize: 14, boxSizing: 'border-box' }} />
                 </div>
                 <div>
@@ -1828,6 +1919,11 @@ export default function MainApp() {
                   <input required type="email" value={inviteForm.email} onChange={e => setInviteForm(f => ({ ...f, email: e.target.value }))}
                     style={{ width: '100%', padding: '7px 10px', borderRadius: 6, border: '1px solid #f59e0b', fontSize: 14, boxSizing: 'border-box' }} />
                 </div>
+                {inviteError && (
+                  <div style={{ gridColumn: '1 / -1', padding: '10px 14px', background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 8, color: '#dc2626', fontSize: 13 }}>
+                    {inviteError}
+                  </div>
+                )}
                 <div style={{ gridColumn: '1 / -1', textAlign: 'center', marginTop: 4 }}>
                   <button type="submit" disabled={inviteSubmitting}
                     style={{ padding: '10px 28px', background: isCandidate ? '#ea580c' : '#f59e0b', color: '#fff', border: 'none', borderRadius: 8, fontWeight: 700, fontSize: 14, cursor: inviteSubmitting ? 'wait' : 'pointer' }}>
@@ -1837,24 +1933,32 @@ export default function MainApp() {
               </form>
             )}
           </div>
-        )}
+          );
+        })()}
 
         <div style={{ padding: '16px', background: '#fff', border: '1px solid #ddd', borderRadius: 8 }}>
           <p style={{ marginTop: 0 }}>
             <a href="https://zenodo.org/records/18714884" target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6', textDecoration: 'underline' }}>Read about the methodology behind this pre-screening for Experiment 5.</a>
           </p>
 
-          <ul style={{ textAlign: 'left', marginTop: 16 }}>
-            <li>Repeat this experiment at least 5 times.</li>
-            <li>Share with friends and family interested in participating in our study — large datasets matter here.</li>
-          </ul>
+          {isCumulativeSession ? (
+            <p style={{ textAlign: 'left', fontSize: 14, color: '#374151' }}>
+              Each session adds statistical power — feel free to run more sessions to refine your result.
+              Spread sessions across different days for best results.
+            </p>
+          ) : (
+            <ul style={{ textAlign: 'left', marginTop: 16 }}>
+              <li>Repeat this experiment at least 5 times — results become much more reliable across sessions.</li>
+              <li>Share with friends and family interested in participating in our study — large datasets matter here.</li>
+            </ul>
+          )}
 
           <button
             onClick={() => window.location.reload()}
             className="primary-btn"
             style={{ marginTop: '1em' }}
           >
-            Run It Again
+            Retake
           </button>
         </div>
       </div>

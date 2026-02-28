@@ -1,5 +1,6 @@
 // src/Scoring.jsx
 import React from 'react';
+import { pkConfig as C } from './config.js';
 
 /**
  * BlockScoreboard
@@ -94,8 +95,17 @@ function MiniGauge({ value = 0.5, label = 'Score', width = 220, muted = false })
   );
 }
 
-// Validated σ for single-scale R/S Hurst on 576-bit blocks (from 10,000 simulations)
-const SIGMA = 0.035;
+// σ for single-scale R/S Hurst — derived from config null distribution for current TRIALS_PER_BLOCK
+const SIGMA = C.NULL_HURST_SD;
+
+// Session mean needle uses SE scaling: multiply meanDeltaH by √blockCount before mapping
+// through toX. This converts to "how many null-distribution SEs has the session accumulated?"
+// — a standard-normal-scaled t-statistic. Random sessions stay near centre regardless of
+// block count; genuine persistent signal builds up and enters the coloured zones over time.
+// Entry to first coloured zone (1σ) requires meanDeltaH ≥ SIGMA/√blockCount, e.g. ≥0.005
+// at 80 blocks — which is an honestly detectable single-session effect.
+// (Pilot group effects of 0.002–0.004 are below single-session detection threshold; they
+//  required group aggregation, so the gauge correctly keeps them in grey.)
 
 // Normal CDF (Abramowitz & Stegun approximation) — used for probability-proportional bar scale
 // function normCDF(z) {
@@ -199,7 +209,9 @@ export function HurstDeltaGauge({ meanDeltaH = 0, blockDeltaH = null, blockCount
     return BP[BP.length - 1][1];
   };
 
-  const sessionTier = getTier(meanDeltaH);
+  // SE scaling: multiply by √blockCount so the needle shows accumulated evidence (t-statistic)
+  const meanDeltaHScaled = meanDeltaH * Math.sqrt(Math.max(1, blockCount));
+  const sessionTier = getTier(meanDeltaHScaled);
   const blockTier   = blockDeltaH != null ? getTier(blockDeltaH) : null;
 
   const GREEN_ZONES = [
@@ -253,10 +265,10 @@ export function HurstDeltaGauge({ meanDeltaH = 0, blockDeltaH = null, blockCount
         {/* Center divider at 0 */}
         <line x1={toX(0)} y1={barY} x2={toX(0)} y2={barY + barH} stroke="#9ca3af" strokeWidth={1} strokeDasharray="3,2" />
 
-        {/* Session mean needle — dashed purple, drawn first (behind current block) */}
+        {/* Session mean needle — pilot-scale (×SESSION_SCALE), dashed purple, drawn first (behind current block) */}
         <line
-          x1={toX(meanDeltaH)} y1={barY - 3}
-          x2={toX(meanDeltaH)} y2={barY + barH + 3}
+          x1={toX(meanDeltaHScaled)} y1={barY - 3}
+          x2={toX(meanDeltaHScaled)} y2={barY + barH + 3}
           stroke="#7c3aed" strokeWidth={2} strokeDasharray="3,2"
         />
 
