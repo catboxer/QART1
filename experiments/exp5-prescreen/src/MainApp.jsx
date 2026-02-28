@@ -158,6 +158,7 @@ export default function MainApp() {
   const [runRef, setRunRef] = useState(null);
   const ensureRunDocPromiseRef = useRef(null); // Prevent race conditions
   const isCreatingDocRef = useRef(false); // Immediate flag to prevent race conditions
+  const savedCumulativeRef = useRef(false); // Prevent double-save of cumulative data
 
   const ensureRunDoc = useCallback(async () => {
     if (runRef) {
@@ -181,6 +182,7 @@ export default function MainApp() {
         const col = collection(db, C.PRESCREEN_COLLECTION);
         const docData = {
           participant_id: uidNow,
+          participant_hash: participantHash || null,
           experimentId: C.EXPERIMENT_ID,
           createdAt: serverTimestamp(),
           blocks_planned: C.BLOCKS_TOTAL,
@@ -877,12 +879,13 @@ export default function MainApp() {
     setSessionAnalysis(result);
   }, [phase, sessionAnalysis, subjectBitsHistory, hurstSubjectHistory, hurstDemonHistory, totalGhostHits, totals.n]);
 
-  // Compute cumulative analysis when entering results phase for session 5+
+  // Save cumulative data and (for session 5+) compute cumulative analysis when entering results phase
   useEffect(() => {
     if (phase !== 'results') return;
+    if (isAutoMode || isAIMode) return; // never accumulate baseline/AI sessions
+    if (savedCumulativeRef.current) return; // already saved this session
+
     const newCount = sessionCount + 1;
-    if (newCount < C.MIN_SESSIONS_FOR_DECISION) return;
-    if (cumulativeAnalysis) return; // already computed
 
     const prevH_s        = participantProfile?.cumulative_h_subject ?? [];
     const prevH_d        = participantProfile?.cumulative_h_demon ?? [];
@@ -897,6 +900,34 @@ export default function MainApp() {
 
     if (newH_s.length === 0) return;
 
+    // Save cumulative arrays for ALL sessions (not just 5+) so every session contributes
+    if (participantHash) {
+      savedCumulativeRef.current = true;
+      const profRef = doc(db, C.PARTICIPANT_COLLECTION, participantHash);
+      const todayUTC = new Date().toISOString().slice(0, 10);
+      const lastDate = participantProfile?.last_session_date;
+      const newToday = lastDate === todayUTC ? (participantProfile?.sessions_today ?? 0) + 1 : 1;
+      setDoc(profRef, {
+        session_count:           newCount,
+        last_session_date:       todayUTC,
+        sessions_today:          newToday,
+        pre_q_completed:         true,
+        cumulative_h_subject:    newH_s,
+        cumulative_h_demon:      newH_d,
+        cumulative_bits_subject: newBits,
+        cumulative_demon_hits:   newDemonHits,
+        cumulative_demon_trials: newDemonTrials,
+        updated_at:              serverTimestamp(),
+        ...(emailPlaintext ? { email: emailPlaintext } : {}),
+        ...(!participantProfile ? { created_at: serverTimestamp() } : {}),
+        ...(runRef ? { session_ids: arrayUnion(runRef.id) } : {}),
+      }, { merge: true }).catch(err => console.error('Cumulative profile save failed:', err));
+    }
+
+    // Session 5+: compute cumulative analysis for display
+    if (newCount < C.MIN_SESSIONS_FOR_DECISION) return;
+    if (cumulativeAnalysis) return;
+
     const reconstructedBits = newBits.map(s => s.split('').map(Number));
     const cumAnalysis = computeSessionAnalysis(
       reconstructedBits, newH_s, newH_d,
@@ -906,7 +937,7 @@ export default function MainApp() {
       newDemonTrials,
     );
     setCumulativeAnalysis(cumAnalysis);
-  }, [phase, sessionCount, cumulativeAnalysis, participantProfile, hurstSubjectHistory, hurstDemonHistory, subjectBitsHistory, totalGhostHits, totals.n]);
+  }, [phase, sessionCount, cumulativeAnalysis, participantProfile, participantHash, emailPlaintext, runRef, isAutoMode, isAIMode, hurstSubjectHistory, hurstDemonHistory, subjectBitsHistory, totalGhostHits, totals.n]);
 
   // Save rank to session document once sessionAnalysis is ready
   useEffect(() => {
@@ -971,6 +1002,7 @@ export default function MainApp() {
           onAgree={async ({ email } = {}) => {
             // Reset cumulative analysis so it's recomputed fresh for this session
             setCumulativeAnalysis(null);
+            savedCumulativeRef.current = false;
             let profile = null;
             if (email) {
               setEmailPlaintext(email);
@@ -1221,7 +1253,7 @@ export default function MainApp() {
         )}
 
         {/* Hero: block hit score */}
-        <div style={{ padding: '24px 32px', borderRadius: 16, background: blockBg, border: `2px solid ${blockBorder}`, marginBottom: 12 }}>
+        <div style={{ padding: '40px 32px', borderRadius: 16, background: blockBg, border: `2px solid ${blockBorder}`, marginBottom: 12, minHeight: 240, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
           <div style={{ fontSize: 12, color: '#6b7280', letterSpacing: '0.06em', marginBottom: 4 }}>THIS BLOCK</div>
           <div style={{ fontSize: 72, fontWeight: 900, color: blockColor, lineHeight: 1, marginBottom: 4 }}>
             {pctLast}%
@@ -1287,21 +1319,23 @@ export default function MainApp() {
 
     return (
       <div style={{ padding: 24, textAlign: 'center', maxWidth: 600, margin: '0 auto' }}>
-        {/* Large target display */}
+        {/* Target display — same size as score box */}
         <div style={{
-          padding: 60,
+          padding: '40px 32px',
           background: '#f9f9f9',
-          borderRadius: 20,
-          border: `4px solid ${targetColor}`,
-          marginBottom: 40
+          borderRadius: 16,
+          border: `2px solid ${targetColor}`,
+          marginBottom: 12,
+          minHeight: 240,
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
         }}>
-          <p style={{ fontSize: 24, fontWeight: 'bold', marginBottom: 20, color: '#666' }}>
-            Your Target:
+          <p style={{ fontSize: 13, fontWeight: 600, letterSpacing: '0.06em', marginBottom: 8, color: '#6b7280' }}>
+            YOUR TARGET
           </p>
-          <div style={{ fontSize: 96, marginBottom: 10 }}>
+          <div style={{ fontSize: 80, marginBottom: 8, lineHeight: 1 }}>
             {targetEmoji}
           </div>
-          <div style={{ fontSize: 48, fontWeight: 'bold', color: targetColor }}>
+          <div style={{ fontSize: 44, fontWeight: 'bold', color: targetColor }}>
             {target}
           </div>
         </div>
@@ -1312,40 +1346,40 @@ export default function MainApp() {
           background: '#f0f7ff',
           borderRadius: 12,
           border: '2px solid #3b82f6',
-          marginBottom: 24
+          marginBottom: 20
         }}>
           <p style={{ fontSize: 18, marginBottom: 16, fontWeight: 500 }}>
             {isFirstBlock ? 'Ready to begin?' : 'Ready for the next block?'}
           </p>
-
           <p style={{ fontSize: 16, marginBottom: 8, color: '#555' }}>
             We're about to fetch quantum data from the QRNG.
           </p>
-          <p style={{ fontSize: 16, marginBottom: 20, color: '#555' }}>
-            <strong>Bring your attention to your target color just before clicking the button, and sustain that steady focus while the screen flashes.</strong> 
+          <p style={{ fontSize: 16, marginBottom: 0, color: '#555' }}>
+            <strong>Bring your attention to your target color just before clicking the button, and sustain that steady focus while the screen flashes.</strong>
           </p>
-          <p>Click when ready.</p>
-          <button
-            onClick={() => setPhase('fetching')}
-            style={{
-              padding: '16px 48px',
-              fontSize: 20,
-              fontWeight: 'bold',
-              borderRadius: 8,
-              border: 'none',
-              background: '#10b981',
-              color: '#fff',
-              cursor: 'pointer',
-              transition: 'transform 0.1s',
-              boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
-            }}
-            onMouseDown={(e) => (e.currentTarget.style.transform = 'scale(0.95)')}
-            onMouseUp={(e) => (e.currentTarget.style.transform = 'scale(1)')}
-            onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
-          >
-            I'm Ready
-          </button>
         </div>
+
+        <button
+          onClick={() => setPhase('fetching')}
+          style={{
+            marginTop: 28,
+            padding: '16px 32px',
+            fontSize: 18,
+            fontWeight: 600,
+            background: '#10b981',
+            color: 'white',
+            border: 'none',
+            borderRadius: 8,
+            cursor: 'pointer',
+            boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
+            transition: 'transform 0.1s',
+          }}
+          onMouseDown={(e) => (e.currentTarget.style.transform = 'scale(0.95)')}
+          onMouseUp={(e) => (e.currentTarget.style.transform = 'scale(1)')}
+          onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
+        >
+          I'm Ready
+        </button>
 
         <div style={{ fontSize: 14, opacity: 0.75, marginTop: 16 }}>
           Block {blockIdx + 1} of {C.BLOCKS_TOTAL}
@@ -1504,65 +1538,8 @@ export default function MainApp() {
                 return;
               }
 
-              // Build updated cumulative arrays
-              const prevH_s       = participantProfile?.cumulative_h_subject ?? [];
-              const prevH_d       = participantProfile?.cumulative_h_demon ?? [];
-              const prevBits      = participantProfile?.cumulative_bits_subject ?? [];
-              const prevDemonHits = participantProfile?.cumulative_demon_hits ?? 0;
-              const prevDemonTrials = participantProfile?.cumulative_demon_trials ?? 0;
-              const newH_s        = [...prevH_s, ...hurstSubjectHistory];
-              const newH_d        = [...prevH_d, ...hurstDemonHistory];
-              const newBits       = [...prevBits, ...subjectBitsHistory.map(arr => arr.join(''))];
-              const newDemonHits  = prevDemonHits + totalGhostHits;
-              const newDemonTrials = prevDemonTrials + totals.n;
-              const newCount = (participantProfile?.session_count ?? 0) + 1;
-              const todayUTC = new Date().toISOString().slice(0, 10);
-              const lastDate = participantProfile?.last_session_date;
-              const newToday = lastDate === todayUTC
-                ? (participantProfile.sessions_today ?? 0) + 1 : 1;
-
-              // Write updated participant profile (non-blocking on failure)
-              try {
-                const profRef = doc(db, C.PARTICIPANT_COLLECTION, participantHash);
-                await setDoc(profRef, {
-                  session_count:           newCount,
-                  last_session_date:       todayUTC,
-                  sessions_today:          newToday,
-                  pre_q_completed:         true,
-                  cumulative_h_subject:    newH_s,
-                  cumulative_h_demon:      newH_d,
-                  cumulative_bits_subject: newBits,
-                  cumulative_demon_hits:   newDemonHits,
-                  cumulative_demon_trials: newDemonTrials,
-                  updated_at:              serverTimestamp(),
-                  ...(emailPlaintext ? { email: emailPlaintext } : {}),
-                  ...(!participantProfile ? { created_at: serverTimestamp() } : {}),
-                  ...(runRef ? { session_ids: arrayUnion(runRef.id) } : {}),
-                }, { merge: true });
-              } catch (profileErr) {
-                console.error('Profile write failed (non-blocking):', profileErr);
-              }
-
-              // Tag session doc with participant hash
-              if (runRef) {
-                setDoc(runRef, { participant_hash: participantHash }, { merge: true })
-                  .catch(e => console.error('Session hash tag failed:', e));
-              }
-
-              setSessionCount(newCount);
-
-              // Session 5+: run cumulative analysis before showing summary
-              if (newCount >= C.MIN_SESSIONS_FOR_DECISION) {
-                const reconstructedBits = newBits.map(s => s.split('').map(Number));
-                const cumAnalysis = computeSessionAnalysis(
-                  reconstructedBits, newH_s, newH_d,
-                  { mean: C.NULL_HURST_MEAN, sd: C.NULL_HURST_SD },
-                  C.N_SHUFFLES,
-                  newDemonHits,
-                  newDemonTrials,
-                );
-                setCumulativeAnalysis(cumAnalysis);
-              }
+              // Cumulative data already saved in results phase — just update session count and proceed
+              setSessionCount(sessionCount + 1);
               setPhase('summary');
             } catch (e) {
               console.warn('Post survey save error:', e);
@@ -1708,7 +1685,7 @@ export default function MainApp() {
           return (
             <div style={{ textAlign: 'left', marginTop: 20, marginBottom: 16, fontSize: 13 }}>
               <div style={{ fontWeight: 600, fontSize: 12, letterSpacing: '0.08em', color: '#9ca3af', textAlign: 'center', marginBottom: 12 }}>
-                CUMULATIVE ANALYSIS · {Math.round(cumNBlocks / C.BLOCKS_TOTAL)} SESSIONS
+                CUMULATIVE ANALYSIS · {sessionCount + 1} SESSIONS
               </div>
 
               {/* Verdict badge */}
