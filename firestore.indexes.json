@@ -1,0 +1,46 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "prescreen_sessions_exp5",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "participant_hash", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "prescreen_sessions_exp5",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "participant_hash", "order": "ASCENDING" },
+        { "fieldPath": "completed", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "prescreen_sessions_exp5",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "session_type", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "prescreen_sessions_exp5",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "prescreen_rank", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "prescreen_sessions_exp5",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "day_bucket", "order": "ASCENDING" },
+        { "fieldPath": "session_type", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

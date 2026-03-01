@@ -39,7 +39,8 @@ function linReg(ys) {
 
 import { db, ensureSignedIn } from './firebase.js';
 import {
-  collection, doc, addDoc, setDoc, getDoc, getDocs, updateDoc, serverTimestamp, arrayUnion,
+  collection, doc, addDoc, setDoc, getDoc, getDocs, updateDoc, serverTimestamp,
+  query, where, orderBy,
 } from 'firebase/firestore';
 import { fetchQRNGBits } from './fetchQRNGBits.js';
 import { runNISTAudit } from './nistTests.js';
@@ -85,6 +86,45 @@ validateConfig();
 
 // Note: All quantum bit fetching is now handled by fetchQRNGBits() function
 // which includes cryptographic authentication and validation
+
+// ── Bit-packing helpers (session-level raw_bits_b64) ─────────────────────────
+
+// Pack an array-of-arrays of 0|1 bits into a base64 string.
+// bits[blockIdx][trialIdx] → sequentially packed, MSB first.
+function packBitsToBase64(bitsPerBlock) {
+  const totalBits = bitsPerBlock.reduce((s, b) => s + b.length, 0);
+  const nBytes = Math.ceil(totalBits / 8);
+  const bytes = new Uint8Array(nBytes);
+  let globalBit = 0;
+  for (const block of bitsPerBlock) {
+    for (const bit of block) {
+      bytes[Math.floor(globalBit / 8)] |= (bit << (7 - (globalBit % 8)));
+      globalBit++;
+    }
+  }
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
+// Unpack a base64 string into blockCount arrays of bitsPerBlock bits each.
+function unpackBitsFromBase64(b64, blockCount, bitsPerBlock) {
+  if (!b64 || blockCount === 0) return [];
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  const result = [];
+  let globalBit = 0;
+  for (let s = 0; s < blockCount; s++) {
+    const block = [];
+    for (let b = 0; b < bitsPerBlock; b++) {
+      block.push((bytes[Math.floor(globalBit / 8)] >> (7 - (globalBit % 8))) & 1);
+      globalBit++;
+    }
+    result.push(block);
+  }
+  return result;
+}
 
 // ===== main =====
 export default function MainApp() {
@@ -180,6 +220,7 @@ export default function MainApp() {
   const isCreatingDocRef = useRef(false); // Immediate flag to prevent race conditions
   const savedCumulativeRef = useRef(false); // Prevent double-save of cumulative data
   const fetchTriggeredAtRef = useRef(null); // Capture when fetching was triggered (button press or auto-timer)
+  const qrngProviderRef = useRef(null); // Track QRNG provider across blocks ('mixed' if it changes)
 
   const ensureRunDoc = useCallback(async () => {
     if (runRef) {
@@ -201,14 +242,22 @@ export default function MainApp() {
         const uidNow = uid || (await requireUid());
 
         const col = collection(db, C.PRESCREEN_COLLECTION);
+        const now = new Date();
+        const day_bucket = now.toISOString().slice(0, 10);
+        const startOfWeek = new Date(now);
+        startOfWeek.setUTCDate(now.getUTCDate() - now.getUTCDay());
+        const week_bucket = startOfWeek.toISOString().slice(0, 10);
         const docData = {
           participant_id: uidNow,
           participant_hash: participantHash || null,
           experimentId: C.EXPERIMENT_ID,
           createdAt: serverTimestamp(),
           blocks_planned: C.BLOCKS_TOTAL,
-          timestamp: new Date().toISOString(),
+          timestamp: now.toISOString(),
           session_type: isAutoMode ? 'baseline' : isAIMode ? 'ai_agent' : 'human',
+          app_version: C.APP_VERSION,
+          day_bucket,
+          week_bucket,
         };
 
         docData.exitedEarly = false;
@@ -259,6 +308,13 @@ export default function MainApp() {
   const [emailPlaintext, setEmailPlaintext]               = useState('');
   const [sessionCount, setSessionCount]                   = useState(0);
   const [cumulativeAnalysis, setCumulativeAnalysis]       = useState(null);
+
+  // Past-session data loaded at consent (from querying prescreen_sessions_exp5)
+  const [pastH_s, setPastH_s]               = useState([]); // cumulative H_subject across past sessions
+  const [pastH_d, setPastH_d]               = useState([]); // cumulative H_demon across past sessions
+  const [pastBits, setPastBits]             = useState([]); // cumulative subject bits (array of arrays)
+  const [pastDemonHits, setPastDemonHits]   = useState(0);
+  const [pastDemonTrials, setPastDemonTrials] = useState(0);
 
   const bitsRef = useRef([]);
   const demonBitsRef = useRef([]);
@@ -374,7 +430,14 @@ export default function MainApp() {
       const mean_deltaH_late  = late.length  > 0 ? late.reduce((a, b)  => a + b, 0) / late.length  : null;
       const { slope: reg_slope, pValue: reg_pValue } = linReg(deltaHurstHistory);
 
+      // ── Pack raw subject bits for Colab-queryable blob ─────────────────────
+      const raw_bits_b64 = subjectBitsHistory.length > 0
+        ? packBitsToBase64(subjectBitsHistory)
+        : null;
+
       await setDoc(runRef, {
+        block_count: deltaHurstHistory.length,
+        qrng_provider: qrngProviderRef.current,
         aggregates: {
           totalHits: totals.k,
           totalTrials: totals.n,
@@ -385,11 +448,15 @@ export default function MainApp() {
           blocksPlanned: C.BLOCKS_TOTAL,
           sessionComplete: deltaHurstHistory.length >= C.BLOCKS_TOTAL,
           lastUpdated: new Date().toISOString(),
+          hurst_subject: hurstSubjectHistory,
+          hurst_demon: hurstDemonHistory,
+          delta_h: deltaHurstHistory,
           hurstDelta: {
             mean: meanDH,
             blockDeltas: deltaHurstHistory,
           }
         },
+        ...(raw_bits_b64 ? { raw_bits_b64 } : {}),
         monitoring: {
           mean_deltaH_early,
           mean_deltaH_late,
@@ -404,7 +471,7 @@ export default function MainApp() {
     } catch (error) {
       console.error('❌ Failed to save session aggregates:', error);
     }
-  }, [runRef, totals, totalGhostHits, deltaHurstHistory]);
+  }, [runRef, totals, totalGhostHits, deltaHurstHistory, subjectBitsHistory, hurstSubjectHistory, hurstDemonHistory]);
 
 
   // Fetch subject+demon tape when entering fetching phase, then process trials
@@ -442,6 +509,14 @@ export default function MainApp() {
           source: quantumData.source,
           bitCount: quantumData.bits.length
         };
+
+        // Track QRNG provider (mark 'mixed' if it changes mid-session)
+        const src = quantumData.source;
+        if (qrngProviderRef.current === null) {
+          qrngProviderRef.current = src;
+        } else if (qrngProviderRef.current !== src && qrngProviderRef.current !== 'mixed') {
+          qrngProviderRef.current = 'mixed';
+        }
 
         // ANTI-TIMING-ATTACK: Save raw bits to Firestore BEFORE processing
         // This prevents AI agents from aborting after peeking at bits but before persistence
@@ -704,6 +779,10 @@ export default function MainApp() {
         targetAssignedRef.current = false;
         setTarget(null);
 
+        // Reset per-session refs
+        savedCumulativeRef.current = false;
+        qrngProviderRef.current = null;
+
         setPhase('onboarding');
       }, 100);
     }
@@ -926,57 +1005,53 @@ export default function MainApp() {
 
     const newCount = sessionCount + 1;
 
-    const prevH_s        = participantProfile?.cumulative_h_subject ?? [];
-    const prevH_d        = participantProfile?.cumulative_h_demon ?? [];
-    const prevBits       = participantProfile?.cumulative_bits_subject ?? [];
-    const prevDemonHits  = participantProfile?.cumulative_demon_hits ?? 0;
-    const prevDemonTrials = participantProfile?.cumulative_demon_trials ?? 0;
-    const newH_s         = [...prevH_s, ...hurstSubjectHistory];
-    const newH_d         = [...prevH_d, ...hurstDemonHistory];
-    const newBits        = [...prevBits, ...subjectBitsHistory.map(arr => arr.join(''))];
-    const newDemonHits   = prevDemonHits + totalGhostHits;
-    const newDemonTrials = prevDemonTrials + totals.n;
+    // Combine past-session data (loaded from session query at consent) with current session
+    const newH_s         = [...pastH_s, ...hurstSubjectHistory];
+    const newH_d         = [...pastH_d, ...hurstDemonHistory];
+    const newBits        = [...pastBits, ...subjectBitsHistory]; // arrays of 0|1 (not strings)
+    const newDemonHits   = pastDemonHits + totalGhostHits;
+    const newDemonTrials = pastDemonTrials + totals.n;
 
     if (newH_s.length === 0) return;
 
-    // Save cumulative arrays for ALL sessions (not just 5+) so every session contributes
+    // Mark session as completed and save scalars-only participant profile
     if (participantHash) {
       savedCumulativeRef.current = true;
+
+      // Mark session complete in session doc
+      if (runRef) {
+        setDoc(runRef, { completed: true }, { merge: true }).catch(console.error);
+      }
+
+      // Participant doc: scalars only — no growing arrays
       const profRef = doc(db, C.PARTICIPANT_COLLECTION, participantHash);
       const todayUTC = new Date().toISOString().slice(0, 10);
       const lastDate = participantProfile?.last_session_date;
       const newToday = lastDate === todayUTC ? (participantProfile?.sessions_today ?? 0) + 1 : 1;
       setDoc(profRef, {
-        session_count:           newCount,
-        last_session_date:       todayUTC,
-        sessions_today:          newToday,
-        pre_q_completed:         true,
-        cumulative_h_subject:    newH_s,
-        cumulative_h_demon:      newH_d,
-        cumulative_bits_subject: newBits,
-        cumulative_demon_hits:   newDemonHits,
-        cumulative_demon_trials: newDemonTrials,
-        updated_at:              serverTimestamp(),
+        session_count:     newCount,
+        last_session_date: todayUTC,
+        sessions_today:    newToday,
+        pre_q_completed:   true,
+        updated_at:        serverTimestamp(),
         ...(emailPlaintext ? { email: emailPlaintext } : {}),
         ...(!participantProfile ? { created_at: serverTimestamp() } : {}),
-        ...(runRef ? { session_ids: arrayUnion(runRef.id) } : {}),
-      }, { merge: true }).catch(err => console.error('Cumulative profile save failed:', err));
+      }, { merge: true }).catch(err => console.error('Profile save failed:', err));
     }
 
     // Session 5+: compute cumulative analysis for display
     if (newCount < C.MIN_SESSIONS_FOR_DECISION) return;
     if (cumulativeAnalysis) return;
 
-    const reconstructedBits = newBits.map(s => s.split('').map(Number));
     const cumAnalysis = computeSessionAnalysis(
-      reconstructedBits, newH_s, newH_d,
+      newBits, newH_s, newH_d,
       { mean: C.NULL_HURST_MEAN, sd: C.NULL_HURST_SD },
       C.N_SHUFFLES,
       newDemonHits,
       newDemonTrials,
     );
     setCumulativeAnalysis(cumAnalysis);
-  }, [phase, sessionCount, cumulativeAnalysis, participantProfile, participantHash, emailPlaintext, runRef, isAutoMode, isAIMode, hurstSubjectHistory, hurstDemonHistory, subjectBitsHistory, totalGhostHits, totals.n]);
+  }, [phase, sessionCount, cumulativeAnalysis, participantProfile, participantHash, emailPlaintext, runRef, isAutoMode, isAIMode, hurstSubjectHistory, hurstDemonHistory, subjectBitsHistory, totalGhostHits, totals.n, pastH_s, pastH_d, pastBits, pastDemonHits, pastDemonTrials]);
 
   // Save rank to session document once sessionAnalysis is ready
   useEffect(() => {
@@ -1045,7 +1120,7 @@ export default function MainApp() {
             let profile = null;
             if (email) {
               setEmailPlaintext(email);
-              // Primary: email hash → prescreen_participants profile
+              // Primary: email hash → prescreen_participants profile + session query
               try {
                 const hash = await hashEmail(email);
                 setParticipantHash(hash);
@@ -1053,7 +1128,45 @@ export default function MainApp() {
                 const profSnap = await getDoc(profRef);
                 profile = profSnap.exists() ? profSnap.data() : null;
                 setParticipantProfile(profile);
-                setSessionCount(profile?.session_count ?? 0);
+
+                // Query past sessions for cumulative reconstruction
+                try {
+                  const sessionsQ = query(
+                    collection(db, C.PRESCREEN_COLLECTION),
+                    where('participant_hash', '==', hash),
+                    orderBy('createdAt', 'asc')
+                  );
+                  const snap = await getDocs(sessionsQ);
+                  let cumH_s = [], cumH_d = [], cumBits = [];
+                  let cumDemonHits = 0, cumDemonTrials = 0, completedCount = 0;
+                  for (const d of snap.docs) {
+                    const data = d.data();
+                    const isCompleted = data.completed === true || data.aggregates?.sessionComplete === true;
+                    const isHuman = !data.session_type || data.session_type === 'human';
+                    if (!isCompleted || !isHuman) continue;
+                    completedCount++;
+                    const h_s = data.aggregates?.hurst_subject;
+                    const h_d = data.aggregates?.hurst_demon;
+                    const bitsB64 = data.raw_bits_b64;
+                    if (Array.isArray(h_s) && h_s.length > 0 && bitsB64) {
+                      cumH_s.push(...h_s);
+                      cumH_d.push(...h_d);
+                      const bits = unpackBitsFromBase64(bitsB64, h_s.length, C.TRIALS_PER_BLOCK);
+                      cumBits.push(...bits);
+                    }
+                    cumDemonHits += data.aggregates?.totalGhostHits ?? 0;
+                    cumDemonTrials += data.aggregates?.totalTrials ?? 0;
+                  }
+                  setPastH_s(cumH_s);
+                  setPastH_d(cumH_d);
+                  setPastBits(cumBits);
+                  setPastDemonHits(cumDemonHits);
+                  setPastDemonTrials(cumDemonTrials);
+                  setSessionCount(completedCount);
+                } catch (err) {
+                  console.error('Session history query failed (non-blocking):', err);
+                  setSessionCount(profile?.session_count ?? 0);
+                }
               } catch (err) {
                 console.error('Profile load error (non-blocking):', err);
               }
