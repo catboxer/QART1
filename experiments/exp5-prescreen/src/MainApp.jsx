@@ -14,9 +14,29 @@ import {
   hurstApprox,
   lag1Autocorr,
   shannonEntropy,
+  normalCdf,
   computeSessionAnalysis,
   evaluatePrescreen,
 } from './stats/index.js';
+
+// ── Monitoring helpers ────────────────────────────────────────────────────────
+
+// Linear regression of ys ~ index; returns slope + two-tailed p-value
+function linReg(ys) {
+  const n = ys.length;
+  if (n < 3) return { slope: null, pValue: null };
+  const xMean = (n - 1) / 2;
+  const yMean = ys.reduce((a, b) => a + b, 0) / n;
+  const Sxx = ys.reduce((s, _, i) => s + (i - xMean) ** 2, 0);
+  const Sxy = ys.reduce((s, y, i) => s + (i - xMean) * (y - yMean), 0);
+  const slope = Sxy / Sxx;
+  const intercept = yMean - slope * xMean;
+  const sse = ys.reduce((s, y, i) => s + (y - (intercept + slope * i)) ** 2, 0);
+  const seSlope = Math.sqrt(sse / (n - 2) / Sxx);
+  const t = seSlope > 0 ? slope / seSlope : 0;
+  return { slope, pValue: 2 * (1 - normalCdf(Math.abs(t))) };
+}
+
 import { db, ensureSignedIn } from './firebase.js';
 import {
   collection, doc, addDoc, setDoc, getDoc, getDocs, updateDoc, serverTimestamp, arrayUnion,
@@ -159,6 +179,7 @@ export default function MainApp() {
   const ensureRunDocPromiseRef = useRef(null); // Prevent race conditions
   const isCreatingDocRef = useRef(false); // Immediate flag to prevent race conditions
   const savedCumulativeRef = useRef(false); // Prevent double-save of cumulative data
+  const fetchTriggeredAtRef = useRef(null); // Capture when fetching was triggered (button press or auto-timer)
 
   const ensureRunDoc = useCallback(async () => {
     if (runRef) {
@@ -345,6 +366,14 @@ export default function MainApp() {
         ? deltaHurstHistory.reduce((a, b) => a + b, 0) / deltaHurstHistory.length
         : 0;
 
+      // ── Monitoring metrics (scalars only) ──────────────────────────────────
+      const splitAt = Math.floor(C.BLOCKS_TOTAL / 2); // 40
+      const early = deltaHurstHistory.slice(0, splitAt);
+      const late  = deltaHurstHistory.slice(splitAt);
+      const mean_deltaH_early = early.length > 0 ? early.reduce((a, b) => a + b, 0) / early.length : null;
+      const mean_deltaH_late  = late.length  > 0 ? late.reduce((a, b)  => a + b, 0) / late.length  : null;
+      const { slope: reg_slope, pValue: reg_pValue } = linReg(deltaHurstHistory);
+
       await setDoc(runRef, {
         aggregates: {
           totalHits: totals.k,
@@ -360,7 +389,15 @@ export default function MainApp() {
             mean: meanDH,
             blockDeltas: deltaHurstHistory,
           }
-        }
+        },
+        monitoring: {
+          mean_deltaH_early,
+          mean_deltaH_late,
+          difference: mean_deltaH_early !== null && mean_deltaH_late !== null
+            ? mean_deltaH_late - mean_deltaH_early : null,
+          reg_slope,
+          reg_pValue,
+        },
       }, { merge: true });
 
       console.log('✅ Session aggregates saved:', runRef.id, { hitRate, ghostHitRate, blocks: deltaHurstHistory.length });
@@ -609,6 +646,7 @@ export default function MainApp() {
     } else if ((phase === 'rest' || phase === 'target_announce') && isAutoMode) {
       // Auto-continue rest/target_announce screens in auto-mode
       const timer = setTimeout(() => {
+        fetchTriggeredAtRef.current = new Date().toISOString();
         setPhase('fetching'); // Go to fetching phase instead of old startNextMinute
       }, C.AUTO_MODE_REST_MS);
       return () => clearTimeout(timer);
@@ -743,6 +781,7 @@ export default function MainApp() {
       kind: 'instant',
       ended_by: 'instant_process',
       startedAt: serverTimestamp(),
+      fetch_triggered_at: fetchTriggeredAtRef.current,
 
       // Subject data
       n, hits: k, z, pTwo,
@@ -1360,7 +1399,7 @@ export default function MainApp() {
         </div>
 
         <button
-          onClick={() => setPhase('fetching')}
+          onClick={() => { fetchTriggeredAtRef.current = new Date().toISOString(); setPhase('fetching'); }}
           style={{
             marginTop: 28,
             padding: '16px 32px',
