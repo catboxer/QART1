@@ -87,6 +87,19 @@ validateConfig();
 // Note: All quantum bit fetching is now handled by fetchQRNGBits() function
 // which includes cryptographic authentication and validation
 
+// ── Run-length encode an array of strings → [[value, count], ...] ─────────────
+function rleEncode(arr) {
+  if (!arr.length) return [];
+  const out = [];
+  let cur = arr[0], count = 1;
+  for (let i = 1; i < arr.length; i++) {
+    if (arr[i] === cur) { count++; }
+    else { out.push([cur, count]); cur = arr[i]; count = 1; }
+  }
+  out.push([cur, count]);
+  return out;
+}
+
 // ── Bit-packing helpers (session-level raw_bits_b64) ─────────────────────────
 
 // Pack an array-of-arrays of 0|1 bits into a base64 string.
@@ -221,6 +234,7 @@ export default function MainApp() {
   const savedCumulativeRef = useRef(false); // Prevent double-save of cumulative data
   const fetchTriggeredAtRef = useRef(null); // Capture when fetching was triggered (button press or auto-timer)
   const qrngProviderRef = useRef(null); // Track QRNG provider across blocks ('mixed' if it changes)
+  const qrngProviderSeqRef = useRef([]); // Per-block provider labels, for RLE encoding at session end
   const allRawBitsRef = useRef([]); // Full 301-bit calls per block (assignment + both halves)
 
   const ensureRunDoc = useCallback(async () => {
@@ -459,6 +473,7 @@ export default function MainApp() {
         block_count_actual: deltaHurstHistory.length,
         blocks_expected: C.BLOCKS_TOTAL,
         qrng_provider: qrngProviderRef.current,
+        qrng_provider_sequence: rleEncode(qrngProviderSeqRef.current),
         aggregates: {
           totalHits: totals.k,
           totalTrials: totals.n,
@@ -537,6 +552,7 @@ export default function MainApp() {
 
         // Track QRNG provider (mark 'mixed' if it changes mid-session)
         const src = quantumData.source;
+        qrngProviderSeqRef.current.push(src);
         if (qrngProviderRef.current === null) {
           qrngProviderRef.current = src;
         } else if (qrngProviderRef.current !== src && qrngProviderRef.current !== 'mixed') {
@@ -811,6 +827,7 @@ export default function MainApp() {
         // Reset per-session refs
         savedCumulativeRef.current = false;
         qrngProviderRef.current = null;
+        qrngProviderSeqRef.current = [];
         allRawBitsRef.current = [];
 
         setPhase('onboarding');
