@@ -221,6 +221,7 @@ export default function MainApp() {
   const savedCumulativeRef = useRef(false); // Prevent double-save of cumulative data
   const fetchTriggeredAtRef = useRef(null); // Capture when fetching was triggered (button press or auto-timer)
   const qrngProviderRef = useRef(null); // Track QRNG provider across blocks ('mixed' if it changes)
+  const allRawBitsRef = useRef([]); // Full 301-bit calls per block (assignment + both halves)
 
   const ensureRunDoc = useCallback(async () => {
     if (runRef) {
@@ -430,9 +431,10 @@ export default function MainApp() {
       const mean_deltaH_late  = late.length  > 0 ? late.reduce((a, b)  => a + b, 0) / late.length  : null;
       const { slope: reg_slope, pValue: reg_pValue } = linReg(deltaHurstHistory);
 
-      // ── Pack raw subject bits for Colab-queryable blob ─────────────────────
-      const raw_bits_b64 = subjectBitsHistory.length > 0
-        ? packBitsToBase64(subjectBitsHistory)
+      // ── Pack full 301-bit calls (assignment + both halves) for Colab blob ─────
+      // Preserves assignment bit, demon half, and subject half for full re-derivation.
+      const raw_bits_b64 = allRawBitsRef.current.length > 0
+        ? packBitsToBase64(allRawBitsRef.current)
         : null;
 
       await setDoc(runRef, {
@@ -475,7 +477,7 @@ export default function MainApp() {
     } catch (error) {
       console.error('❌ Failed to save session aggregates:', error);
     }
-  }, [runRef, totals, totalGhostHits, deltaHurstHistory, subjectBitsHistory, hurstSubjectHistory, hurstDemonHistory]);
+  }, [runRef, totals, totalGhostHits, deltaHurstHistory, hurstSubjectHistory, hurstDemonHistory]);
 
 
   // Fetch subject+demon tape when entering fetching phase, then process trials
@@ -541,6 +543,9 @@ export default function MainApp() {
             target: target
           });
         }
+
+        // Accumulate full 301-bit call (assignment + both halves) for session-level blob
+        allRawBitsRef.current.push(quantumData.bits.split('').map(Number));
 
         // Process all trials instantly (this increments blockIdx from blockIdx to blockIdx+1)
         processTrials(quantumData.bits);
@@ -786,6 +791,7 @@ export default function MainApp() {
         // Reset per-session refs
         savedCumulativeRef.current = false;
         qrngProviderRef.current = null;
+        allRawBitsRef.current = [];
 
         setPhase('onboarding');
       }, 100);
@@ -1155,8 +1161,15 @@ export default function MainApp() {
                     if (Array.isArray(h_s) && h_s.length > 0 && bitsB64) {
                       cumH_s.push(...h_s);
                       cumH_d.push(...h_d);
-                      const bits = unpackBitsFromBase64(bitsB64, h_s.length, C.TRIALS_PER_BLOCK);
-                      cumBits.push(...bits);
+                      // Unpack full 301-bit calls; re-derive subject half using assignment bit
+                      const blocks301 = unpackBitsFromBase64(bitsB64, h_s.length, C.BITS_PER_BLOCK);
+                      const n = C.TRIALS_PER_BLOCK;
+                      for (const block of blocks301) {
+                        const subjectGetsFirstHalf = block[0] === 1;
+                        const halfA = block.slice(1, 1 + n);
+                        const halfB = block.slice(1 + n, 1 + 2 * n);
+                        cumBits.push(subjectGetsFirstHalf ? halfA : halfB);
+                      }
                     }
                     cumDemonHits += data.aggregates?.totalGhostHits ?? 0;
                     cumDemonTrials += data.aggregates?.totalTrials ?? 0;
