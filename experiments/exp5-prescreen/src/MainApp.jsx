@@ -18,6 +18,18 @@ import {
   computeSessionAnalysis,
   evaluatePrescreen,
 } from './stats/index.js';
+import { db, ensureSignedIn } from './firebase.js';
+import {
+  collection, doc, addDoc, setDoc, getDoc, getDocs, updateDoc, serverTimestamp,
+  query, where, orderBy, limit,
+} from 'firebase/firestore';
+import { fetchQRNGBits } from './fetchQRNGBits.js';
+import { runNISTAudit } from './nistTests.js';
+import { preQuestions, postQuestions } from './questions.js';
+import { QuestionsForm } from './Forms.jsx';
+import { HurstDeltaGauge } from './Scoring.jsx';
+import confetti from 'canvas-confetti';
+import ConsentGate from './ui/ConsentGate.jsx';
 
 // ── Monitoring helpers ────────────────────────────────────────────────────────
 
@@ -36,20 +48,6 @@ function linReg(ys) {
   const t = seSlope > 0 ? slope / seSlope : 0;
   return { slope, pValue: 2 * (1 - normalCdf(Math.abs(t))) };
 }
-
-import { db, ensureSignedIn } from './firebase.js';
-import {
-  collection, doc, addDoc, setDoc, getDoc, getDocs, updateDoc, serverTimestamp,
-  query, where, orderBy, limit,
-} from 'firebase/firestore';
-import { fetchQRNGBits } from './fetchQRNGBits.js';
-import { runNISTAudit } from './nistTests.js';
-
-import { preQuestions, postQuestions } from './questions.js';
-import { QuestionsForm } from './Forms.jsx';
-import { HurstDeltaGauge } from './Scoring.jsx';
-import confetti from 'canvas-confetti';
-import ConsentGate from './ui/ConsentGate.jsx';
 
 async function hashEmail(email) {
   const encoded = new TextEncoder().encode(email.toLowerCase().trim());
