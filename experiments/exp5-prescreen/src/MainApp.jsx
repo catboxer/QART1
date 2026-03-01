@@ -457,6 +457,10 @@ export default function MainApp() {
           }
         },
         ...(raw_bits_b64 ? { raw_bits_b64 } : {}),
+        // Top-level scalars for easy Colab aggregation (no nested field paths needed for ghostZ)
+        demon_hits_total: totalGhostHits,
+        demon_trials_total: totals.n,
+        demon_mean_hit_rate: ghostHitRate,
         monitoring: {
           mean_deltaH_early,
           mean_deltaH_late,
