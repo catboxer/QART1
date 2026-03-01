@@ -130,6 +130,9 @@ pk.NULL_HURST_P90  = _nullDist.p90;
 pk.NULL_HURST_P95  = _nullDist.p95;
 pk.NULL_HURST_P99  = _nullDist.p99;
 
+// Propagate top-level fields so pkConfig consumers (C.*) can access them
+pk.APP_VERSION = config.APP_VERSION;
+
 // To test QRNG for bias run node validate-qrng-node.js. This uses 50K bits.
 // Convenience export so existing imports keep working:
 export const pkConfig = config.experiments.pk;
