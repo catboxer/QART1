@@ -437,8 +437,27 @@ export default function MainApp() {
         ? packBitsToBase64(allRawBitsRef.current)
         : null;
 
+      // Dev-mode round-trip integrity check — zero cost in production
+      if (import.meta.env.DEV && raw_bits_b64) {
+        const orig = allRawBitsRef.current;
+        const rt = unpackBitsFromBase64(raw_bits_b64, orig.length, C.BITS_PER_BLOCK);
+        let ok = rt.length === orig.length;
+        if (ok) {
+          const checkIdxs = [0, Math.floor(orig.length / 2), orig.length - 1];
+          outer: for (const bi of checkIdxs) {
+            if (rt[bi].length !== orig[bi].length) { ok = false; break; }
+            for (let i = 0; i < orig[bi].length; i++) {
+              if (rt[bi][i] !== orig[bi][i]) { ok = false; break outer; }
+            }
+          }
+        }
+        if (!ok) console.error('❌ raw_bits_b64 round-trip FAILED — packing corruption');
+        else      console.log(`✅ raw_bits_b64 round-trip OK (${orig.length} blocks × ${C.BITS_PER_BLOCK} bits)`);
+      }
+
       await setDoc(runRef, {
-        block_count: deltaHurstHistory.length,
+        block_count_actual: deltaHurstHistory.length,
+        blocks_expected: C.BLOCKS_TOTAL,
         qrng_provider: qrngProviderRef.current,
         aggregates: {
           totalHits: totals.k,
@@ -743,9 +762,10 @@ export default function MainApp() {
     } else if (phase === 'results') {
       // Mark session as completed and advance (skip results/postQ/summary in auto/AI mode)
       if (runRef) {
+        const isFullSession = allRawBitsRef.current.length === C.BLOCKS_TOTAL;
         Promise.all([
           saveSessionAggregates(),
-          setDoc(runRef, { completed: true }, { merge: true })
+          ...(isFullSession ? [setDoc(runRef, { completed: true }, { merge: true })] : [])
         ])
           .then(() => setPhase('next'))
           .catch(() => setPhase('next'));
@@ -1028,8 +1048,8 @@ export default function MainApp() {
     if (participantHash) {
       savedCumulativeRef.current = true;
 
-      // Mark session complete in session doc
-      if (runRef) {
+      // Mark session complete only when all blocks are accounted for
+      if (runRef && allRawBitsRef.current.length === C.BLOCKS_TOTAL) {
         setDoc(runRef, { completed: true }, { merge: true }).catch(console.error);
       }
 
@@ -1146,7 +1166,7 @@ export default function MainApp() {
                     where('participant_hash', '==', hash),
                     where('completed', '==', true),
                     orderBy('createdAt', 'asc'),
-                    limit(24)
+                    limit(50)
                   );
                   const snap = await getDocs(sessionsQ);
                   let cumH_s = [], cumH_d = [], cumBits = [];
