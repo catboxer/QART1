@@ -1146,7 +1146,7 @@ export default function MainApp() {
                     where('participant_hash', '==', hash),
                     where('completed', '==', true),
                     orderBy('createdAt', 'asc'),
-                    limit(50)
+                    limit(24)
                   );
                   const snap = await getDocs(sessionsQ);
                   let cumH_s = [], cumH_d = [], cumBits = [];
