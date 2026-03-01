@@ -40,7 +40,7 @@ function linReg(ys) {
 import { db, ensureSignedIn } from './firebase.js';
 import {
   collection, doc, addDoc, setDoc, getDoc, getDocs, updateDoc, serverTimestamp,
-  query, where, orderBy,
+  query, where, orderBy, limit,
 } from 'firebase/firestore';
 import { fetchQRNGBits } from './fetchQRNGBits.js';
 import { runNISTAudit } from './nistTests.js';
@@ -1144,16 +1144,17 @@ export default function MainApp() {
                   const sessionsQ = query(
                     collection(db, C.PRESCREEN_COLLECTION),
                     where('participant_hash', '==', hash),
-                    orderBy('createdAt', 'asc')
+                    where('completed', '==', true),
+                    orderBy('createdAt', 'asc'),
+                    limit(50)
                   );
                   const snap = await getDocs(sessionsQ);
                   let cumH_s = [], cumH_d = [], cumBits = [];
                   let cumDemonHits = 0, cumDemonTrials = 0, completedCount = 0;
                   for (const d of snap.docs) {
                     const data = d.data();
-                    const isCompleted = data.completed === true || data.aggregates?.sessionComplete === true;
                     const isHuman = !data.session_type || data.session_type === 'human';
-                    if (!isCompleted || !isHuman) continue;
+                    if (!isHuman) continue;
                     completedCount++;
                     const h_s = data.aggregates?.hurst_subject;
                     const h_d = data.aggregates?.hurst_demon;
