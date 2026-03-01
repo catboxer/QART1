@@ -225,6 +225,19 @@ export default function MainApp() {
   // Trials per block (from config)
   const trialsPerBlock = C.TRIALS_PER_BLOCK;
 
+  // Multi-session accumulation (declared here so participantHash is in scope for ensureRunDoc deps)
+  const [participantHash, setParticipantHash]       = useState(null);
+  const [participantProfile, setParticipantProfile] = useState(null);
+  const [emailPlaintext, setEmailPlaintext]         = useState('');
+  const [sessionCount, setSessionCount]             = useState(0);
+  const [cumulativeAnalysis, setCumulativeAnalysis] = useState(null);
+  // Past-session data loaded at consent (from querying prescreen_sessions_exp5)
+  const [pastH_s, setPastH_s]                 = useState([]);
+  const [pastH_d, setPastH_d]                 = useState([]);
+  const [pastBits, setPastBits]               = useState([]);
+  const [pastDemonHits, setPastDemonHits]     = useState(0);
+  const [pastDemonTrials, setPastDemonTrials] = useState(0);
+
   // ---- run doc
   const [runRef, setRunRef] = useState(null);
   const ensureRunDocPromiseRef = useRef(null); // Prevent race conditions
@@ -293,7 +306,7 @@ export default function MainApp() {
 
     const result = await createPromise;
     return result;
-  }, [runRef, target, uid, requireUid, isAutoMode, isAIMode]);
+  }, [runRef, target, uid, requireUid, isAutoMode, isAIMode, participantHash]);
 
   // ---- phase & per-minute state
   const [phase, setPhase] = useState('consent');
@@ -305,7 +318,6 @@ export default function MainApp() {
 
   // Hurst delta tracking across blocks
   const [deltaHurstHistory, setDeltaHurstHistory] = useState([]);
-  const [runningMeanDeltaH, setRunningMeanDeltaH] = useState(0);
   const [hurstSubjectHistory, setHurstSubjectHistory] = useState([]);
   const [hurstDemonHistory, setHurstDemonHistory] = useState([]);
   const [subjectBitsHistory, setSubjectBitsHistory] = useState([]);
@@ -315,19 +327,6 @@ export default function MainApp() {
   const [inviteSubmitting, setInviteSubmitting] = useState(false);
   const [inviteError, setInviteError] = useState(null);
 
-  // Multi-session accumulation
-  const [participantHash, setParticipantHash]             = useState(null);
-  const [participantProfile, setParticipantProfile]       = useState(null);
-  const [emailPlaintext, setEmailPlaintext]               = useState('');
-  const [sessionCount, setSessionCount]                   = useState(0);
-  const [cumulativeAnalysis, setCumulativeAnalysis]       = useState(null);
-
-  // Past-session data loaded at consent (from querying prescreen_sessions_exp5)
-  const [pastH_s, setPastH_s]               = useState([]); // cumulative H_subject across past sessions
-  const [pastH_d, setPastH_d]               = useState([]); // cumulative H_demon across past sessions
-  const [pastBits, setPastBits]             = useState([]); // cumulative subject bits (array of arrays)
-  const [pastDemonHits, setPastDemonHits]   = useState(0);
-  const [pastDemonTrials, setPastDemonTrials] = useState(0);
 
   const bitsRef = useRef([]);
   const demonBitsRef = useRef([]);
@@ -407,11 +406,7 @@ export default function MainApp() {
     setLastBlock(blockSummary);
     setTotals(t => ({ k: t.k + k, n: t.n + n }));
     setTotalGhostHits(t => t + kd);
-    setDeltaHurstHistory(prev => {
-      const next = [...prev, blockDeltaH];
-      setRunningMeanDeltaH(next.reduce((a, b) => a + b, 0) / next.length);
-      return next;
-    });
+    setDeltaHurstHistory(prev => [...prev, blockDeltaH]);
     setHurstSubjectHistory(prev => [...prev, blockSubjHurst]);
     setHurstDemonHistory(prev => [...prev, blockPCSHurst]);
     setSubjectBitsHistory(prev => [...prev, parsedSubjectBits]);
@@ -531,11 +526,6 @@ export default function MainApp() {
         const quantumData = await fetchQRNGBits(C.BITS_PER_BLOCK);
 
         if (isCancelled) return;
-
-        // Check if we just completed the final block BEFORE processing
-        // blockIdx in closure is the value BEFORE processTrials increments it
-        const justCompletedBlockIdx = blockIdx;
-        const nextBlockIdx = justCompletedBlockIdx + 1;
 
         // Store the current blockIdx before it gets incremented (this is what persistMinute should use)
         blockIdxToPersist.current = blockIdx;
@@ -812,7 +802,6 @@ export default function MainApp() {
         setLastBlock(null);
         setIsRunning(false);
         setDeltaHurstHistory([]);
-        setRunningMeanDeltaH(0);
         setHurstSubjectHistory([]);
         setHurstDemonHistory([]);
         setSubjectBitsHistory([]);
