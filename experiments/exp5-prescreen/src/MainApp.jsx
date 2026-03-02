@@ -90,11 +90,6 @@ function validateConfig() {
     errors.push('TRIALS_PER_BLOCK must be positive');
   if (!C.BITS_PER_BLOCK || C.BITS_PER_BLOCK <= 0)
     errors.push('BITS_PER_BLOCK must be positive');
-  if (C.PRIME_PROB < 0 || C.PRIME_PROB > 1)
-    errors.push('PRIME_PROB must be between 0 and 1');
-  if (!Array.isArray(C.TARGET_SIDES) || C.TARGET_SIDES.length === 0)
-    errors.push('TARGET_SIDES must be non-empty array');
-
   // Cross-validation: Ensure config values are consistent
   if (C.BITS_PER_BLOCK !== 1 + 2 * C.TRIALS_PER_BLOCK) {
     errors.push(
@@ -236,7 +231,7 @@ export default function MainApp() {
       return false;
     }
   });
-  const [checkedReturning, setCheckedReturning] = useState(false); // ← add this
+  const [checkedReturning, setCheckedReturning] = useState(false);
 
   // ---- sign-in (local-only returning check)
   useEffect(() => {
@@ -266,10 +261,6 @@ export default function MainApp() {
       );
     return u.uid;
   }, []);
-
-  // makeTape function removed - live streams only
-
-  // prepareSessionArtifacts function removed - live streams only
 
   // Trials per block (from config)
   const trialsPerBlock = C.TRIALS_PER_BLOCK;
@@ -1196,7 +1187,7 @@ export default function MainApp() {
   // Fire confetti on summary screen when subject is invite-eligible (gold or silver)
   useEffect(() => {
     if (phase !== 'summary') return;
-    const analysisForConfetti = cumulativeAnalysis || sessionAnalysis;
+    const analysisForConfetti = sessionCount >= C.MIN_SESSIONS_FOR_DECISION ? cumulativeAnalysis : null;
     if (!analysisForConfetti) return;
     const { eligible } = evaluatePrescreen(analysisForConfetti, C);
     if (!eligible) return;
@@ -2377,6 +2368,9 @@ export default function MainApp() {
     if (!isDecisionSession) {
       const remaining =
         C.MIN_SESSIONS_FOR_DECISION - actualSessionsLoaded;
+      const earlyRank = sessionAnalysis
+        ? evaluatePrescreen(sessionAnalysis, C).rank
+        : null;
       return (
         <div
           className="App"
@@ -2462,6 +2456,42 @@ export default function MainApp() {
               API.
             </p>
           </div>
+
+          {(earlyRank === 'gold' || earlyRank === 'silver') && (
+            <div
+              style={{
+                padding: 20,
+                background: earlyRank === 'gold' ? '#fffbeb' : '#f0fdf4',
+                borderRadius: 12,
+                border: `2px solid ${earlyRank === 'gold' ? '#f59e0b' : '#34d399'}`,
+                marginBottom: 16,
+                textAlign: 'left',
+              }}
+            >
+              <p
+                style={{
+                  fontSize: 15,
+                  fontWeight: 600,
+                  color: earlyRank === 'gold' ? '#92400e' : '#065f46',
+                  marginBottom: 6,
+                }}
+              >
+                {earlyRank === 'gold' ? '⚡ Strong early signal' : '✦ Interesting early signal'}
+              </p>
+              <p
+                style={{
+                  fontSize: 13,
+                  color: earlyRank === 'gold' ? '#78350f' : '#064e3b',
+                  marginBottom: 0,
+                  lineHeight: 1.6,
+                }}
+              >
+                {earlyRank === 'gold'
+                  ? 'Your session produced a pattern well above what chance would predict — this is rare. We need more sessions to confirm it, but this is a very encouraging start.'
+                  : 'Your session showed an interesting pattern worth following up on. More sessions will tell us whether it holds up.'}
+              </p>
+            </div>
+          )}
 
           <div
             style={{
@@ -2898,7 +2928,8 @@ export default function MainApp() {
     // In preview mode (#preview) force gold so the invite UI is visible for review
     const isCumulativeSession =
       sessionCount >= C.MIN_SESSIONS_FOR_DECISION;
-    const analysisToUse = cumulativeAnalysis || sessionAnalysis;
+    // Only evaluate invite eligibility once we have enough sessions for a reliable verdict
+    const analysisToUse = isCumulativeSession ? cumulativeAnalysis : null;
     let inviteEligible = isPreviewMode;
     let summaryRank = isPreviewMode ? 'gold' : null;
     if (!isPreviewMode && analysisToUse) {
