@@ -15,8 +15,6 @@ import {
   lag1Autocorr,
   shannonEntropy,
   normalCdf,
-  computeSessionAnalysis,
-  evaluatePrescreen,
 } from './stats/index.js';
 import { db } from './firebase.js';
 import {
@@ -120,6 +118,7 @@ import { packBitsToBase64, unpackBitsFromBase64 } from './lib/rawBitsCodec.js';
 import { splitBlockBits, computeBlockStats } from './lib/trialBlock.js';
 import { usePhaseRouter } from './hooks/usePhaseRouter.js';
 import { useParticipantProfile } from './hooks/useParticipantProfile.js';
+import { usePrescreenAnalysis } from './hooks/usePrescreenAnalysis.js';
 
 // ===== main =====
 export default function MainApp() {
@@ -182,13 +181,11 @@ export default function MainApp() {
   // Trials per block (from config)
   const trialsPerBlock = C.TRIALS_PER_BLOCK;
 
-  const [cumulativeAnalysis, setCumulativeAnalysis] = useState(null);
-
   // ---- run doc
   const [runRef, setRunRef] = useState(null);
   const ensureRunDocPromiseRef = useRef(null); // Prevent race conditions
   const isCreatingDocRef = useRef(false); // Immediate flag to prevent race conditions
-  const savedCumulativeRef = useRef(false); // Prevent double-save of cumulative data
+  // savedCumulativeRef owned by usePrescreenAnalysis (accessed via resetAnalysis())
   const fetchTriggeredAtRef = useRef(null); // Capture when fetching was triggered (button press or auto-timer)
   const qrngProviderRef = useRef(null); // Track QRNG provider across blocks ('mixed' if it changes)
   const qrngProviderSeqRef = useRef([]); // Per-block provider labels, for RLE encoding at session end
@@ -289,7 +286,25 @@ export default function MainApp() {
   const [hurstSubjectHistory, setHurstSubjectHistory] = useState([]);
   const [hurstDemonHistory, setHurstDemonHistory] = useState([]);
   const [subjectBitsHistory, setSubjectBitsHistory] = useState([]);
-  const [sessionAnalysis, setSessionAnalysis] = useState(null);
+
+  // ---- prescreen analysis (session + cumulative) + rank writes
+  const {
+    sessionAnalysis,
+    cumulativeAnalysis,
+    isCumulativeReady,
+    decision,
+    inviteStatus,
+    resetAnalysis,
+  } = usePrescreenAnalysis({
+    db, C,
+    phase, sessionCount, isAutoMode, isAIMode,
+    hurstSubjectHistory, hurstDemonHistory, subjectBitsHistory,
+    totalGhostHits, totals,
+    pastH_s, pastH_d, pastBits, pastDemonHits, pastDemonTrials,
+    runRef, allRawBitsRef,
+    participantHash, participantProfile, emailPlaintext,
+  });
+
   const [inviteForm, setInviteForm] = useState({
     firstName: '',
     lastName: '',
@@ -843,14 +858,13 @@ export default function MainApp() {
         setHurstSubjectHistory([]);
         setHurstDemonHistory([]);
         setSubjectBitsHistory([]);
-        setSessionAnalysis(null);
+        resetAnalysis(); // clears sessionAnalysis, cumulativeAnalysis, savedCumulativeRef
 
         // Reset target flag so new target gets assigned
         targetAssignedRef.current = false;
         setTarget(null);
 
         // Reset per-session refs
-        savedCumulativeRef.current = false;
         qrngProviderRef.current = null;
         qrngProviderSeqRef.current = [];
         allRawBitsRef.current = [];
@@ -1055,10 +1069,7 @@ export default function MainApp() {
   // Fire confetti on summary screen when subject is invite-eligible (gold or silver)
   useEffect(() => {
     if (phase !== 'summary') return;
-    const analysisForConfetti = cumulativeAnalysis;
-    if (!analysisForConfetti) return;
-    const { eligible } = evaluatePrescreen(analysisForConfetti, C);
-    if (!eligible) return;
+    if (!decision.eligible) return;
     // Gold confetti burst
     confetti({
       particleCount: 120,
@@ -1099,185 +1110,7 @@ export default function MainApp() {
     }
   }, [phase, runRef, target, ensureRunDoc]);
 
-  // Compute session analysis once when entering results phase (200-shuffle permutation test)
-  useEffect(() => {
-    if (phase !== 'results') return;
-    if (sessionAnalysis) return; // already computed
-    if (hurstSubjectHistory.length === 0) return;
-    if (subjectBitsHistory.length !== hurstSubjectHistory.length) {
-      console.warn(
-        '[prescreen] lockstep mismatch — subjectBitsHistory:',
-        subjectBitsHistory.length,
-        'hurstSubjectHistory:',
-        hurstSubjectHistory.length,
-      );
-    }
-    const result = computeSessionAnalysis(
-      subjectBitsHistory,
-      hurstSubjectHistory,
-      hurstDemonHistory,
-      { mean: C.NULL_HURST_MEAN, sd: C.NULL_HURST_SD },
-      C.N_SHUFFLES,
-      totalGhostHits,
-      totals.n,
-    );
-    setSessionAnalysis(result);
-  }, [
-    phase,
-    sessionAnalysis,
-    subjectBitsHistory,
-    hurstSubjectHistory,
-    hurstDemonHistory,
-    totalGhostHits,
-    totals.n,
-  ]);
-
-  // Save cumulative data and (for session 5+) compute cumulative analysis when entering results phase
-  useEffect(() => {
-    if (phase !== 'results') return;
-    if (isAutoMode || isAIMode) return; // never accumulate baseline/AI sessions
-    if (savedCumulativeRef.current) return; // already saved this session
-
-    const newCount = sessionCount + 1;
-
-    // Combine past-session data (loaded from session query at consent) with current session
-    const newH_s = [...pastH_s, ...hurstSubjectHistory];
-    const newH_d = [...pastH_d, ...hurstDemonHistory];
-    const newBits = [...pastBits, ...subjectBitsHistory]; // arrays of 0|1 (not strings)
-    const newDemonHits = pastDemonHits + totalGhostHits;
-    const newDemonTrials = pastDemonTrials + totals.n;
-
-    if (newH_s.length === 0) return;
-
-    // Mark session as completed and save scalars-only participant profile
-    if (participantHash) {
-      savedCumulativeRef.current = true;
-
-      // Mark session complete only when all blocks are accounted for
-      if (runRef && allRawBitsRef.current.length === C.BLOCKS_TOTAL) {
-        setDoc(runRef, { completed: true }, { merge: true }).catch(
-          console.error,
-        );
-      }
-
-      // Participant doc: scalars only — no growing arrays
-      const profRef = doc(
-        db,
-        C.PARTICIPANT_COLLECTION,
-        participantHash,
-      );
-      const todayUTC = new Date().toISOString().slice(0, 10);
-      const lastDate = participantProfile?.last_session_date;
-      const newToday =
-        lastDate === todayUTC
-          ? (participantProfile?.sessions_today ?? 0) + 1
-          : 1;
-      setDoc(
-        profRef,
-        {
-          session_count: newCount,
-          last_session_date: todayUTC,
-          sessions_today: newToday,
-          pre_q_completed: true,
-          updated_at: serverTimestamp(),
-          ...(emailPlaintext ? { email: emailPlaintext } : {}),
-          ...(!participantProfile
-            ? { created_at: serverTimestamp() }
-            : {}),
-        },
-        { merge: true },
-      ).catch((err) => console.error('Profile save failed:', err));
-    }
-
-    // Session 5+: compute cumulative analysis for display
-    if (newCount < C.MIN_SESSIONS_FOR_DECISION) return;
-    if (cumulativeAnalysis) return;
-
-    const cumAnalysis = computeSessionAnalysis(
-      newBits,
-      newH_s,
-      newH_d,
-      { mean: C.NULL_HURST_MEAN, sd: C.NULL_HURST_SD },
-      C.N_SHUFFLES,
-      newDemonHits,
-      newDemonTrials,
-    );
-    setCumulativeAnalysis(cumAnalysis);
-
-    // Write cumulative prescreen_rank / prescreen_eligible to the session doc now that
-    // we have enough sessions — this is the authoritative eligibility verdict.
-    if (runRef) {
-      const { rank: cumRank, eligible: cumEligible } = evaluatePrescreen(cumAnalysis, C);
-      const sessionKind = isAutoMode ? 'baseline' : isAIMode ? 'ai' : 'human';
-      setDoc(
-        runRef,
-        {
-          prescreen_rank: `${cumRank}-${sessionKind}`,
-          prescreen_eligible: cumEligible,
-        },
-        { merge: true },
-      ).catch(console.error);
-    }
-  }, [
-    phase,
-    sessionCount,
-    cumulativeAnalysis,
-    participantProfile,
-    participantHash,
-    emailPlaintext,
-    runRef,
-    isAutoMode,
-    isAIMode,
-    hurstSubjectHistory,
-    hurstDemonHistory,
-    subjectBitsHistory,
-    totalGhostHits,
-    totals.n,
-    pastH_s,
-    pastH_d,
-    pastBits,
-    pastDemonHits,
-    pastDemonTrials,
-  ]);
-
-  // Save per-session QA stats once sessionAnalysis is ready.
-  // prescreen_rank / prescreen_eligible are NOT set here — they require cumulative data (5+ sessions)
-  // and are written by the cumulative results effect below.
-  useEffect(() => {
-    if (!sessionAnalysis || !runRef) return;
-    const {
-      rank: rawRank,
-      ksGate,
-      collapseGate,
-      pcsWarning,
-      intensityTier,
-    } = evaluatePrescreen(sessionAnalysis, C);
-    const sessionKind = isAutoMode
-      ? 'baseline'
-      : isAIMode
-        ? 'ai'
-        : 'human';
-    const pcs = sessionAnalysis.pcs;
-    setDoc(
-      runRef,
-      {
-        // Per-session evaluation (single session, always saved for QA)
-        session_rank: `${rawRank}-${sessionKind}`,
-        session_ks_p: sessionAnalysis.ks.originalP,
-        session_ks_gate: ksGate,
-        session_collapse_p: sessionAnalysis.shuffle.collapseP,
-        session_ddrop: sessionAnalysis.shuffle.dDrop,
-        session_collapse_gate: collapseGate,
-        session_intensity_tier: intensityTier ?? 'none',
-        session_pcs_warning: pcsWarning,
-        session_pcs_nullz: pcs.nullZ,
-        session_pcs_ghostz: pcs.ghostZ,
-        session_pcs_sdratio: pcs.sdRatio,
-        session_pcs_crosscorr: pcs.crossCorr,
-      },
-      { merge: true },
-    ).catch(console.error);
-  }, [sessionAnalysis, runRef]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Analysis effects moved to usePrescreenAnalysis hook
 
   // ===== flow gates =====
   if (profileLoading || !target) {
@@ -1312,9 +1145,8 @@ export default function MainApp() {
             'Hosting providers may log IP addresses for security purposes; these logs are not linked to your study data.',
           ]}
           onAgree={async ({ email } = {}) => {
-            // Reset cumulative analysis so it's recomputed fresh for this session
-            setCumulativeAnalysis(null);
-            savedCumulativeRef.current = false;
+            // Reset analysis state so it's recomputed fresh for this session
+            resetAnalysis();
             const { skipPreQ } = await loadParticipant(email);
             skipPreQ ? goToOnboarding() : goToPreQ();
           }}
@@ -2122,7 +1954,7 @@ export default function MainApp() {
       const remaining =
         C.MIN_SESSIONS_FOR_DECISION - actualSessionsLoaded;
       const earlyRank = sessionAnalysis
-        ? evaluatePrescreen(sessionAnalysis, C).rank
+        ? decision.rank
         : null;
       return (
         <div
@@ -2285,7 +2117,7 @@ export default function MainApp() {
     }
 
     // Session 5+: wait for cumulative analysis
-    if (!cumulativeAnalysis) {
+    if (!isCumulativeReady) {
       return (
         <div style={{ padding: 24, textAlign: 'center' }}>
           Computing cumulative analysis…
@@ -2297,14 +2129,8 @@ export default function MainApp() {
     const cumNBlocks = analysis.nBlocks; // total blocks across all sessions
     const finalDeltaH = analysis.deltaH.meanDeltaH;
 
-    // ── Evaluation on cumulative data ─────────────────────────────────────────
-    const {
-      ksGate,
-      collapseGate,
-      eligible,
-      rank: rawRank,
-      intensityTier,
-    } = evaluatePrescreen(analysis, C);
+    // ── Evaluation on cumulative data — from pre-computed decision ─────────────
+    const { ksGate, collapseGate, eligible, rank: rawRank, intensityTier } = decision;
     const verified = rawRank === 'gold';
     const shuffleYes = collapseGate;
 
@@ -2677,21 +2503,11 @@ export default function MainApp() {
 
   // FINAL SCREEN
   if (phase === 'summary') {
-    // Compute invite eligibility from sessionAnalysis (single source of truth)
-    // In preview mode (#preview) force gold so the invite UI is visible for review
-    const isCumulativeSession = cumulativeAnalysis != null;
-    // Only evaluate invite eligibility once we have enough sessions for a reliable verdict
-    const analysisToUse = cumulativeAnalysis;
-    let inviteEligible = isPreviewMode;
-    let summaryRank = isPreviewMode ? 'gold' : null;
-    if (!isPreviewMode && analysisToUse) {
-      const { rank: r, eligible } = evaluatePrescreen(
-        analysisToUse,
-        C,
-      );
-      summaryRank = r;
-      inviteEligible = eligible || r === 'candidate'; // gold, silver, and candidate all get invite
-    }
+    // Invite eligibility from usePrescreenAnalysis — inviteStatus is single source of truth
+    // Preview mode (#preview) forces gold for UI review
+    const isCumulativeSession = isCumulativeReady;
+    const inviteEligible = isPreviewMode || inviteStatus.showInvite;
+    const summaryRank = isPreviewMode ? 'gold' : inviteStatus.summaryRank;
 
     return (
       <div
