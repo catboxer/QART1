@@ -225,8 +225,8 @@ export function computeSessionAnalysis(
 //   pcsWarning   — informational amber flag (any PCS metric anomalous)
 //   pcsFlags     — { nullZ, ghostZ, sdRatio } — which metrics triggered
 //
-// Gold:      eligible + dDrop > 0.30  (high-confidence structural influencer)
-// Silver:    eligible + dDrop ≤ 0.30  (includes collapseP-only signals; still invited)
+// Gold:      eligible + (collapseP < PRESCREEN_COLLAPSE_GOLD OR dDrop >= PRESCREEN_DDROP_GOLD)
+// Silver:    eligible, gold criteria not met  (includes collapseP-only signals; still invited)
 // Candidate: ksGate && !collapseGate — tag for manual review, no invite
 // pcsWarning never blocks eligibility or changes rank
 

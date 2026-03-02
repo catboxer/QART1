@@ -59,26 +59,26 @@ All scoring runs on the **cumulative dataset** across all sessions, not on indiv
 
 A two-sample **Kolmogorov-Smirnov test** compares the distribution of H_subject values across all cumulative blocks against the distribution of H_demon values.
 
-- **Threshold:** `p < 0.10` (`PRESCREEN_KS_ALPHA`)
-- **Passes if:** the two distributions are sufficiently different that a 10% false positive rate is acceptable at the screening stage
-- **Rationale:** A loose threshold is intentional for a prescreen. We want high sensitivity — missing a genuine responder is a worse outcome than inviting a false positive for further testing. The shuffle gate (Layer 2) provides the specificity.
+- **Threshold:** `p < 0.15` (`PRESCREEN_KS_ALPHA`)
+- **Passes if:** the two distributions are sufficiently different that a 15% false positive rate is acceptable at the screening stage
+- **Rationale:** A loose threshold is intentional for a prescreen. Missing a genuine responder is a worse outcome than inviting a false positive for further testing. The shuffle gate (Layer 2) provides the specificity.
 
 ### Layer 2 — Shuffle Collapse Gate
 
 If the KS anomaly could be due to a simple **mean shift in bit frequency** (e.g. a slight bias in the QRNG producing more 1s), shuffling the bits within each block destroys temporal structure but preserves frequency. A genuine temporal signal should **collapse** under shuffling; a frequency artefact should survive.
 
-For each of **200 permutations**, all subject bit sequences are shuffled within-block (Fisher-Yates), Hurst is recomputed, and the KS distance is recalculated against the fixed demon stream.
+For each of **500 permutations**, all subject bit sequences are shuffled within-block (Fisher-Yates), Hurst is recomputed, and the KS distance is recalculated against the fixed demon stream.
 
 The gate passes if **either**:
 
 | Criterion | Threshold | Meaning |
 |---|---|---|
-| `collapseP` | `< 0.10` | The original KS distance is anomalously large relative to 200 shuffled replicates |
+| `collapseP` | `< 0.10` | The original KS distance is anomalously large relative to 500 shuffled replicates |
 | `dDrop` | `≥ 0.15` | The KS distance dropped by at least 15% after shuffling — direct magnitude evidence of collapse |
 
 OR logic catches both strong temporal signals (clear collapse) and weaker signals where the magnitude drop is meaningful even if the p-value sits just above threshold.
 
-- **Rationale for `collapseP` correction:** `collapseP = (nGreater + 1) / (nShuffles + 1)` rather than `nGreater / nShuffles`, which would allow `p = 0.0` — overconfident with only 200 shuffles. The minimum achievable p is now 1/201 ≈ 0.005.
+- **Rationale for `collapseP` correction:** `collapseP = (nGreater + 1) / (nShuffles + 1)` rather than `nGreater / nShuffles`, which would allow `p = 0.0` — overconfident with finite shuffles. The minimum achievable p with 500 shuffles is 1/501 ≈ 0.002.
 
 ### Eligibility
 
@@ -94,8 +94,8 @@ Both layers must pass. An eligible participant proceeds to the invite form.
 
 | Rank | Condition | Meaning |
 |---|---|---|
-| `gold` | eligible + `dDrop > 0.30` | High-confidence temporal structure; strong collapse |
-| `silver` | eligible + `dDrop ≤ 0.30` | Signal detected; collapseP may have carried the gate |
+| `gold` | eligible + (`collapseP < 0.05` OR `dDrop ≥ 0.20`) | High-confidence temporal structure — strong probability or strong magnitude |
+| `silver` | eligible, gold criteria not met | Signal detected; collapseP or dDrop carried the gate at lower confidence |
 | `candidate` | `ksGate AND NOT collapseGate` | Distribution anomaly present but temporal ordering unconfirmed — flagged for researcher review, no invite |
 | `none` | neither gate passes | No detectable pattern |
 
@@ -149,10 +149,12 @@ MIN_SESSIONS_FOR_DECISION:  5         — cumulative verdict not shown before th
 NULL_HURST_MEAN:            0.52799   — finite-sample null for N=150 (10k simulations)
 NULL_HURST_SD:              0.04579
 
-PRESCREEN_KS_ALPHA:         0.10      — KS gate threshold (loose by design)
+PRESCREEN_KS_ALPHA:         0.15      — KS gate threshold (permissive by design — high sensitivity)
 PRESCREEN_COLLAPSE_ALPHA:   0.10      — permutation p-value gate
-PRESCREEN_DDROP_MIN:        0.15      — magnitude collapse gate
-N_SHUFFLES:                 200       — permutations per analysis
+PRESCREEN_DDROP_MIN:        0.15      — magnitude collapse gate (silver threshold)
+PRESCREEN_DDROP_GOLD:       0.20      — magnitude gate for gold rank
+PRESCREEN_COLLAPSE_GOLD:    0.05      — probability gate for gold rank
+N_SHUFFLES:                 500       — permutations per analysis
 
 PRESCREEN_INTENSITY_T2:     1         — Tier 1→2 SE boundary
 PRESCREEN_INTENSITY_T3:     2         — Tier 2→3 SE boundary

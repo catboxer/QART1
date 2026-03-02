@@ -1187,7 +1187,7 @@ export default function MainApp() {
   // Fire confetti on summary screen when subject is invite-eligible (gold or silver)
   useEffect(() => {
     if (phase !== 'summary') return;
-    const analysisForConfetti = sessionCount >= C.MIN_SESSIONS_FOR_DECISION ? cumulativeAnalysis : null;
+    const analysisForConfetti = cumulativeAnalysis;
     if (!analysisForConfetti) return;
     const { eligible } = evaluatePrescreen(analysisForConfetti, C);
     if (!eligible) return;
@@ -1485,17 +1485,24 @@ export default function MainApp() {
                       !data.session_type ||
                       data.session_type === 'human';
                     if (!isHuman) continue;
-                    completedCount++;
                     const h_s = data.aggregates?.hurst_subject;
                     const h_d = data.aggregates?.hurst_demon;
                     const bitsB64 = data.raw_bits_b64;
+                    // Only count sessions that have usable Hurst + bit data.
+                    // Sessions missing this data don't contribute to the analysis,
+                    // so they must not count toward the session threshold either.
                     if (
                       Array.isArray(h_s) &&
                       h_s.length > 0 &&
                       bitsB64
                     ) {
+                      completedCount++;
                       cumH_s.push(...h_s);
                       cumH_d.push(...h_d);
+                      cumDemonHits +=
+                        data.aggregates?.totalGhostHits ?? 0;
+                      cumDemonTrials +=
+                        data.aggregates?.totalTrials ?? 0;
                       // Unpack full 301-bit calls; re-derive subject half using assignment bit
                       const blocks301 = unpackBitsFromBase64(
                         bitsB64,
@@ -1512,10 +1519,6 @@ export default function MainApp() {
                         );
                       }
                     }
-                    cumDemonHits +=
-                      data.aggregates?.totalGhostHits ?? 0;
-                    cumDemonTrials +=
-                      data.aggregates?.totalTrials ?? 0;
                   }
                   setPastH_s(cumH_s);
                   setPastH_d(cumH_d);
@@ -2926,10 +2929,9 @@ export default function MainApp() {
   if (phase === 'summary') {
     // Compute invite eligibility from sessionAnalysis (single source of truth)
     // In preview mode (#preview) force gold so the invite UI is visible for review
-    const isCumulativeSession =
-      sessionCount >= C.MIN_SESSIONS_FOR_DECISION;
+    const isCumulativeSession = cumulativeAnalysis != null;
     // Only evaluate invite eligibility once we have enough sessions for a reliable verdict
-    const analysisToUse = isCumulativeSession ? cumulativeAnalysis : null;
+    const analysisToUse = cumulativeAnalysis;
     let inviteEligible = isPreviewMode;
     let summaryRank = isPreviewMode ? 'gold' : null;
     if (!isPreviewMode && analysisToUse) {
