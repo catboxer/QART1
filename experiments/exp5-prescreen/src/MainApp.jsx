@@ -18,7 +18,7 @@ import {
   computeSessionAnalysis,
   evaluatePrescreen,
 } from './stats/index.js';
-import { db, ensureSignedIn } from './firebase.js';
+import { db } from './firebase.js';
 import {
   collection,
   doc,
@@ -28,10 +28,6 @@ import {
   getDocs,
   updateDoc,
   serverTimestamp,
-  query,
-  where,
-  orderBy,
-  limit,
   increment,
   arrayUnion,
 } from 'firebase/firestore';
@@ -65,17 +61,6 @@ function linReg(ys) {
   const seSlope = Math.sqrt(sse / (n - 2) / Sxx);
   const t = seSlope > 0 ? slope / seSlope : 0;
   return { slope, pValue: 2 * (1 - normalCdf(Math.abs(t))) };
-}
-
-async function hashEmail(email) {
-  const encoded = new TextEncoder().encode(
-    email.toLowerCase().trim(),
-  );
-  const buf = await crypto.subtle.digest('SHA-256', encoded);
-  return Array.from(new Uint8Array(buf))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('')
-    .slice(0, 32);
 }
 
 // Runtime configuration validation
@@ -133,8 +118,8 @@ function rleEncode(arr) {
 
 import { packBitsToBase64, unpackBitsFromBase64 } from './lib/rawBitsCodec.js';
 import { splitBlockBits, computeBlockStats } from './lib/trialBlock.js';
-import { buildParticipantHistory } from './lib/sessionHistory.js';
 import { usePhaseRouter } from './hooks/usePhaseRouter.js';
+import { useParticipantProfile } from './hooks/useParticipantProfile.js';
 
 // ===== main =====
 export default function MainApp() {
@@ -149,8 +134,20 @@ export default function MainApp() {
     isAIMode ? C.AI_MODE_SESSIONS : C.AUTO_MODE_SESSIONS,
   );
 
-  const [userReady, setUserReady] = useState(false);
-  const [uid, setUid] = useState(null);
+  // ---- participant profile, sign-in, session history
+  const {
+    loading: profileLoading,
+    uid,
+    preDone, setPreDone,
+    participantHash,
+    participantProfile,
+    emailPlaintext,
+    sessionCount, setSessionCount,
+    pastH_s, pastH_d, pastBits,
+    pastDemonHits, pastDemonTrials,
+    requireUid,
+    loadParticipant,
+  } = useParticipantProfile({ db, C });
 
   // ---- target assignment
   const [target, setTarget] = useState(null);
@@ -178,67 +175,14 @@ export default function MainApp() {
 
   // Preview mode: jump to summary screen as soon as app is ready
   useEffect(() => {
-    if (!isPreviewMode || !userReady || !target) return;
+    if (!isPreviewMode || profileLoading || !target) return;
     goToSummary();
-  }, [isPreviewMode, userReady, target]);
-
-  // ---- returning participant (skip preQ on same device)
-  const [preDone, setPreDone] = useState(() => {
-    try {
-      return (
-        localStorage.getItem(`pre_done_global:${C.EXPERIMENT_ID}`) ===
-        '1'
-      );
-    } catch {
-      return false;
-    }
-  });
-  const [checkedReturning, setCheckedReturning] = useState(false);
-
-  // ---- sign-in (local-only returning check)
-  useEffect(() => {
-    (async () => {
-      try {
-        const u = await ensureSignedIn();
-        setUid(u?.uid || null);
-        // fast local skip for preQ if they've done it on this device
-        try {
-          const globalKey = `pre_done_global:${C.EXPERIMENT_ID}`;
-          if (localStorage.getItem(globalKey) === '1') {
-            setPreDone(true);
-          }
-        } catch {}
-      } finally {
-        setUserReady(true);
-        setCheckedReturning(true);
-      }
-    })();
-  }, []);
-
-  const requireUid = useCallback(async () => {
-    const u = await ensureSignedIn();
-    if (!u || !u.uid)
-      throw new Error(
-        'auth/no-user: sign-in required before writing',
-      );
-    return u.uid;
-  }, []);
+  }, [isPreviewMode, profileLoading, target]);
 
   // Trials per block (from config)
   const trialsPerBlock = C.TRIALS_PER_BLOCK;
 
-  // Multi-session accumulation (declared here so participantHash is in scope for ensureRunDoc deps)
-  const [participantHash, setParticipantHash] = useState(null);
-  const [participantProfile, setParticipantProfile] = useState(null);
-  const [emailPlaintext, setEmailPlaintext] = useState('');
-  const [sessionCount, setSessionCount] = useState(0);
   const [cumulativeAnalysis, setCumulativeAnalysis] = useState(null);
-  // Past-session data loaded at consent (from querying prescreen_sessions_exp5)
-  const [pastH_s, setPastH_s] = useState([]);
-  const [pastH_d, setPastH_d] = useState([]);
-  const [pastBits, setPastBits] = useState([]);
-  const [pastDemonHits, setPastDemonHits] = useState(0);
-  const [pastDemonTrials, setPastDemonTrials] = useState(0);
 
   // ---- run doc
   const [runRef, setRunRef] = useState(null);
@@ -1336,7 +1280,7 @@ export default function MainApp() {
   }, [sessionAnalysis, runRef]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ===== flow gates =====
-  if (!userReady || !target || !checkedReturning) {
+  if (profileLoading || !target) {
     return <div style={{ padding: 24 }}>Loading…</div>;
   }
 
@@ -1371,86 +1315,7 @@ export default function MainApp() {
             // Reset cumulative analysis so it's recomputed fresh for this session
             setCumulativeAnalysis(null);
             savedCumulativeRef.current = false;
-            let profile = null;
-            if (email) {
-              setEmailPlaintext(email);
-              // Primary: email hash → prescreen_participants profile + session query
-              try {
-                const hash = await hashEmail(email);
-                setParticipantHash(hash);
-                const profRef = doc(
-                  db,
-                  C.PARTICIPANT_COLLECTION,
-                  hash,
-                );
-                const profSnap = await getDoc(profRef);
-                profile = profSnap.exists() ? profSnap.data() : null;
-                setParticipantProfile(profile);
-
-                // Query past sessions for cumulative reconstruction
-                try {
-                  const sessionsQ = query(
-                    collection(db, C.PRESCREEN_COLLECTION),
-                    where('participant_hash', '==', hash),
-                    where('completed', '==', true),
-                    orderBy('createdAt', 'asc'),
-                    limit(50),
-                  );
-                  const snap = await getDocs(sessionsQ);
-                  const {
-                    usableSessionCount,
-                    pastH_s,
-                    pastH_d,
-                    pastBits,
-                    pastDemonHits,
-                    pastDemonTrials,
-                  } = buildParticipantHistory(snap.docs, C);
-                  setPastH_s(pastH_s);
-                  setPastH_d(pastH_d);
-                  setPastBits(pastBits);
-                  setPastDemonHits(pastDemonHits);
-                  setPastDemonTrials(pastDemonTrials);
-                  setSessionCount(usableSessionCount);
-                } catch (err) {
-                  console.error(
-                    'Session history query failed (non-blocking):',
-                    err,
-                  );
-                  setSessionCount(profile?.session_count ?? 0);
-                }
-              } catch (err) {
-                console.error(
-                  'Profile load error (non-blocking):',
-                  err,
-                );
-              }
-            } else if (uid) {
-              // Fallback: UID → exp5-specific counter on participants/{uid}
-              // (scoped to this experiment so it doesn't collide with other studies)
-              try {
-                const uidRef = doc(db, 'participants', uid);
-                const uidSnap = await getDoc(uidRef);
-                if (uidSnap.exists()) {
-                  setSessionCount(
-                    uidSnap.data().exp5_prescreen_sessions ?? 0,
-                  );
-                }
-              } catch (err) {
-                console.error(
-                  'UID session count load failed (non-blocking):',
-                  err,
-                );
-              }
-            }
-            let localPreDone = false;
-            try {
-              localPreDone =
-                localStorage.getItem(
-                  `pre_done_global:${C.EXPERIMENT_ID}`,
-                ) === '1';
-            } catch {}
-            const skipPreQ =
-              profile?.pre_q_completed || preDone || localPreDone;
+            const { skipPreQ } = await loadParticipant(email);
             skipPreQ ? goToOnboarding() : goToPreQ();
           }}
         />
@@ -1517,7 +1382,7 @@ export default function MainApp() {
               console.warn('Debug info:', {
                 uid: uid,
                 runRefId: runRef?.id,
-                userReady: userReady,
+                profileLoading: profileLoading,
                 errorCode: e?.code,
                 errorMessage: e?.message,
               });
