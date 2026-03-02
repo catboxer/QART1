@@ -131,48 +131,8 @@ function rleEncode(arr) {
 
 // ── Bit-packing helpers (session-level raw_bits_b64) ─────────────────────────
 
-// Pack an array-of-arrays of 0|1 bits into a base64 string.
-// bits[blockIdx][trialIdx] → sequentially packed, MSB first.
-function packBitsToBase64(bitsPerBlock) {
-  const totalBits = bitsPerBlock.reduce((s, b) => s + b.length, 0);
-  const nBytes = Math.ceil(totalBits / 8);
-  const bytes = new Uint8Array(nBytes);
-  let globalBit = 0;
-  for (const block of bitsPerBlock) {
-    for (const bit of block) {
-      bytes[Math.floor(globalBit / 8)] |=
-        bit << (7 - (globalBit % 8));
-      globalBit++;
-    }
-  }
-  let binary = '';
-  for (let i = 0; i < bytes.length; i++)
-    binary += String.fromCharCode(bytes[i]);
-  return btoa(binary);
-}
-
-// Unpack a base64 string into blockCount arrays of bitsPerBlock bits each.
-function unpackBitsFromBase64(b64, blockCount, bitsPerBlock) {
-  if (!b64 || blockCount === 0) return [];
-  const binary = atob(b64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++)
-    bytes[i] = binary.charCodeAt(i);
-  const result = [];
-  let globalBit = 0;
-  for (let s = 0; s < blockCount; s++) {
-    const block = [];
-    for (let b = 0; b < bitsPerBlock; b++) {
-      block.push(
-        (bytes[Math.floor(globalBit / 8)] >> (7 - (globalBit % 8))) &
-          1,
-      );
-      globalBit++;
-    }
-    result.push(block);
-  }
-  return result;
-}
+import { packBitsToBase64, unpackBitsFromBase64 } from './lib/rawBitsCodec.js';
+import { splitBlockBits, computeBlockStats } from './lib/trialBlock.js';
 
 // ===== main =====
 export default function MainApp() {
@@ -415,65 +375,20 @@ export default function MainApp() {
 
       const targetBit = target === 'BLUE' ? 1 : 0;
 
-      // Use first bit (bit 0) to decide assignment (QRNG-based, not Math.random())
-      const assignmentBit = parseInt(quantumBits[0], 10);
-      const subjectGetsFirstHalf = assignmentBit === 1;
+      // Pure: split bits and compute all block stats
+      const { parsedSubjectBits, parsedDemonBits } = splitBlockBits(quantumBits, C.TRIALS_PER_BLOCK);
+      const { k, kd, blockSubjHurst, blockPCSHurst, blockDeltaH, blockSummary } =
+        computeBlockStats(parsedSubjectBits, parsedDemonBits, targetBit);
 
-      // Split remaining bits (after assignment bit) into two halves for trials
-      const n = C.TRIALS_PER_BLOCK;
-      const halfA = quantumBits.slice(1, 1 + n); // bits 1 to (1+n)
-      const halfB = quantumBits.slice(1 + n, 1 + 2 * n); // bits (1+n) to (1+2n)
-
-      const subjectBits = subjectGetsFirstHalf ? halfA : halfB;
-      const demonBits = subjectGetsFirstHalf ? halfB : halfA;
-
-      // Process subject bits
-      const parsedSubjectBits = [];
-      for (let i = 0; i < n; i++) {
-        const bit = parseInt(subjectBits[i], 10);
-        parsedSubjectBits.push(bit);
-        bitsRef.current.push(bit);
-        alignedRef.current.push(bit === targetBit ? 1 : 0);
-        if (bit === targetBit) hitsRef.current++;
-      }
-
-      // Process demon bits
-      for (let i = 0; i < n; i++) {
-        const bit = parseInt(demonBits[i], 10);
-        demonBitsRef.current.push(bit);
-        if (bit === targetBit) demonHitsRef.current++;
-      }
-
-      // Calculate stats
-      const k = hitsRef.current;
-      const kd = demonHitsRef.current;
-      const z = zFromBinom(k, n, 0.5);
-      const zd = zFromBinom(kd, n, 0.5);
-      const pTwo = twoSidedP(z);
-      const pd = twoSidedP(zd);
-
-      // Compute Hurst delta for this block (ΔH = H_subject − H_PCS)
-      const blockSubjHurst = hurstApprox(bitsRef.current);
-      const blockPCSHurst = hurstApprox(demonBitsRef.current);
-      const blockDeltaH = blockSubjHurst - blockPCSHurst;
-
-      const blockSummary = {
-        k,
-        n,
-        z,
-        pTwo,
-        kd,
-        nd: n,
-        zd,
-        pd,
-        kind: 'instant',
-        subjectHurst: blockSubjHurst,
-        pcsHurst: blockPCSHurst,
-        deltaH: blockDeltaH,
-      };
+      // Populate refs used by persistMinute
+      bitsRef.current = parsedSubjectBits;
+      demonBitsRef.current = parsedDemonBits;
+      alignedRef.current = parsedSubjectBits.map((b) => (b === targetBit ? 1 : 0));
+      hitsRef.current = k;
+      demonHitsRef.current = kd;
 
       setLastBlock(blockSummary);
-      setTotals((t) => ({ k: t.k + k, n: t.n + n }));
+      setTotals((t) => ({ k: t.k + k, n: t.n + parsedSubjectBits.length }));
       setTotalGhostHits((t) => t + kd);
       setDeltaHurstHistory((prev) => [...prev, blockDeltaH]);
       setHurstSubjectHistory((prev) => [...prev, blockSubjHurst]);
