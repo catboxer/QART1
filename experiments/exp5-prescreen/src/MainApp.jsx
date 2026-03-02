@@ -134,6 +134,7 @@ function rleEncode(arr) {
 import { packBitsToBase64, unpackBitsFromBase64 } from './lib/rawBitsCodec.js';
 import { splitBlockBits, computeBlockStats } from './lib/trialBlock.js';
 import { buildParticipantHistory } from './lib/sessionHistory.js';
+import { usePhaseRouter } from './hooks/usePhaseRouter.js';
 
 // ===== main =====
 export default function MainApp() {
@@ -178,7 +179,7 @@ export default function MainApp() {
   // Preview mode: jump to summary screen as soon as app is ready
   useEffect(() => {
     if (!isPreviewMode || !userReady || !target) return;
-    setPhase('summary');
+    goToSummary();
   }, [isPreviewMode, userReady, target]);
 
   // ---- returning participant (skip preQ on same device)
@@ -325,7 +326,14 @@ export default function MainApp() {
   ]);
 
   // ---- phase & per-minute state
-  const [phase, setPhase] = useState('consent');
+  const {
+    phase,
+    goToConsent, goToPreQ, goToOnboarding,
+    goToTargetAnnounce, goToFetching, goToScore,
+    goToRest, goToAudit, goToNext, goToPreparingNext,
+    goToResults, goToSummary, goToDone,
+    goToAutoComplete, goToAIComplete,
+  } = usePhaseRouter();
   const [blockIdx, setblockIdx] = useState(-1);
   const [isRunning, setIsRunning] = useState(false);
   const [lastBlock, setLastBlock] = useState(null);
@@ -550,7 +558,7 @@ export default function MainApp() {
     if (phase !== 'fetching') return;
     // Guard: Don't fetch if we've already completed all blocks
     if (blockIdx >= C.BLOCKS_TOTAL) {
-      setPhase('results');
+      goToResults();
       return;
     }
 
@@ -619,7 +627,7 @@ export default function MainApp() {
         processTrials(quantumData.bits);
 
         // Always go to score phase first to show results
-        setPhase('score');
+        goToScore();
       } catch (error) {
         console.error('❌ Failed to fetch bits:', error);
 
@@ -643,7 +651,7 @@ export default function MainApp() {
                 exit_block_index: blockIdx,
               });
             }
-            setPhase('results');
+            goToResults();
           } else {
             // Human mode: show alert and exit gracefully
             alert(
@@ -658,7 +666,7 @@ export default function MainApp() {
                 exit_block_index: blockIdx,
               });
             }
-            setPhase('results');
+            goToResults();
           }
         }
       }
@@ -812,13 +820,13 @@ export default function MainApp() {
       phase === 'prime' ||
       phase === 'preQ'
     ) {
-      setPhase('onboarding');
+      goToOnboarding();
     } else if (phase === 'score' && isAutoMode) {
       // Auto-continue score screens in auto-mode
       const timer = setTimeout(() => {
         // Check if session is complete (all 40 blocks done)
         if (blockIdx >= C.BLOCKS_TOTAL) {
-          setPhase('results');
+          goToResults();
         } else {
           // Check if audit is needed based on the just-completed block (not the incremented blockIdx)
           const completedBlockIdx = blockIdxToPersist.current;
@@ -826,7 +834,7 @@ export default function MainApp() {
             completedBlockIdx >= 0 &&
             (completedBlockIdx + 1) % C.AUDIT_EVERY_N_BLOCKS === 0 &&
             blockIdx < C.BLOCKS_TOTAL;
-          setPhase(needsAudit ? 'audit' : 'target_announce');
+          needsAudit ? goToAudit() : goToTargetAnnounce();
         }
       }, C.AUTO_MODE_REST_MS);
       return () => clearTimeout(timer);
@@ -837,13 +845,13 @@ export default function MainApp() {
       // Auto-continue rest/target_announce screens in auto-mode
       const timer = setTimeout(() => {
         fetchTriggeredAtRef.current = new Date().toISOString();
-        setPhase('fetching'); // Go to fetching phase instead of old startNextMinute
+        goToFetching(); // Go to fetching phase instead of old startNextMinute
       }, C.AUTO_MODE_REST_MS);
       return () => clearTimeout(timer);
     } else if (phase === 'audit' && isAutoMode) {
       // Auto-continue audit screens in auto-mode
       const timer = setTimeout(() => {
-        setPhase('target_announce');
+        goToTargetAnnounce();
       }, C.AUTO_MODE_REST_MS);
       return () => clearTimeout(timer);
     } else if (phase === 'results') {
@@ -857,14 +865,14 @@ export default function MainApp() {
             ? [setDoc(runRef, { completed: true }, { merge: true })]
             : []),
         ])
-          .then(() => setPhase('next'))
-          .catch(() => setPhase('next'));
+          .then(() => goToNext())
+          .catch(() => goToNext());
       } else {
-        setPhase('next');
+        goToNext();
       }
     } else if (phase === 'done' || phase === 'summary') {
       // Skip post-questionnaire and summary in auto/AI mode
-      setPhase('next');
+      goToNext();
     } else if (phase === 'next') {
       // Immediately transition to avoid re-triggering
       const newCount = autoSessionCount + 1;
@@ -872,10 +880,10 @@ export default function MainApp() {
       if (newCount < autoSessionTarget) {
         // Reset for next session
         setAutoSessionCount(newCount);
-        setPhase('preparing_next');
+        goToPreparingNext();
       } else {
         setAutoSessionCount(newCount); // Update count before showing completion
-        setPhase(isAIMode ? 'ai_complete' : 'auto_complete');
+        isAIMode ? goToAIComplete() : goToAutoComplete();
       }
     } else if (phase === 'preparing_next') {
       // Delayed reset to ensure clean state transition
@@ -904,7 +912,7 @@ export default function MainApp() {
         allRawBitsRef.current = [];
         lastPersistedBlockRef.current = -1;
 
-        setPhase('onboarding');
+        goToOnboarding();
       }, 100);
     }
     // Note: blockIdxToPersist is a ref, not a state, so it doesn't need to be in dependencies
@@ -1063,11 +1071,11 @@ export default function MainApp() {
     setIsRunning(false);
     await persistMinute();
     if (minuteInvalidRef.current) {
-      setPhase('rest');
+      goToRest();
       return;
     }
     // Always go to rest phase first, even for the final block
-    setPhase('rest');
+    goToRest();
   }, [persistMinute]);
 
   useEffect(() => {
@@ -1338,7 +1346,7 @@ export default function MainApp() {
   if (phase === 'consent') {
     // Auto and AI modes skip consent and questions
     if (isAutoMode || isAIMode) {
-      setPhase('onboarding');
+      goToOnboarding();
       return null;
     }
 
@@ -1443,7 +1451,7 @@ export default function MainApp() {
             } catch {}
             const skipPreQ =
               profile?.pre_q_completed || preDone || localPreDone;
-            setPhase(skipPreQ ? 'onboarding' : 'preQ');
+            skipPreQ ? goToOnboarding() : goToPreQ();
           }}
         />
       </div>
@@ -1454,7 +1462,7 @@ export default function MainApp() {
   if (phase === 'preQ') {
     // Auto and AI modes skip questions
     if (isAutoMode || isAIMode) {
-      setPhase('onboarding');
+      goToOnboarding();
       return null;
     }
 
@@ -1466,7 +1474,7 @@ export default function MainApp() {
           requiredAll
           onSubmit={async (answers, { valid }) => {
             if (!valid) return;
-            setPhase('onboarding');
+            goToOnboarding();
             try {
               const uidNow = await requireUid();
               // Save to participants collection like exp1
@@ -1532,7 +1540,7 @@ export default function MainApp() {
       if ((canContinue || target) && !isRunning) {
         ensureRunDoc().then(() => {
           setblockIdx(0); // Initialize to 0 for first block
-          setPhase('rest');
+          goToRest();
         }); // Go to rest, then auto-mode will trigger fetching
       }
 
@@ -1674,7 +1682,7 @@ export default function MainApp() {
                 ensureRunDoc()
                   .then(() => {
                     setblockIdx(0);
-                    setPhase('rest');
+                    goToRest();
                   })
                   .catch((err) => {
                     console.error('❌ ensureRunDoc failed:', err);
@@ -1831,11 +1839,11 @@ export default function MainApp() {
         <button
           onClick={() => {
             if (blockIdx >= C.BLOCKS_TOTAL) {
-              setPhase('results');
+              goToResults();
             } else if (needsAudit) {
-              setPhase('audit');
+              goToAudit();
             } else {
-              setPhase('target_announce');
+              goToTargetAnnounce();
             }
           }}
           style={{
@@ -1963,7 +1971,7 @@ export default function MainApp() {
         <button
           onClick={() => {
             fetchTriggeredAtRef.current = new Date().toISOString();
-            setPhase('fetching');
+            goToFetching();
           }}
           style={{
             marginTop: 28,
@@ -2057,7 +2065,7 @@ export default function MainApp() {
 
         {/* Continue button */}
         <button
-          onClick={() => setPhase('target_announce')}
+          onClick={() => goToTargetAnnounce()}
           style={{
             marginTop: 32,
             padding: '16px 32px',
@@ -2199,16 +2207,16 @@ export default function MainApp() {
                   }
                 }
                 setSessionCount(newCount);
-                setPhase('summary');
+                goToSummary();
                 return;
               }
 
               // Cumulative data already saved in results phase — just update session count and proceed
               setSessionCount(sessionCount + 1);
-              setPhase('summary');
+              goToSummary();
             } catch (e) {
               console.warn('Post survey save error:', e);
-              setPhase('summary');
+              goToSummary();
             }
           }}
         />
@@ -2221,7 +2229,7 @@ export default function MainApp() {
     // If session exited early (not all blocks completed), skip to summary
     const sessionCompleted = blockIdx >= C.BLOCKS_TOTAL;
     if (!sessionCompleted) {
-      setPhase('summary');
+      goToSummary();
       return null;
     }
 
@@ -2402,7 +2410,7 @@ export default function MainApp() {
 
           <button
             className="primary-btn"
-            onClick={() => setPhase('done')}
+            onClick={() => goToDone()}
             style={{ marginTop: 8 }}
           >
             Continue
@@ -2725,7 +2733,7 @@ export default function MainApp() {
 
         <button
           className="primary-btn"
-          onClick={() => setPhase('done')}
+          onClick={() => goToDone()}
           style={{ marginTop: 8 }}
         >
           Continue
