@@ -32,6 +32,8 @@ import {
   where,
   orderBy,
   limit,
+  increment,
+  arrayUnion,
 } from 'firebase/firestore';
 import { fetchQRNGBits } from './fetchQRNGBits.js';
 import { runNISTAudit } from './nistTests.js';
@@ -635,7 +637,7 @@ export default function MainApp() {
   ]);
 
   // Fetch subject+demon tape when entering fetching phase, then process trials
-  const [needsPersist, setNeedsPersist] = useState(false);
+  const lastPersistedBlockRef = useRef(-1); // tracks which block index was last saved
 
   useEffect(() => {
     if (phase !== 'fetching') return;
@@ -708,9 +710,6 @@ export default function MainApp() {
 
         // Process all trials instantly (this increments blockIdx from blockIdx to blockIdx+1)
         processTrials(quantumData.bits);
-
-        // Always persist (we need all 40 blocks saved, idx 0-39)
-        setNeedsPersist(true);
 
         // Always go to score phase first to show results
         setPhase('score');
@@ -864,6 +863,14 @@ export default function MainApp() {
               source: auditData.source,
             },
           });
+
+          // Bubble failure summary up to the session doc for easy analysis
+          if (!isRandom) {
+            await setDoc(runRef, {
+              audit_failure_count: increment(1),
+              audit_failed_blocks: arrayUnion(blockIdx),
+            }, { merge: true });
+          }
         }
 
         // Randomize target for next set of blocks
@@ -988,6 +995,7 @@ export default function MainApp() {
         qrngProviderRef.current = null;
         qrngProviderSeqRef.current = [];
         allRawBitsRef.current = [];
+        lastPersistedBlockRef.current = -1;
 
         setPhase('onboarding');
       }, 100);
@@ -1159,22 +1167,19 @@ export default function MainApp() {
     endMinuteRef.current = endMinute;
   }, [endMinute]);
 
-  // Save block data after processing (must be after persistMinute is defined)
+  // Save block data after processing — fires when blockIdx increments (same render as processTrials).
+  // lastPersistedBlockRef guards against double-saves if saveSessionAggregates changes mid-session.
   useEffect(() => {
-    if (!needsPersist || !runRef) return;
-
+    const blockToSave = blockIdxToPersist.current;
+    if (blockToSave < 0 || lastPersistedBlockRef.current >= blockToSave || !runRef) return;
+    lastPersistedBlockRef.current = blockToSave;
     Promise.all([
       persistMinute(),
-      saveSessionAggregates(), // Update aggregates after each block
-    ])
-      .then(() => {
-        setNeedsPersist(false);
-      })
-      .catch((err) => {
-        console.error('❌ Failed to save block data:', err);
-        setNeedsPersist(false);
-      });
-  }, [needsPersist, runRef, persistMinute, saveSessionAggregates]);
+      saveSessionAggregates(),
+    ]).catch((err) => {
+      console.error('❌ Failed to save block data:', err);
+    });
+  }, [blockIdx, runRef, persistMinute, saveSessionAggregates]);
 
   // Note: Trial processing is now handled instantly by processTrials() function
   // No tick loop needed since all trials are processed at once
@@ -1339,6 +1344,21 @@ export default function MainApp() {
       newDemonTrials,
     );
     setCumulativeAnalysis(cumAnalysis);
+
+    // Write cumulative prescreen_rank / prescreen_eligible to the session doc now that
+    // we have enough sessions — this is the authoritative eligibility verdict.
+    if (runRef) {
+      const { rank: cumRank, eligible: cumEligible } = evaluatePrescreen(cumAnalysis, C);
+      const sessionKind = isAutoMode ? 'baseline' : isAIMode ? 'ai' : 'human';
+      setDoc(
+        runRef,
+        {
+          prescreen_rank: `${cumRank}-${sessionKind}`,
+          prescreen_eligible: cumEligible,
+        },
+        { merge: true },
+      ).catch(console.error);
+    }
   }, [
     phase,
     sessionCount,
@@ -1361,7 +1381,9 @@ export default function MainApp() {
     pastDemonTrials,
   ]);
 
-  // Save rank to session document once sessionAnalysis is ready
+  // Save per-session QA stats once sessionAnalysis is ready.
+  // prescreen_rank / prescreen_eligible are NOT set here — they require cumulative data (5+ sessions)
+  // and are written by the cumulative results effect below.
   useEffect(() => {
     if (!sessionAnalysis || !runRef) return;
     const {
@@ -1369,7 +1391,6 @@ export default function MainApp() {
       ksGate,
       collapseGate,
       pcsWarning,
-      eligible,
       intensityTier,
     } = evaluatePrescreen(sessionAnalysis, C);
     const sessionKind = isAutoMode
@@ -1377,24 +1398,23 @@ export default function MainApp() {
       : isAIMode
         ? 'ai'
         : 'human';
-    const rank = `${rawRank}-${sessionKind}`; // e.g. 'gold-human', 'none-baseline', 'silver-ai'
     const pcs = sessionAnalysis.pcs;
     setDoc(
       runRef,
       {
-        prescreen_rank: rank,
-        prescreen_eligible: eligible,
-        prescreen_ks_p: sessionAnalysis.ks.originalP,
-        prescreen_ks_gate: ksGate,
-        prescreen_collapse_p: sessionAnalysis.shuffle.collapseP,
-        prescreen_ddrop: sessionAnalysis.shuffle.dDrop,
-        prescreen_collapse_gate: collapseGate,
-        prescreen_intensity_tier: intensityTier ?? 'none',
-        prescreen_pcs_warning: pcsWarning,
-        prescreen_pcs_nullz: pcs.nullZ,
-        prescreen_pcs_ghostz: pcs.ghostZ,
-        prescreen_pcs_sdratio: pcs.sdRatio,
-        prescreen_pcs_crosscorr: pcs.crossCorr,
+        // Per-session evaluation (single session, always saved for QA)
+        session_rank: `${rawRank}-${sessionKind}`,
+        session_ks_p: sessionAnalysis.ks.originalP,
+        session_ks_gate: ksGate,
+        session_collapse_p: sessionAnalysis.shuffle.collapseP,
+        session_ddrop: sessionAnalysis.shuffle.dDrop,
+        session_collapse_gate: collapseGate,
+        session_intensity_tier: intensityTier ?? 'none',
+        session_pcs_warning: pcsWarning,
+        session_pcs_nullz: pcs.nullZ,
+        session_pcs_ghostz: pcs.ghostZ,
+        session_pcs_sdratio: pcs.sdRatio,
+        session_pcs_crosscorr: pcs.crossCorr,
       },
       { merge: true },
     ).catch(console.error);
@@ -2348,11 +2368,15 @@ export default function MainApp() {
       hr > 50 ? '#86efac' : hr < 50 ? '#fed7aa' : '#e5e7eb';
 
     // Sessions 1–4: simplified view — hit rate + "need more sessions" message
+    // Use actual loaded block data (not profile counter) so the gate matches the analysis
+    const actualSessionsLoaded = Math.round(
+      (pastH_s.length + hurstSubjectHistory.length) / C.BLOCKS_TOTAL,
+    );
     const isDecisionSession =
-      sessionCount + 1 >= C.MIN_SESSIONS_FOR_DECISION;
+      actualSessionsLoaded >= C.MIN_SESSIONS_FOR_DECISION;
     if (!isDecisionSession) {
       const remaining =
-        C.MIN_SESSIONS_FOR_DECISION - (sessionCount + 1);
+        C.MIN_SESSIONS_FOR_DECISION - actualSessionsLoaded;
       return (
         <div
           className="App"
@@ -2640,7 +2664,7 @@ export default function MainApp() {
                     marginBottom: 12,
                   }}
                 >
-                  CUMULATIVE ANALYSIS · {sessionCount + 1} SESSIONS
+                  CUMULATIVE ANALYSIS · {Math.round(cumNBlocks / C.BLOCKS_TOTAL)} SESSIONS
                 </div>
 
                 {/* Verdict badge */}
