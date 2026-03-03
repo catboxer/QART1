@@ -58,7 +58,7 @@ export function buildParticipantHistory(snapDocs, C) {
     pastH_s:        cumH_s,
     pastH_d:        cumH_d,
     pastBits:       cumBits,
-    pastDemonHits,
-    pastDemonTrials,
+    pastDemonHits:  cumDemonHits,
+    pastDemonTrials: cumDemonTrials,
   };
 }
