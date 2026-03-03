@@ -61,11 +61,7 @@ export function usePrescreenAnalysis({
       totals.n,
     );
     setSessionAnalysis(result);
-  }, [
-    phase, sessionAnalysis,
-    subjectBitsHistory, hurstSubjectHistory, hurstDemonHistory,
-    totalGhostHits, totals.n,
-  ]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [phase, sessionAnalysis, subjectBitsHistory, hurstSubjectHistory, hurstDemonHistory, totalGhostHits, totals.n]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Effect 2: Cumulative save + rank write (enters results phase) ─────────────
   useEffect(() => {
@@ -144,14 +140,7 @@ export function usePrescreenAnalysis({
         { merge: true },
       ).catch(console.error);
     }
-  }, [
-    phase, sessionCount, cumulativeAnalysis,
-    participantProfile, participantHash, emailPlaintext,
-    runRef, isAutoMode, isAIMode,
-    hurstSubjectHistory, hurstDemonHistory, subjectBitsHistory,
-    totalGhostHits, totals.n,
-    pastH_s, pastH_d, pastBits, pastDemonHits, pastDemonTrials,
-  ]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [phase, sessionCount, cumulativeAnalysis, participantProfile, participantHash, emailPlaintext, runRef, isAutoMode, isAIMode, hurstSubjectHistory, hurstDemonHistory, subjectBitsHistory, totalGhostHits, totals.n, pastH_s, pastH_d, pastBits, pastDemonHits, pastDemonTrials]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Effect 3: Per-session QA stats write (fires when sessionAnalysis is ready) ─
   // prescreen_rank / prescreen_eligible are NOT written here — they require cumulative

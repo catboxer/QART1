@@ -75,7 +75,7 @@ export default function MainApp() {
   const {
     loading: profileLoading,
     uid,
-    preDone, setPreDone,
+    setPreDone,
     participantHash,
     participantProfile,
     emailPlaintext,
@@ -114,7 +114,7 @@ export default function MainApp() {
   useEffect(() => {
     if (!isPreviewMode || profileLoading || !target) return;
     goToSummary();
-  }, [isPreviewMode, profileLoading, target]);
+  }, [isPreviewMode, profileLoading, target]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Trials per block (from config)
   const trialsPerBlock = C.TRIALS_PER_BLOCK;
@@ -128,7 +128,7 @@ export default function MainApp() {
   // ---- phase & per-minute state
   const {
     phase,
-    goToConsent, goToPreQ, goToOnboarding,
+    goToPreQ, goToOnboarding,
     goToTargetAnnounce, goToFetching, goToScore,
     goToRest, goToAudit, goToNext, goToPreparingNext,
     goToResults, goToSummary, goToDone,
@@ -317,16 +317,8 @@ export default function MainApp() {
       }, 100);
     }
     // Note: blockIdxToPersistRef is a ref, not state, so it doesn't need to be in the dep array
-  }, [
-    isAutoMode,
-    isAIMode,
-    phase,
-    blockIdx,
-    autoSessionCount,
-    autoSessionTarget,
-    runRef,
-    saveSessionAggregates,
-  ]);
+    // All goTo* functions, resetAnalysis, setRunRef, lastPersistedBlockRef are stable
+  }, [isAutoMode, isAIMode, phase, blockIdx, autoSessionCount, autoSessionTarget, runRef, saveSessionAggregates]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Note: processTrials, persistMinute, endMinute, fetching effect, audit effect,
   // and block-persistence effect are owned by useTrialRunner above.
