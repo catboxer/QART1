@@ -183,7 +183,7 @@ export default function MainApp() {
   // ---- trial runner: refs, processTrials (internal), persistMinute (internal),
   //      endMinute, fetching effect, audit effect, block-persistence effect
   const { refs: trialRunnerRefs } = useTrialRunner({
-    C, db,
+    C,
     phase, target, setTarget,
     isAutoMode, isAIMode,
     goToScore, goToRest, goToResults,

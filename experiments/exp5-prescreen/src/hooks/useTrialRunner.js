@@ -22,7 +22,7 @@ import {
  * blockIdxToPersistRef is written ONLY here, never re-derived from blockIdx.
  *
  * @param {{
- *   C, db,
+ *   C,
  *   phase, target, setTarget,
  *   isAutoMode, isAIMode,
  *   goToScore, goToRest, goToResults,
@@ -37,7 +37,7 @@ import {
  * }} options
  */
 export function useTrialRunner({
-  C, db,
+  C,
   phase, target, setTarget,
   isAutoMode, isAIMode,
   goToScore, goToRest, goToResults,

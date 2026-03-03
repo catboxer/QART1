@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback } from 'react';
 import {
-  collection, doc, addDoc, setDoc, serverTimestamp,
+  collection, addDoc, setDoc, serverTimestamp,
 } from 'firebase/firestore';
 import { packBitsToBase64, unpackBitsFromBase64 } from '../lib/rawBitsCodec.js';
 import { normalCdf } from '../stats/index.js';
@@ -115,7 +115,7 @@ export function useSessionPersistence({
 
     ensureRunDocPromiseRef.current = createPromise;
     return await createPromise;
-  }, [runRef, target, uid, requireUid, isAutoMode, isAIMode, participantHash]);
+  }, [runRef, target, uid, requireUid, isAutoMode, isAIMode, participantHash]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── saveSessionAggregates: end-of-session write ──────────────────────────────
   const saveSessionAggregates = useCallback(async () => {
@@ -204,10 +204,7 @@ export function useSessionPersistence({
     } catch (error) {
       console.error('❌ Failed to save session aggregates:', error);
     }
-  }, [
-    runRef, totals, totalGhostHits,
-    deltaHurstHistory, hurstSubjectHistory, hurstDemonHistory,
-  ]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [runRef, totals, totalGhostHits, deltaHurstHistory, hurstSubjectHistory, hurstDemonHistory]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return {
     runRef,
