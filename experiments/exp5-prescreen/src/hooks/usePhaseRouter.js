@@ -9,6 +9,7 @@ import { useState } from 'react';
  *   → fetching → score → audit → results → summary → done
  *   auto_complete | ai_complete  (auto/AI mode terminal screens)
  *   next | preparing_next        (auto/AI mode inter-block transitions)
+ *   max_sessions                 (participant has reached MAX_SESSIONS_FOR_ANALYSIS)
  */
 export function usePhaseRouter() {
   const [phase, setPhase] = useState('consent');
@@ -31,5 +32,6 @@ export function usePhaseRouter() {
     goToDone:          () => setPhase('done'),
     goToAutoComplete:  () => setPhase('auto_complete'),
     goToAIComplete:    () => setPhase('ai_complete'),
+    goToMaxSessions:   () => setPhase('max_sessions'),
   };
 }

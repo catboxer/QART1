@@ -81,6 +81,7 @@ config.experiments = {
     PRESCREEN_COLLECTION: 'prescreen_sessions_exp5',
     // Multi-session accumulation
     MIN_SESSIONS_FOR_DECISION: 5,   // sessions 1-4 show "come back" screen; 5+ show cumulative result
+    MAX_SESSIONS_FOR_ANALYSIS: 20,  // consent gate blocks further sessions beyond this usable count
     PARTICIPANT_COLLECTION: 'prescreen_participants',
 
     // Audit configuration (NIST SP 800-22 Randomness Testing)

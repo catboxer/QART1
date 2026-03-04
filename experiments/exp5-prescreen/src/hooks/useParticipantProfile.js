@@ -47,9 +47,11 @@ export function useParticipantProfile({ db, C }) {
   const [participantProfile, setParticipantProfile] = useState(null);
   const [emailPlaintext, setEmailPlaintext] = useState('');
   const [sessionCount, setSessionCount] = useState(0);
+  const [usableSessionCount, setUsableSessionCount] = useState(0);
   const [pastH_s, setPastH_s] = useState([]);
   const [pastH_d, setPastH_d] = useState([]);
   const [pastBits, setPastBits] = useState([]);
+  const [pastDemonBits, setPastDemonBits] = useState([]);
   const [pastDemonHits, setPastDemonHits] = useState(0);
   const [pastDemonTrials, setPastDemonTrials] = useState(0);
 
@@ -80,10 +82,11 @@ export function useParticipantProfile({ db, C }) {
   }, []);
 
   // ── loadParticipant — called from ConsentGate.onAgree ───────────────────────
-  // Returns { skipPreQ } so the caller can navigate.
+  // Returns { skipPreQ, usableCount } so the caller can navigate (and gate on max sessions).
   const loadParticipant = useCallback(
     async (email) => {
       let profile = null;
+      let usableCount = 0;
       if (email) {
         setEmailPlaintext(email);
         try {
@@ -105,21 +108,27 @@ export function useParticipantProfile({ db, C }) {
             );
             const snap = await getDocs(sessionsQ);
             const {
-              usableSessionCount,
+              sessionCount: sc,
+              usableSessionCount: usc,
               pastH_s: h_s,
               pastH_d: h_d,
               pastBits: bits,
+              pastDemonBits: dBits,
               pastDemonHits: dHits,
               pastDemonTrials: dTrials,
             } = buildParticipantHistory(snap.docs, C);
             setPastH_s(h_s);
             setPastH_d(h_d);
             setPastBits(bits);
+            setPastDemonBits(dBits);
             setPastDemonHits(dHits);
             setPastDemonTrials(dTrials);
-            setSessionCount(usableSessionCount);
+            usableCount = usc;
+            setSessionCount(sc);           // all human sessions — display + profile write
+            setUsableSessionCount(usc);    // sessions with full data — analysis gate
           } catch (err) {
             console.error('Session history query failed (non-blocking):', err);
+            // Fall back to stored profile counter for display; usable stays 0
             setSessionCount(profile?.session_count ?? 0);
           }
         } catch (err) {
@@ -146,7 +155,7 @@ export function useParticipantProfile({ db, C }) {
           localStorage.getItem(`pre_done_global:${C.EXPERIMENT_ID}`) === '1';
       } catch {}
       const skipPreQ = profile?.pre_q_completed || preDone || localPreDone;
-      return { skipPreQ };
+      return { skipPreQ, usableCount };
     },
     [db, C, uid, preDone],
   );
@@ -159,11 +168,13 @@ export function useParticipantProfile({ db, C }) {
     participantHash,
     participantProfile,
     emailPlaintext,
-    sessionCount,
-    setSessionCount,  // for postQ session-count increment
+    sessionCount,        // all completed human sessions — display + profile write
+    setSessionCount,     // for postQ session-count increment
+    usableSessionCount,  // sessions with full reconstructable data — analysis gate
     pastH_s,
     pastH_d,
     pastBits,
+    pastDemonBits,
     pastDemonHits,
     pastDemonTrials,
     requireUid,

@@ -115,7 +115,8 @@ function pearsonR(a, b) {
 }
 
 // ── Main session analysis ─────────────────────────────────────────────────────
-// subjectBitsHistory : Array<Array<0|1>>  — raw bits per block (for shuffle test)
+// subjectBitsHistory : Array<Array<0|1>>  — raw subject bits per block (for subject shuffle test)
+// demonBitsHistory   : Array<Array<0|1>>  — raw demon bits per block (for artifact diagnostic)
 // hurstSubjectHistory: Array<number>      — H_subject per block
 // hurstDemonHistory  : Array<number>      — H_demon per block
 // nullHurst          : { mean, sd }       — finite-sample null from config
@@ -124,6 +125,7 @@ function pearsonR(a, b) {
 // totalDemonTrials   : number|null        — cumulative demon trial count (for ghostZ)
 export function computeSessionAnalysis(
   subjectBitsHistory,
+  demonBitsHistory,
   hurstSubjectHistory,
   hurstDemonHistory,
   nullHurst,
@@ -138,24 +140,46 @@ export function computeSessionAnalysis(
   const originalD = ksDist(hurstSubjectHistory, hurstDemonHistory);
   const originalP = ksPValue(originalD, nBlocks, nBlocks);
 
-  // 2. Shuffle test: for each iteration shuffle bits within every block,
-  //    recompute H_subject, re-run KS against the same H_demon
-  let nGreater = 0;
-  let totalShuffledD = 0;
+  // 2. Shuffle tests: subject-side (primary eligibility) + demon-side (artifact diagnostic)
+  //    Both use the same originalD as reference — symmetric test of which stream drove the separation.
+  //    Subject shuffle: shuffle subject bits → recompute H_subject → KS vs H_demon
+  //    Demon shuffle:   shuffle demon bits  → recompute H_demon  → KS vs H_subject
+  // hasDemonBits requires strict lockstep with subject bits.
+  // In cumulative analysis, any session predating the demon-bits feature will cause
+  // newDemonBits.length < newBits.length → hasDemonBits=false → artifact flag unavailable.
+  // This resolves naturally once all usable sessions in a participant's history are post-feature.
+  const hasDemonBits = Array.isArray(demonBitsHistory) && demonBitsHistory.length === subjectBitsHistory.length;
+
+  let nGreaterSubj = 0, totalShuffledDSubj = 0;
+  let nGreaterDemon = 0, totalShuffledDDemon = 0;
 
   for (let s = 0; s < nShuffles; s++) {
     const hSubjShuffled = subjectBitsHistory.map(bits => hurstApprox(shuffled(bits)));
-    const d = ksDist(hSubjShuffled, hurstDemonHistory);
-    totalShuffledD += d;
-    if (d >= originalD) nGreater++;
+    const dSubj = ksDist(hSubjShuffled, hurstDemonHistory);
+    totalShuffledDSubj += dSubj;
+    if (dSubj >= originalD) nGreaterSubj++;
+
+    if (hasDemonBits) {
+      const hDemonShuffled = demonBitsHistory.map(bits => hurstApprox(shuffled(bits)));
+      const dDemon = ksDist(hurstSubjectHistory, hDemonShuffled);
+      totalShuffledDDemon += dDemon;
+      if (dDemon >= originalD) nGreaterDemon++;
+    }
   }
 
-  const meanShuffledD = totalShuffledD / nShuffles;
+  const meanShuffledDSubj = totalShuffledDSubj / nShuffles;
   // collapseP = Pr(D_shuffled >= D_original): small → original D anomalously large → collapse confirmed
   // +1 correction avoids collapseP = 0.0 (overconfident with small shuffle counts)
-  const collapseP = (nGreater + 1) / (nShuffles + 1);
-  // dDrop: relative collapse magnitude
-  const dDrop = originalD > 0 ? (originalD - meanShuffledD) / originalD : 0;
+  const subjectCollapseP = (nGreaterSubj + 1) / (nShuffles + 1);
+  const subjectDDrop = originalD > 0 ? (originalD - meanShuffledDSubj) / originalD : 0;
+
+  let demonCollapseP = null, demonDDrop = null, deltaDGap = null;
+  if (hasDemonBits) {
+    const meanShuffledDDemon = totalShuffledDDemon / nShuffles;
+    demonCollapseP = (nGreaterDemon + 1) / (nShuffles + 1);
+    demonDDrop = originalD > 0 ? (originalD - meanShuffledDDemon) / originalD : 0;
+    deltaDGap = subjectDDrop - demonDDrop;
+  }
 
   // 3. PCS quality diagnostics (informational — none are gates)
   // nullZ: how far did the demon stream's mean Hurst drift from null?
@@ -207,7 +231,9 @@ export function computeSessionAnalysis(
     nBlocks,
     ks: { originalD, originalP },
     effectSize: { cliffsDelta, wassersteinDist },
-    shuffle: { collapseP, meanShuffledD, dDrop, nShuffles },
+    shuffleSubject: { collapseP: subjectCollapseP, dDrop: subjectDDrop, meanShuffledD: meanShuffledDSubj, nShuffles },
+    shuffleDemon:   { collapseP: demonCollapseP,   dDrop: demonDDrop,   available: hasDemonBits },
+    artifactContrast: { deltaDGap },
     pcs: { demonMean, demonSD, nullZ, ghostZ, sdRatio, crossCorr },
     deltaH: { meanDeltaH, seDeltaH, signRate, signP },
   };
@@ -231,15 +257,15 @@ export function computeSessionAnalysis(
 // pcsWarning never blocks eligibility or changes rank
 
 export function evaluatePrescreen(analysis, C) {
-  const { ks, shuffle, pcs, deltaH } = analysis;
+  const { ks, shuffleSubject, shuffleDemon, pcs, deltaH } = analysis;
 
   // Layer 1 — KS anomaly gate
   const ksGate = ks.originalP < C.PRESCREEN_KS_ALPHA;
 
   // Layer 2 — Shuffle collapse gate (OR: probability OR magnitude)
   const collapseGate =
-    shuffle.collapseP < C.PRESCREEN_COLLAPSE_ALPHA ||
-    shuffle.dDrop     >= C.PRESCREEN_DDROP_MIN;
+    shuffleSubject.collapseP < C.PRESCREEN_COLLAPSE_ALPHA ||
+    shuffleSubject.dDrop     >= C.PRESCREEN_DDROP_MIN;
 
   const eligible = ksGate && collapseGate;
 
@@ -248,7 +274,7 @@ export function evaluatePrescreen(analysis, C) {
   // Gold: strong evidence via probability (collapseP) OR magnitude (dDrop)
   let rank = 'none';
   if (eligible) {
-    const isGold = shuffle.collapseP < C.PRESCREEN_COLLAPSE_GOLD || shuffle.dDrop >= C.PRESCREEN_DDROP_GOLD;
+    const isGold = shuffleSubject.collapseP < C.PRESCREEN_COLLAPSE_GOLD || shuffleSubject.dDrop >= C.PRESCREEN_DDROP_GOLD;
     rank = isGold ? 'gold' : 'silver';
   } else if (ksGate && !collapseGate) {
     rank = 'candidate'; // signal without confirmed temporal structure — manual review
@@ -273,5 +299,16 @@ export function evaluatePrescreen(analysis, C) {
   const pcsWarning  = nullZFlag || ghostZFlag || sdRatioFlag;
   const pcsFlags    = { nullZFlag, ghostZFlag, sdRatioFlag };
 
-  return { ksGate, collapseGate, eligible, rank, intensityTier, pcsWarning, pcsFlags };
+  // Artifact warning — informational only, never affects eligibility or rank.
+  // Fires when demon stream independently passes its own collapse gate,
+  // suggesting temporal structure may be QRNG-level rather than human-driven.
+  // Additional sessions will naturally resolve ambiguous cases via the cumulative analysis.
+  const demonPassesCollapse = shuffleDemon?.available &&
+    shuffleDemon.collapseP !== null && (
+      shuffleDemon.collapseP < C.PRESCREEN_COLLAPSE_ALPHA ||
+      shuffleDemon.dDrop     >= C.PRESCREEN_DDROP_MIN
+    );
+  const artifactWarning = !!demonPassesCollapse;
+
+  return { ksGate, collapseGate, eligible, rank, intensityTier, pcsWarning, pcsFlags, artifactWarning };
 }

@@ -31,7 +31,7 @@ import {
  *   setIsRunning, setLastBlock,
  *   setTotals, setTotalGhostHits,
  *   setDeltaHurstHistory, setHurstSubjectHistory,
- *   setHurstDemonHistory, setSubjectBitsHistory,
+ *   setHurstDemonHistory, setSubjectBitsHistory, setDemonBitsHistory,
  *   saveSessionAggregates, lastPersistedBlockRef,
  *   fetchTriggeredAtRef, allRawBitsRef, qrngProviderRef, qrngProviderSeqRef,
  * }} options
@@ -46,7 +46,7 @@ export function useTrialRunner({
   setIsRunning, setLastBlock,
   setTotals, setTotalGhostHits,
   setDeltaHurstHistory, setHurstSubjectHistory,
-  setHurstDemonHistory, setSubjectBitsHistory,
+  setHurstDemonHistory, setSubjectBitsHistory, setDemonBitsHistory,
   saveSessionAggregates, lastPersistedBlockRef,
   fetchTriggeredAtRef, allRawBitsRef, qrngProviderRef, qrngProviderSeqRef,
 }) {
@@ -100,6 +100,7 @@ export function useTrialRunner({
       setHurstSubjectHistory((prev) => [...prev, blockSubjHurst]);
       setHurstDemonHistory((prev) => [...prev, blockPCSHurst]);
       setSubjectBitsHistory((prev) => [...prev, parsedSubjectBits]);
+      setDemonBitsHistory((prev) => [...prev, parsedDemonBits]);
 
       // Increment block index last — the block-persistence effect fires on this change
       setblockIdx((prev) => prev + 1);
@@ -246,7 +247,9 @@ export function useTrialRunner({
   useEffect(() => {
     if (phase !== 'fetching') return;
     if (blockIdx >= C.BLOCKS_TOTAL) {
-      goToResults();
+      saveSessionAggregates()
+        .catch(err => console.error('❌ Failed to save session aggregates:', err))
+        .finally(() => goToResults());
       return;
     }
 
@@ -316,13 +319,14 @@ export function useTrialRunner({
               exit_block_index:    blockIdx,
             });
           }
+          await saveSessionAggregates();
           goToResults();
         }
       }
     })();
 
     return () => { isCancelled = true; };
-  }, [phase, blockIdx, processTrials, isAutoMode, isAIMode, runRef, target]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [phase, blockIdx, processTrials, isAutoMode, isAIMode, runRef, target, saveSessionAggregates]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Audit effect ─────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -421,13 +425,10 @@ export function useTrialRunner({
     const blockToSave = blockIdxToPersistRef.current;
     if (blockToSave < 0 || lastPersistedBlockRef.current >= blockToSave || !runRef) return;
     lastPersistedBlockRef.current = blockToSave;
-    Promise.all([
-      persistMinute(),
-      saveSessionAggregates(),
-    ]).catch((err) => {
+    persistMinute().catch((err) => {
       console.error('❌ Failed to save block data:', err);
     });
-  }, [blockIdx, runRef, persistMinute, saveSessionAggregates]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [blockIdx, runRef, persistMinute]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return {
     refs: {

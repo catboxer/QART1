@@ -80,7 +80,8 @@ export default function MainApp() {
     participantProfile,
     emailPlaintext,
     sessionCount, setSessionCount,
-    pastH_s, pastH_d, pastBits,
+    usableSessionCount,
+    pastH_s, pastH_d, pastBits, pastDemonBits,
     pastDemonHits, pastDemonTrials,
     requireUid,
     loadParticipant,
@@ -132,7 +133,7 @@ export default function MainApp() {
     goToTargetAnnounce, goToFetching, goToScore,
     goToRest, goToAudit, goToNext, goToPreparingNext,
     goToResults, goToSummary, goToDone,
-    goToAutoComplete, goToAIComplete,
+    goToAutoComplete, goToAIComplete, goToMaxSessions,
   } = usePhaseRouter();
   const [blockIdx, setblockIdx] = useState(-1);
   const [isRunning, setIsRunning] = useState(false);
@@ -145,6 +146,7 @@ export default function MainApp() {
   const [hurstSubjectHistory, setHurstSubjectHistory] = useState([]);
   const [hurstDemonHistory, setHurstDemonHistory] = useState([]);
   const [subjectBitsHistory, setSubjectBitsHistory] = useState([]);
+  const [demonBitsHistory, setDemonBitsHistory] = useState([]);
 
   // ---- session persistence: runRef creation + aggregate writes
   const {
@@ -172,10 +174,10 @@ export default function MainApp() {
     resetAnalysis,
   } = usePrescreenAnalysis({
     db, C,
-    phase, sessionCount, isAutoMode, isAIMode,
-    hurstSubjectHistory, hurstDemonHistory, subjectBitsHistory,
+    phase, sessionCount, usableSessionCount, isAutoMode, isAIMode,
+    hurstSubjectHistory, hurstDemonHistory, subjectBitsHistory, demonBitsHistory,
     totalGhostHits, totals,
-    pastH_s, pastH_d, pastBits, pastDemonHits, pastDemonTrials,
+    pastH_s, pastH_d, pastBits, pastDemonBits, pastDemonHits, pastDemonTrials,
     runRef, allRawBitsRef,
     participantHash, participantProfile, emailPlaintext,
   });
@@ -192,7 +194,7 @@ export default function MainApp() {
     setIsRunning, setLastBlock,
     setTotals, setTotalGhostHits,
     setDeltaHurstHistory, setHurstSubjectHistory,
-    setHurstDemonHistory, setSubjectBitsHistory,
+    setHurstDemonHistory, setSubjectBitsHistory, setDemonBitsHistory,
     saveSessionAggregates, lastPersistedBlockRef,
     fetchTriggeredAtRef, allRawBitsRef, qrngProviderRef, qrngProviderSeqRef,
   });
@@ -300,6 +302,7 @@ export default function MainApp() {
         setHurstSubjectHistory([]);
         setHurstDemonHistory([]);
         setSubjectBitsHistory([]);
+        setDemonBitsHistory([]);
         resetAnalysis(); // clears sessionAnalysis, cumulativeAnalysis, savedCumulativeRef
 
         // Reset target flag so new target gets assigned
@@ -413,10 +416,34 @@ export default function MainApp() {
           onAgree={async ({ email } = {}) => {
             // Reset analysis state so it's recomputed fresh for this session
             resetAnalysis();
-            const { skipPreQ } = await loadParticipant(email);
+            const { skipPreQ, usableCount } = await loadParticipant(email);
+            if (usableCount >= C.MAX_SESSIONS_FOR_ANALYSIS) {
+              goToMaxSessions();
+              return;
+            }
             skipPreQ ? goToOnboarding() : goToPreQ();
           }}
         />
+      </div>
+    );
+  }
+
+  // MAX SESSIONS REACHED
+  if (phase === 'max_sessions') {
+    return (
+      <div className="App" style={{ textAlign: 'left', padding: 24 }}>
+        <h1 style={{ marginTop: 0 }}>Thank You for Participating</h1>
+        <p>
+          You have completed the maximum number of pre-screening sessions for this study.
+          Your contributions are appreciated and have been recorded.
+        </p>
+        <p>
+          Please contact the study administrator if you have questions or would like to
+          continue participating in future phases of the research.
+        </p>
+        <p>
+          <a href="mailto:h@whatthequark.com">h@whatthequark.com</a>
+        </p>
       </div>
     );
   }
@@ -1209,16 +1236,11 @@ export default function MainApp() {
     const heroBorder =
       hr > 50 ? '#86efac' : hr < 50 ? '#fed7aa' : '#e5e7eb';
 
-    // Sessions 1–4: simplified view — hit rate + "need more sessions" message
-    // Use actual loaded block data (not profile counter) so the gate matches the analysis
-    const actualSessionsLoaded = Math.round(
-      (pastH_s.length + hurstSubjectHistory.length) / C.BLOCKS_TOTAL,
-    );
-    const isDecisionSession =
-      actualSessionsLoaded >= C.MIN_SESSIONS_FOR_DECISION;
-    if (!isDecisionSession) {
-      const remaining =
-        C.MIN_SESSIONS_FOR_DECISION - actualSessionsLoaded;
+    // Sessions 1–4: simplified view — hit rate + "need more sessions" message.
+    // isDecisionSession is true only when cumulative analysis has actually run
+    // (5+ usable sessions). This is the definitive gate — no array-length arithmetic.
+    if (!isCumulativeReady) {
+      const remaining = Math.max(0, C.MIN_SESSIONS_FOR_DECISION - (usableSessionCount + 1));
       const earlyRank = sessionAnalysis
         ? decision.rank
         : null;
