@@ -15,9 +15,9 @@ export const config = {
 config.experiments = {
   pk: {
     EXPERIMENT_ID: 'hurst_prescreen_v1',
-    VISUAL_HZ: 5,                  // 5 Hz pulse frequency for loading screen
-    REST_MS: 2500,                 // 2.5 s breather
-    BLOCKS_TOTAL: 80,              // 80 blocks of focus → fetch → results
+    VISUAL_HZ: 5, // 5 Hz pulse frequency for loading screen
+    REST_MS: 2500, // 2.5 s breather
+    BLOCKS_TOTAL: 80, // 80 blocks of focus → fetch → results
 
     // ── Bit stream size ───────────────────────────────────────────────────────
     // Change TRIALS_PER_BLOCK here — BITS_PER_BLOCK and all NULL_HURST_* constants
@@ -29,45 +29,69 @@ config.experiments = {
     // Source: hurst_null_distributions.ipynb — seed 42, numpy default_rng
     NULL_DISTRIBUTIONS: {
       150: {
-        mean: 0.52799, sd: 0.04579,
-        p10: 0.46875, p25: 0.49594, p50: 0.52837,
-        p75: 0.55979, p90: 0.58732, p95: 0.60355, p99: 0.63135,
+        mean: 0.52799,
+        sd: 0.04579,
+        p10: 0.46875,
+        p25: 0.49594,
+        p50: 0.52837,
+        p75: 0.55979,
+        p90: 0.58732,
+        p95: 0.60355,
+        p99: 0.63135,
       },
       288: {
-        mean: 0.52827, sd: 0.03988,
-        p10: 0.47662, p25: 0.50031, p50: 0.52812,
-        p75: 0.55630, p90: 0.58045, p95: 0.59454, p99: 0.61803,
+        mean: 0.52827,
+        sd: 0.03988,
+        p10: 0.47662,
+        p25: 0.50031,
+        p50: 0.52812,
+        p75: 0.5563,
+        p90: 0.58045,
+        p95: 0.59454,
+        p99: 0.61803,
       },
       576: {
-        mean: 0.52729, sd: 0.03500,
-        p10: 0.48230, p25: 0.50301, p50: 0.52737,
-        p75: 0.55120, p90: 0.57247, p95: 0.58601, p99: 0.60700,
+        mean: 0.52729,
+        sd: 0.035,
+        p10: 0.4823,
+        p25: 0.50301,
+        p50: 0.52737,
+        p75: 0.5512,
+        p90: 0.57247,
+        p95: 0.58601,
+        p99: 0.607,
       },
       1152: {
-        mean: 0.52656, sd: 0.03086,
-        p10: 0.48663, p25: 0.50513, p50: 0.52696,
-        p75: 0.54800, p90: 0.56639, p95: 0.57760, p99: 0.59710,
+        mean: 0.52656,
+        sd: 0.03086,
+        p10: 0.48663,
+        p25: 0.50513,
+        p50: 0.52696,
+        p75: 0.548,
+        p90: 0.56639,
+        p95: 0.5776,
+        p99: 0.5971,
       },
     },
 
     // Hurst delta thresholds (from pilot data: 5+ session subgroup ΔH=+0.004, KS p=0.040)
     HURST_YELLOW_THRESHOLD: 0.002, // trending — matches 2-4 session range
-    HURST_GREEN_THRESHOLD: 0.004,  // significant — matches 5+ session subgroup
+    HURST_GREEN_THRESHOLD: 0.004, // significant — matches 5+ session subgroup
 
     // ── Prescreen eligibility gates ──────────────────────────────────────────
     // Layer 1: KS anomaly (permissive — catch weak responders)
     PRESCREEN_KS_ALPHA: 0.15,
     // Layer 2: Shuffle collapse (OR logic)
-    PRESCREEN_COLLAPSE_ALPHA: 0.10,   // permutation p-value gate
-    PRESCREEN_DDROP_MIN: 0.15,        // magnitude collapse gate (silver threshold)
-    PRESCREEN_DDROP_GOLD: 0.20,       // gold rank threshold (stronger magnitude)
-    PRESCREEN_COLLAPSE_GOLD: 0.05,    // gold rank threshold (stronger probability)
+    PRESCREEN_COLLAPSE_ALPHA: 0.1, // permutation p-value gate
+    PRESCREEN_DDROP_MIN: 0.15, // magnitude collapse gate (silver threshold)
+    PRESCREEN_DDROP_GOLD: 0.2, // gold rank threshold (stronger magnitude)
+    PRESCREEN_COLLAPSE_GOLD: 0.05, // gold rank threshold (stronger probability)
     // Intensity tier thresholds (SE multiples of |mean ΔH| for eligible sessions)
     // Tier 1: |t| < T2  (subtle — collapseP carried the vote)
     // Tier 2: T2 ≤ |t| < T3  (moderate — ΔH above noise)
     // Tier 3: |t| ≥ T3  (strong — clearly above null)
-    PRESCREEN_INTENSITY_T2: 1,   // 1 SE boundary
-    PRESCREEN_INTENSITY_T3: 2,   // 2 SE boundary
+    PRESCREEN_INTENSITY_T2: 1, // 1 SE boundary
+    PRESCREEN_INTENSITY_T3: 2, // 2 SE boundary
 
     // PCS quality warning thresholds (informational only — never gates)
     // nullZ / ghostZ: session-mean Hurst Z and demon hit-rate Z. |Z| > 1.5 fires ~13% of null sessions.
@@ -80,22 +104,22 @@ config.experiments = {
     // Firestore collection for prescreen sessions
     PRESCREEN_COLLECTION: 'prescreen_sessions_exp5',
     // Multi-session accumulation
-    MIN_SESSIONS_FOR_DECISION: 5,   // sessions 1-4 show "come back" screen; 5+ show cumulative result
-    MAX_SESSIONS_FOR_ANALYSIS: 20,  // consent gate blocks further sessions beyond this usable count
+    MIN_SESSIONS_FOR_DECISION: 5, // sessions 1-4 show "come back" screen; 5+ show cumulative result
+    MAX_SESSIONS_FOR_ANALYSIS: 20, // consent gate blocks further sessions beyond this usable count
     PARTICIPANT_COLLECTION: 'prescreen_participants',
 
     // Audit configuration (NIST SP 800-22 Randomness Testing)
-    AUDIT_EVERY_N_BLOCKS: 10,     // Run audit break every N blocks
-    AUDIT_BITS_PER_BREAK: 1000,   // Fetch 1000 bits for RNG quality test during audit
+    AUDIT_EVERY_N_BLOCKS: 10, // Run audit break every N blocks
+    AUDIT_BITS_PER_BREAK: 1000, // Fetch 1000 bits for RNG quality test during audit
     // NIST tests run during audit:
     // 1. Frequency (Monobit) Test - checks proportion of 0s vs 1s (p ≥ 0.01 to pass)
     // 2. Runs Test - checks oscillation between bits (p ≥ 0.01 to pass)
     // 3. Longest Run Test - checks max consecutive 1s (p ≥ 0.01 to pass)
     // Reference: NIST SP 800-22 Rev. 1a (https://csrc.nist.gov/publications/detail/sp/800-22/rev-1a/final)
 
-    AUTO_MODE_SESSIONS: 20, // Number of automated baseline sessions to run (access via #auto URL)
+    AUTO_MODE_SESSIONS: 5, // Number of automated baseline sessions to run (access via #auto URL)
     AUTO_MODE_REST_MS: 1000, // 1 second auto-continue delay between blocks in auto-mode
-    AI_MODE_SESSIONS: 12,   // Number of AI agent sessions to run (access via #ai URL)
+    AI_MODE_SESSIONS: 5, // Number of AI agent sessions to run (access via #ai URL)
   },
 };
 
@@ -108,18 +132,18 @@ const _nullDist = pk.NULL_DISTRIBUTIONS[pk.TRIALS_PER_BLOCK];
 if (!_nullDist) {
   throw new Error(
     `config: No null distribution for TRIALS_PER_BLOCK=${pk.TRIALS_PER_BLOCK}. ` +
-    `Add an entry to NULL_DISTRIBUTIONS or use a validated value: ${Object.keys(pk.NULL_DISTRIBUTIONS).join(', ')}.`
+      `Add an entry to NULL_DISTRIBUTIONS or use a validated value: ${Object.keys(pk.NULL_DISTRIBUTIONS).join(', ')}.`,
   );
 }
 pk.NULL_HURST_MEAN = _nullDist.mean;
-pk.NULL_HURST_SD   = _nullDist.sd;
-pk.NULL_HURST_P10  = _nullDist.p10;
-pk.NULL_HURST_P25  = _nullDist.p25;
-pk.NULL_HURST_P50  = _nullDist.p50;
-pk.NULL_HURST_P75  = _nullDist.p75;
-pk.NULL_HURST_P90  = _nullDist.p90;
-pk.NULL_HURST_P95  = _nullDist.p95;
-pk.NULL_HURST_P99  = _nullDist.p99;
+pk.NULL_HURST_SD = _nullDist.sd;
+pk.NULL_HURST_P10 = _nullDist.p10;
+pk.NULL_HURST_P25 = _nullDist.p25;
+pk.NULL_HURST_P50 = _nullDist.p50;
+pk.NULL_HURST_P75 = _nullDist.p75;
+pk.NULL_HURST_P90 = _nullDist.p90;
+pk.NULL_HURST_P95 = _nullDist.p95;
+pk.NULL_HURST_P99 = _nullDist.p99;
 
 // Propagate top-level fields so pkConfig consumers (C.*) can access them
 pk.APP_VERSION = config.APP_VERSION;
