@@ -252,7 +252,9 @@ AI mode is **not a baseline control**. It is an active test of whether a large l
 
 ### Conversation history
 
-The agent maintains a full conversation history across the entire session (up to 600 messages, covering ~80 blocks × ~7 messages each). This means GPT-4o-mini has access to its entire block-by-block experience when answering the post-session questions — analogous to a human reflecting on their performance arc.
+The agent maintains a conversation history scoped to the **current session only**. History is cleared at the start of each new session, so post-session questions are answered based solely on that session's experience — analogous to a human reflecting on what just happened, not on sessions from previous days.
+
+Within a session the full history is kept (up to 600 messages, covering ~80 blocks × ~7 messages each). Per-block calls (ready/pulsing/score) send only the last 20 messages to stay within OpenAI TPM limits (~1–2k tokens per call vs ~13k for the full history). The post-session questionnaire call sends the complete session history so GPT-4o-mini can reflect on the full block-by-block arc when answering.
 
 ### Post-survey fields saved by the agent
 
