@@ -506,25 +506,28 @@ Respond with a brief acknowledgment that you understand the critical moment is w
 
           console.log(`🤖 AI response: ${restResponse.choices[0].message.content}\n`);
 
-          // Click Continue button
           await new Promise(resolve => setTimeout(resolve, 1000)); // Pause to pace API calls
+        } else {
+          // Same block still showing — click failed or transition stalled (e.g. audit screen).
+          // Retry the click without calling OpenAI again.
+          console.log(`🔄 Score screen retry for block ${currentBlockIdx} — re-clicking Continue`);
+        }
 
-          const clicked = await page.evaluate(() => {
-            const buttons = Array.from(document.querySelectorAll('button'));
-            const continueButton = buttons.find(btn => btn.textContent.includes('Continue'));
-            if (continueButton) {
-              continueButton.click();
-              return true;
-            }
-            return false;
-          });
-
-          if (clicked) {
-            console.log('✅ Clicked Continue button\n');
-            lastActivityTime = Date.now(); // Update activity time
-            // Additional pause after clicking to pace the experiment
-            await new Promise(resolve => setTimeout(resolve, 1000));
+        // Always click Continue when on score phase (idempotent — safe to retry)
+        const clicked = await page.evaluate(() => {
+          const buttons = Array.from(document.querySelectorAll('button'));
+          const continueButton = buttons.find(btn => btn.textContent.includes('Continue'));
+          if (continueButton) {
+            continueButton.click();
+            return true;
           }
+          return false;
+        });
+
+        if (clicked) {
+          console.log('✅ Clicked Continue button\n');
+          lastActivityTime = Date.now();
+          await new Promise(resolve => setTimeout(resolve, 1000));
         }
       }
 
