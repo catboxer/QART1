@@ -3,7 +3,7 @@
 ## Eligibility model
 
 **Two-layer swiss cheese (was three):**
-- Layer 1 — KS anomaly gate: `ks.originalP < PRESCREEN_KS_ALPHA (0.10)`
+- Layer 1 — KS anomaly gate: `ks.originalP < PRESCREEN_KS_ALPHA (0.15)`
 - Layer 2 — Shuffle collapse gate (OR logic): `collapseP < 0.10` OR `dDrop >= 0.15`
 - `eligible = ksGate && collapseGate`
 
@@ -13,8 +13,8 @@ correlation (~r = 0.35) is structural to the adjacent-buffer split design — bo
 come from the same 1153-bit fetch. This is expected and harmless (ΔH cancels it).
 
 ## Ranking (saved to Firestore as `prescreen_rank`)
-- `gold` — eligible + dDrop > 0.30
-- `silver` — eligible + dDrop ≤ 0.30 (includes collapseP-only signals; catches low-amplitude effects)
+- `gold` — eligible + (`collapseP < 0.05` OR `dDrop >= 0.20`) — strong probability or strong magnitude
+- `silver` — eligible, gold criteria not met (includes collapseP-only signals; catches low-amplitude effects)
 - `candidate` — `ksGate && !collapseGate` exactly — Firestore tag only, no invite UI
 Rank always includes session kind suffix — `evaluatePrescreen` returns the base rank,
 MainApp composes `${rank}-${sessionKind}`:
@@ -39,14 +39,16 @@ Displayed as a badge chip in the results verdict card ("Tier 2 · Solid Presence
 
 ## Config constants (in `pkConfig`)
 ```
-PRESCREEN_KS_ALPHA:          0.10
+PRESCREEN_KS_ALPHA:          0.15
 PRESCREEN_COLLAPSE_ALPHA:    0.10
 PRESCREEN_DDROP_MIN:         0.15
+PRESCREEN_DDROP_GOLD:        0.20
+PRESCREEN_COLLAPSE_GOLD:     0.05
 PRESCREEN_INTENSITY_T2:      1      // SE boundary: Tier 1 → Tier 2
 PRESCREEN_INTENSITY_T3:      2      // SE boundary: Tier 2 → Tier 3
 PRESCREEN_PCS_NULLZ_WARN:    1.5   // applies to nullZ and ghostZ — warning only
 PRESCREEN_PCS_SD_RATIO_WARN: 1.5   // demonSD / null_SD inflation threshold
-N_SHUFFLES:                  200
+N_SHUFFLES:                  500
 ```
 Removed: `PRESCREEN_PCS_NULLZ_MAX`, `PRESCREEN_CROSSCORR_MAX`, `PRESCREEN_PCS_OUTLIER_MAX`
 

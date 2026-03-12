@@ -58,6 +58,15 @@ async function runAISession() {
 
   const page = await browser.newPage();
 
+  // Capture browser console messages (especially Firebase errors)
+  page.on('console', msg => {
+    const type = msg.type();
+    const text = msg.text();
+    if (type === 'error' || text.includes('Firebase') || text.includes('Firestore') || text.includes('ensureRunDoc') || text.includes('auth/')) {
+      console.log(`🌐 BROWSER ${type.toUpperCase()}: ${text}`);
+    }
+  });
+
   // Listen for dialog events (alerts, confirms, prompts)
   let qrngErrorCount = 0;
   page.on('dialog', async dialog => {
@@ -91,7 +100,9 @@ async function runAISession() {
   // Initialize state tracking
   const conversationHistory = [];
   let target = null;
-  const MAX_HISTORY_LENGTH = 6; // Keep only last 6 messages (3 exchanges) to reduce token usage
+  // 80 blocks × ~6 messages each = ~480 max. Keep full session history so GPT can reflect
+  // on the entire arc when answering post-session questions. Cost: ~$0.004/session with gpt-4o-mini.
+  const MAX_HISTORY_LENGTH = 600;
 
   // Wait for page to load
   await new Promise(resolve => setTimeout(resolve, 3000));
@@ -203,13 +214,31 @@ Respond with a brief acknowledgment that you understand the critical moment is w
 
     console.log('🤖 AI acknowledges instructions:', onboardingResponse.choices[0].message.content);
 
-    // Click Continue button on onboarding screen
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    // Poll for Continue to become enabled using expState.canContinue (avoids DOM starvation)
+    console.log('⏳ Waiting for Continue button to become enabled...');
+    let initContinueReady = false;
+    for (let i = 0; i < 600; i++) { // up to 5 minutes (600 × 500ms)
+      await new Promise(resolve => setTimeout(resolve, 500));
+      initContinueReady = await page.evaluate(() => {
+        if (window.expState && window.expState.phase === 'onboarding') return window.expState.canContinue === true;
+        const btn = Array.from(document.querySelectorAll('button')).find(b => b.textContent.includes('Continue'));
+        return btn ? !btn.disabled : false;
+      });
+      if (initContinueReady) break;
+      if (i > 0 && i % 20 === 0) { // log every 10s
+        const diag = await page.evaluate(() => ({
+          expState: window.expState || null,
+          bodyPreview: document.body.innerText.substring(0, 100),
+        }));
+        console.log(`⏳ Still waiting... t=${(i*0.5).toFixed(0)}s`, JSON.stringify(diag));
+      }
+    }
+    if (!initContinueReady) console.warn('⚠️ Continue button did not become enabled within 5min — attempting click anyway');
 
     const clicked = await page.evaluate(() => {
       const buttons = Array.from(document.querySelectorAll('button'));
       const continueBtn = buttons.find(btn => btn.textContent.includes('Continue'));
-      if (continueBtn) {
+      if (continueBtn && !continueBtn.disabled) {
         continueBtn.click();
         return true;
       }
@@ -220,7 +249,7 @@ Respond with a brief acknowledgment that you understand the critical moment is w
       console.log('✅ Clicked Continue on onboarding screen\n');
       await new Promise(resolve => setTimeout(resolve, 2000));
     } else {
-      console.warn('⚠️ Could not find Continue button on onboarding screen');
+      console.warn('⚠️ Could not find enabled Continue button on onboarding screen');
     }
   } catch (e) {
     console.error('❌ Error reading onboarding instructions:', e.message);
@@ -240,10 +269,10 @@ Respond with a brief acknowledgment that you understand the critical moment is w
       const bodyText = document.body.innerText;
 
       // Look for target color on rest screen
-      if (bodyText.includes('🟦') && bodyText.includes('BLUE') && bodyText.includes('Your Target')) {
+      if (bodyText.includes('🟦') && bodyText.includes('BLUE') && bodyText.includes('YOUR TARGET')) {
         return 'BLUE';
       }
-      if (bodyText.includes('🟠') && bodyText.includes('ORANGE') && bodyText.includes('Your Target')) {
+      if (bodyText.includes('🟠') && bodyText.includes('ORANGE') && bodyText.includes('YOUR TARGET')) {
         return 'ORANGE';
       }
 
@@ -290,6 +319,7 @@ Respond with a brief acknowledgment that you understand the critical moment is w
   let lastAuditProcessed = -1; // Track last audit screen we processed
   const PULSING_TIMEOUT_MS = 5000; // 5 seconds max for pulsing screen (fetch should be ~1-2s)
 
+  let donePhaseHandled = false; // Prevent double-handling the post-session questionnaire
   let lastActivityTime = Date.now(); // Track time of last meaningful activity
   let lastLoggedIdleWarning = 0; // Prevent spam of idle warnings
 
@@ -344,6 +374,7 @@ Respond with a brief acknowledgment that you understand the critical moment is w
           console.log(`🔄 New session detected (blockIdx: ${currentBlock}, was: ${lastBlockProcessed}), resetting tracking...`);
           lastBlockProcessed = -1;
           lastAuditProcessed = -1;
+          donePhaseHandled = false;
         }
 
         if (currentBlock >= lastBlockProcessed) {
@@ -441,25 +472,24 @@ Respond with a brief acknowledgment that you understand the critical moment is w
         }
       }
 
-      // Handle results screen (after quantum fetch completes)
-      if (screenState.isResultsScreen && screenState.expState) {
-        const currentBlockIdx = screenState.expState.blockIdx;
+      // Handle score screen (after quantum fetch + scoring complete)
+      // expState.phase === 'score' is the reliable gate; expState.blockIdx is 1-indexed (completedBlockNum)
+      if (screenState.expState?.phase === 'score') {
+        const currentBlockIdx = screenState.expState.blockIdx; // 1-indexed
 
         if (currentBlockIdx > lastBlockProcessed) {
           lastBlockProcessed = currentBlockIdx;
 
-          // Extract results data from page text (since expState doesn't have all fields)
-          const resultsText = screenState.bodyPreview;
-          const scoreMatch = resultsText.match(/(\d+)%/);
-          const hitsMatch = resultsText.match(/(\d+)\/(\d+)/);
-          const score = scoreMatch ? scoreMatch[1] : '?';
-          const hits = hitsMatch ? hitsMatch[1] : '?';
-          const trials = hitsMatch ? hitsMatch[2] : '?';
+          // Use expState fields directly — score screen populates these explicitly
+          const score = screenState.expState.score ?? '?';
+          const hits = screenState.expState.hits ?? '?';
+          const trials = screenState.expState.trials ?? '?';
+          const totalBlocks = screenState.expState.totalBlocks ?? 80;
 
           // Prompt AI to confirm target and focus
-          console.log(`\n📊 Block ${currentBlockIdx + 1} complete - prompting AI...`);
+          console.log(`\n📊 Block ${currentBlockIdx}/${totalBlocks} complete — score: ${score}%, hits: ${hits}/${trials}`);
 
-          const restPrompt = `Block ${currentBlockIdx + 1} done. Score: ${score}%. Target?`;
+          const restPrompt = `Block ${currentBlockIdx}/${totalBlocks} done. Score: ${score}% (${hits}/${trials} hits). Target: ${target}. Stay focused.`;
 
           const restResponse = await callOpenAIWithRetry(
             [...conversationHistory, { role: 'user', content: restPrompt }],
@@ -498,11 +528,121 @@ Respond with a brief acknowledgment that you understand the critical moment is w
         }
       }
 
+      // Handle post-session questionnaire (done phase)
+      // expState.phase === 'done' is set by the React render; AI-mode shows the form for the agent to fill
+      if (screenState.expState?.phase === 'done' && !donePhaseHandled) {
+        donePhaseHandled = true;
+        console.log('\n📝 Post-session questionnaire detected — asking GPT-4o-mini for answers...');
+        lastActivityTime = Date.now();
+
+        const donePrompt = `The session is complete. Target was ${target}.
+
+Please answer these post-session questions based on your experience during this session. Respond with ONLY a valid JSON object (no prose, no markdown):
+
+{
+  "subjectiveSuccess": <integer 0-10, how connected/resonant you felt with the target>,
+  "focusLevel": <integer 0-10, how focused you were>,
+  "focusStyle": <one of: "active_push", "passive_allow", "meditative", "flow_autopilot">,
+  "auditoryEnvironment": "silence",
+  "colorAffinity": <one of: "blue", "orange", "no" — did you feel a pull toward one color?>,
+  "finalThoughts": <string, optional — any notable sensations or observations, empty string if none>
+}`;
+
+        let answers = {
+          subjectiveSuccess: 5,
+          focusLevel: 5,
+          focusStyle: 'meditative',
+          auditoryEnvironment: 'silence',
+          colorAffinity: 'no',
+          finalThoughts: '',
+        };
+
+        try {
+          const doneResponse = await callOpenAIWithRetry(
+            [...conversationHistory, { role: 'user', content: donePrompt }],
+            200
+          );
+          const responseText = doneResponse.choices[0].message.content;
+          console.log(`🤖 GPT-4o-mini post-session answers:\n${responseText}\n`);
+
+          conversationHistory.push({ role: 'user', content: donePrompt });
+          conversationHistory.push({ role: 'assistant', content: responseText });
+          if (conversationHistory.length > MAX_HISTORY_LENGTH) {
+            conversationHistory.splice(0, conversationHistory.length - MAX_HISTORY_LENGTH);
+          }
+
+          const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+          answers = { ...answers, ...JSON.parse(jsonMatch ? jsonMatch[0] : responseText) };
+        } catch (e) {
+          console.error('❌ Failed to get/parse GPT answers:', e.message, '— using defaults');
+        }
+
+        console.log('📝 Filling post-survey form:', answers);
+        await new Promise(resolve => setTimeout(resolve, 800));
+
+        // Fill sliders using React's native input setter (triggers onChange → setTouched)
+        await page.evaluate((ss, fl) => {
+          const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+          ['subjectiveSuccess', 'focusLevel'].forEach((id, i) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            setter.call(el, i === 0 ? ss : fl);
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+          });
+        }, String(answers.subjectiveSuccess), String(answers.focusLevel));
+
+        await new Promise(resolve => setTimeout(resolve, 400));
+
+        // Click radio buttons
+        await page.evaluate((focusStyle, auditoryEnv, colorAffinity) => {
+          [
+            ['focusStyle', focusStyle],
+            ['auditoryEnvironment', auditoryEnv],
+            ['colorAffinity', colorAffinity],
+          ].forEach(([name, val]) => {
+            const radio = document.querySelector(`input[type="radio"][name="${name}"][value="${val}"]`);
+            if (radio) radio.click();
+          });
+        }, answers.focusStyle, answers.auditoryEnvironment, answers.colorAffinity);
+
+        await new Promise(resolve => setTimeout(resolve, 400));
+
+        // Fill textarea if non-empty
+        if (answers.finalThoughts) {
+          await page.evaluate((val) => {
+            const ta = document.getElementById('finalThoughts');
+            if (!ta) return;
+            const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+            setter.call(ta, val);
+            ta.dispatchEvent(new Event('input', { bubbles: true }));
+            ta.dispatchEvent(new Event('change', { bubbles: true }));
+          }, answers.finalThoughts);
+          await new Promise(resolve => setTimeout(resolve, 400));
+        }
+
+        // Click the submit button
+        await new Promise(resolve => setTimeout(resolve, 800));
+        const submitted = await page.evaluate(() => {
+          const btn = document.querySelector('button[type="submit"]');
+          if (btn) { btn.click(); return true; }
+          return false;
+        });
+
+        if (submitted) {
+          console.log('✅ Submitted post-session questionnaire\n');
+          lastActivityTime = Date.now();
+        } else {
+          console.warn('⚠️ Could not find submit button on done phase — will retry next poll');
+          donePhaseHandled = false; // allow retry
+        }
+      }
+
       // Check for prime screen (new session starting)
+      // NOTE: do NOT match '🤖 AI Agent Mode' here — that text appears on the onboarding screen too
       const isPrimeScreen = await page.evaluate(() => {
         const bodyText = document.body.innerText;
-        return bodyText.includes('🤖 AI Agent Mode') ||
-               bodyText.includes('Research Background') ||
+        return bodyText.includes('Research Background') ||
                bodyText.includes('PK Research');
       });
 
@@ -514,7 +654,7 @@ Respond with a brief acknowledgment that you understand the critical moment is w
         const clicked = await page.evaluate(() => {
           const buttons = Array.from(document.querySelectorAll('button'));
           const continueBtn = buttons.find(btn => btn.textContent.includes('Continue'));
-          if (continueBtn) {
+          if (continueBtn && !continueBtn.disabled) {
             continueBtn.click();
             return true;
           }
@@ -527,22 +667,53 @@ Respond with a brief acknowledgment that you understand the critical moment is w
         }
       }
 
-      // Check for onboarding/instructions screen
+      // Check for onboarding/instructions screen (between sessions or at start)
       const isOnboardingScreen = await page.evaluate(() => {
         const bodyText = document.body.innerText;
         const hasButton = Array.from(document.querySelectorAll('button')).some(btn => btn.textContent.includes('Continue'));
-        return (bodyText.includes('Instructions') || bodyText.includes('Your task') || bodyText.includes('critical moment')) && hasButton && !bodyText.includes('Your Target');
+        return (bodyText.includes('Instructions') || bodyText.includes('Your task') ||
+                bodyText.includes('Critical moment') || bodyText.includes('critical moment') ||
+                bodyText.includes('What to Expect')) &&
+               hasButton && !bodyText.includes('YOUR TARGET');
       });
 
       if (isOnboardingScreen) {
-        console.log('📖 Onboarding screen detected in monitor loop - clicking Continue...');
+        console.log('📖 Onboarding screen detected in monitor loop - waiting for Continue to be enabled...');
 
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        // Poll window.expState.canContinue (set by React) instead of DOM querying
+        // to avoid starving the Firestore addDoc Promise with rapid page.evaluate calls
+        let continueReady = false;
+        for (let i = 0; i < 600; i++) { // up to 5 minutes (600 × 500ms)
+          await new Promise(resolve => setTimeout(resolve, 500));
+          continueReady = await page.evaluate(() => {
+            // Check both expState flag and DOM button state
+            if (window.expState && window.expState.phase === 'onboarding') {
+              return window.expState.canContinue === true;
+            }
+            const btn = Array.from(document.querySelectorAll('button')).find(b => b.textContent.includes('Continue'));
+            return btn ? !btn.disabled : false;
+          });
+          if (continueReady) break;
+          if (i > 0 && i % 20 === 0) { // log every 10s
+            const diag = await page.evaluate(() => ({
+              expState: window.expState || null,
+              bodyPreview: document.body.innerText.substring(0, 100),
+            }));
+            console.log(`⏳ Still waiting for onboarding... t=${(i*0.5).toFixed(0)}s`, JSON.stringify(diag));
+          }
+        }
+        if (!continueReady) {
+          const diag = await page.evaluate(() => ({
+            expState: window.expState || null,
+            bodyPreview: document.body.innerText.substring(0, 200),
+          }));
+          console.warn('⚠️ Continue button did not become enabled within 5min — diagnostics:', JSON.stringify(diag));
+        }
 
         const clicked = await page.evaluate(() => {
           const buttons = Array.from(document.querySelectorAll('button'));
           const continueBtn = buttons.find(btn => btn.textContent.includes('Continue'));
-          if (continueBtn) {
+          if (continueBtn && !continueBtn.disabled) {
             continueBtn.click();
             return true;
           }
