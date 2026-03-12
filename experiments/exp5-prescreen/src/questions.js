@@ -82,6 +82,16 @@ export const postQuestions = [
     ],
   },
   {
+    id: 'colorAffinity',
+    question: 'Did you feel a pull or affinity toward one color more than the other?',
+    type: 'radio',
+    options: [
+      { label: 'Yes — Blue', value: 'blue' },
+      { label: 'Yes — Orange', value: 'orange' },
+      { label: 'No', value: 'no' },
+    ],
+  },
+  {
     id: 'finalThoughts',
     question: "Any notable physical sensations (heat, tingling) or thoughts? (optional)",
     type: 'textarea',

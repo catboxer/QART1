@@ -59,26 +59,26 @@ All scoring runs on the **cumulative dataset** across all sessions, not on indiv
 
 A two-sample **Kolmogorov-Smirnov test** compares the distribution of H_subject values across all cumulative blocks against the distribution of H_demon values.
 
-- **Threshold:** `p < 0.10` (`PRESCREEN_KS_ALPHA`)
-- **Passes if:** the two distributions are sufficiently different that a 10% false positive rate is acceptable at the screening stage
-- **Rationale:** A loose threshold is intentional for a prescreen. We want high sensitivity — missing a genuine responder is a worse outcome than inviting a false positive for further testing. The shuffle gate (Layer 2) provides the specificity.
+- **Threshold:** `p < 0.15` (`PRESCREEN_KS_ALPHA`)
+- **Passes if:** the two distributions are sufficiently different that a 15% false positive rate is acceptable at the screening stage
+- **Rationale:** A loose threshold is intentional for a prescreen. Missing a genuine responder is a worse outcome than inviting a false positive for further testing. The shuffle gate (Layer 2) provides the specificity.
 
 ### Layer 2 — Shuffle Collapse Gate
 
 If the KS anomaly could be due to a simple **mean shift in bit frequency** (e.g. a slight bias in the QRNG producing more 1s), shuffling the bits within each block destroys temporal structure but preserves frequency. A genuine temporal signal should **collapse** under shuffling; a frequency artefact should survive.
 
-For each of **200 permutations**, all subject bit sequences are shuffled within-block (Fisher-Yates), Hurst is recomputed, and the KS distance is recalculated against the fixed demon stream.
+For each of **500 permutations**, all subject bit sequences are shuffled within-block (Fisher-Yates), Hurst is recomputed, and the KS distance is recalculated against the fixed demon stream.
 
 The gate passes if **either**:
 
 | Criterion | Threshold | Meaning |
 |---|---|---|
-| `collapseP` | `< 0.10` | The original KS distance is anomalously large relative to 200 shuffled replicates |
+| `collapseP` | `< 0.10` | The original KS distance is anomalously large relative to 500 shuffled replicates |
 | `dDrop` | `≥ 0.15` | The KS distance dropped by at least 15% after shuffling — direct magnitude evidence of collapse |
 
 OR logic catches both strong temporal signals (clear collapse) and weaker signals where the magnitude drop is meaningful even if the p-value sits just above threshold.
 
-- **Rationale for `collapseP` correction:** `collapseP = (nGreater + 1) / (nShuffles + 1)` rather than `nGreater / nShuffles`, which would allow `p = 0.0` — overconfident with only 200 shuffles. The minimum achievable p is now 1/201 ≈ 0.005.
+- **Rationale for `collapseP` correction:** `collapseP = (nGreater + 1) / (nShuffles + 1)` rather than `nGreater / nShuffles`, which would allow `p = 0.0` — overconfident with finite shuffles. The minimum achievable p with 500 shuffles is 1/501 ≈ 0.002.
 
 ### Eligibility
 
@@ -94,12 +94,30 @@ Both layers must pass. An eligible participant proceeds to the invite form.
 
 | Rank | Condition | Meaning |
 |---|---|---|
-| `gold` | eligible + `dDrop > 0.30` | High-confidence temporal structure; strong collapse |
-| `silver` | eligible + `dDrop ≤ 0.30` | Signal detected; collapseP may have carried the gate |
-| `candidate` | `ksGate AND NOT collapseGate` | Distribution anomaly present but temporal ordering unconfirmed — flagged for researcher review, no invite |
+| `gold` | eligible + (`collapseP < 0.05` OR `dDrop ≥ 0.20`) | High-confidence temporal structure — strong probability or strong magnitude |
+| `silver` | eligible, gold criteria not met | Signal detected; collapseP or dDrop carried the gate at lower confidence |
+| `candidate` | `ksGate AND NOT collapseGate`, OR eligible but `artifactWarning` fired | Distribution anomaly without confirmed temporal structure, OR subject-stream signal not confirmed as subject-specific — flagged for researcher review |
 | `none` | neither gate passes | No detectable pattern |
 
-Both gold and silver receive the invite form. The distinction is for internal prioritisation.
+Gold, silver, and candidate all receive the invite form. Gold and silver are internal prioritisation; candidate is flagged for researcher review rather than direct recruitment.
+
+### Artifact capping and `wouldBeRank`
+
+When `artifactWarning` fires on an otherwise-eligible result (both gates pass but the demon stream independently passes its own collapse gate), the rank is capped to `candidate`. This prevents issuing a gold or silver label when the detected structure cannot be confirmed as subject-specific.
+
+To preserve the information for researcher analysis, a `wouldBeRank` field is written alongside `rank`:
+
+- `session_would_be_rank` on the session doc — only present (non-null) when the rank was capped
+- `prescreen_would_be_rank` on the session doc (cumulative)
+- `latest_cumulative_verdict.wouldBeRank` on the participant profile
+
+This applies to **all session types** (human, AI, baseline). A pattern of `rank = candidate` with `wouldBeRank = gold` across multiple independent participants or runs — where both subject and demon streams show gold-level collapse — may indicate a persistent QRNG structural property worth investigating separately from the subject signal. In Colab:
+
+```python
+df[(df.prescreen_rank == 'candidate-human') & (df.prescreen_would_be_rank == 'gold-human')]
+```
+
+All ranks are stored with a session-kind suffix: `gold-human`, `silver-ai`, `candidate-baseline`, etc. This applies to both the per-session `session_rank` field and the cumulative `prescreen_rank` field.
 
 ---
 
@@ -138,6 +156,30 @@ The demon/control stream is an uninfluenced half of the same quantum fetch. Thre
 
 ---
 
+## Artifact Warning
+
+The artifact warning is a second use of the paired demon stream, distinct from PCS validation. Where PCS checks whether the control stream is well-behaved on its own, the artifact warning asks whether a detected subject-stream signal is actually subject-specific — or whether it is a property of the quantum fetch as a whole.
+
+The shuffle collapse test is applied **symmetrically** to both streams:
+
+- **Subject shuffle**: subject bits shuffled within-block → H_subject recomputed → KS distance vs fixed H_demon
+- **Demon shuffle**: demon bits shuffled within-block → H_demon recomputed → KS distance vs fixed H_subject
+
+The demon collapse gate uses the same thresholds as the subject gate:
+
+| Criterion | Threshold | Meaning |
+|---|---|---|
+| `demonCollapseP` | `< 0.10` | Demon KS distance anomalously large vs shuffled replicates |
+| `demonDDrop` | `≥ 0.15` | Demon KS distance dropped ≥ 15% after shuffling |
+
+`artifactWarning` fires (OR logic) if the demon stream independently passes either criterion. This indicates that the temporal structure being detected is not specific to the subject stream — it is shared across both halves of the same fetch, pointing to a QRNG-level structural property rather than a human-driven signal.
+
+`deltaDGap = subjectDDrop − demonDDrop` quantifies the asymmetry. A genuine human signal should produce a large deltaDGap (subject collapses strongly, demon does not). A QRNG-level artefact produces a small deltaDGap (both streams collapse similarly).
+
+**This diagnostic is informational only — it never affects eligibility or rank.** It is recorded in the session doc as `session_artifact_warning` and `session_artifact_delta_dgap` for researcher review. In cumulative analysis, a session-level artifact warning typically resolves once data accumulates across sessions, since QRNG-level structural quirks are local to individual fetches and do not persist.
+
+---
+
 ## Configuration Constants
 
 ```
@@ -145,14 +187,17 @@ TRIALS_PER_BLOCK:           150       — trials per block (150 subject + 150 de
 BITS_PER_BLOCK:             301       — 1 assignment + 2 × 150
 BLOCKS_TOTAL:               80        — blocks per session
 MIN_SESSIONS_FOR_DECISION:  5         — cumulative verdict not shown before this
+MAX_SESSIONS_FOR_ANALYSIS:  20        — session cap; further sessions not accumulated
 
 NULL_HURST_MEAN:            0.52799   — finite-sample null for N=150 (10k simulations)
 NULL_HURST_SD:              0.04579
 
-PRESCREEN_KS_ALPHA:         0.10      — KS gate threshold (loose by design)
+PRESCREEN_KS_ALPHA:         0.15      — KS gate threshold (permissive by design — high sensitivity)
 PRESCREEN_COLLAPSE_ALPHA:   0.10      — permutation p-value gate
-PRESCREEN_DDROP_MIN:        0.15      — magnitude collapse gate
-N_SHUFFLES:                 200       — permutations per analysis
+PRESCREEN_DDROP_MIN:        0.15      — magnitude collapse gate (silver threshold)
+PRESCREEN_DDROP_GOLD:       0.20      — magnitude gate for gold rank
+PRESCREEN_COLLAPSE_GOLD:    0.05      — probability gate for gold rank
+N_SHUFFLES:                 500       — permutations per analysis
 
 PRESCREEN_INTENSITY_T2:     1         — Tier 1→2 SE boundary
 PRESCREEN_INTENSITY_T3:     2         — Tier 2→3 SE boundary
@@ -170,7 +215,7 @@ Null distribution values are derived from `hurst_null_distributions.ipynb` (seed
 
 ## Session Linking
 
-Participants provide an email at consent. The email is stored in plain text on the `prescreen_participants` Firestore document to allow contact with eligible participants and to link sessions across devices. The document ID is `SHA-256(email)[0:32]` for lookup. Sessions without an email fall back to Firebase anonymous UID for same-device session counting only.
+Participants provide an email at consent. The email is stored in plain text on the `prescreen_participants` Firestore document to allow contact with eligible participants and to link sessions across devices. The document ID is `SHA-256(email)[0:32]` for lookup. Sessions without an email fall back to Firebase anonymous UID. For `#auto` and `#ai` modes, the anonymous uid is used as the participant hash directly — each fresh incognito window or Puppeteer invocation gets a new uid and therefore a new isolated batch. Cumulative analysis runs after 5 sessions exactly as for email-linked participants.
 
 The participant profile accumulates:
 - `cumulative_h_subject` — Hurst values per block across all sessions
@@ -178,6 +223,47 @@ The participant profile accumulates:
 - `cumulative_bits_subject` — raw subject bit strings per block
 - `cumulative_demon_hits` / `cumulative_demon_trials` — for ghostZ
 - `session_count`, `session_ids`, `last_session_date`, `sessions_today`
+- `latest_cumulative_verdict` — cached result of most recent cumulative analysis (`rank`, `eligible`, `ksGate`, `collapseGate`, `intensityTier`, `pcsWarning`, `artifactWarning`)
+- `latest_usable_session_count` — session count at time of last cumulative analysis
+
+---
+
+## AI Agent Mode (`#ai`)
+
+Navigating to the experiment with the `#ai` hash activates AI agent mode, designed for Puppeteer automation via `ai-agent.js`.
+
+### Purpose
+
+AI mode is **not a baseline control**. It is an active test of whether a large language model (GPT-4o-mini) interacting with the experiment interface via Puppeteer can produce statistically detectable structure in the quantum random bit sequences — i.e., whether the AI's intention-like processing can influence the quantum source in a measurable way. Eligible AI sessions receive the session-kind suffix `-ai` on their rank fields (e.g. `silver-ai`).
+
+### How the agent operates
+
+1. **Onboarding** — reads instructions from the screen; initialises Firestore run doc (enabling Continue); clicks Continue
+2. **Per-block loop** — for each of 80 blocks:
+   - Receives a prompt: `Block N/80. Focus intention on TARGET. Ready?` before clicking "I'm Ready"
+   - Receives a focus prompt during the quantum fetch (pulsing screen)
+   - After the fetch, receives the block score (`score%, hits/trials`) and responds; clicks Continue
+3. **Post-session questionnaire** (`done` phase) — unlike auto-mode (which skips the questionnaire), AI mode renders the full post-survey form. The agent:
+   - Sends GPT-4o-mini the complete session conversation history plus the six questions
+   - Parses the JSON response and fills the form programmatically (sliders via React native setter + input events, radios via `.click()`, textarea via native setter)
+   - Submits the form — answers are saved to Firestore as `post_survey`
+4. **Between-session transitions** — clicks through results/summary/preparing-next screens automatically; resets tracking for the next session
+5. **Final debriefing** — after all sessions complete, asks GPT-4o-mini a retrospective question about strategy
+
+### Conversation history
+
+The agent maintains a full conversation history across the entire session (up to 600 messages, covering ~80 blocks × ~7 messages each). This means GPT-4o-mini has access to its entire block-by-block experience when answering the post-session questions — analogous to a human reflecting on their performance arc.
+
+### Post-survey fields saved by the agent
+
+| Field | Type | Note |
+|---|---|---|
+| `subjectiveSuccess` | 0–10 slider | "How connected did you feel to the target?" |
+| `focusLevel` | 0–10 slider | "How focused were you?" |
+| `focusStyle` | radio | `active_push`, `passive_allow`, `meditative`, `flow_autopilot` |
+| `auditoryEnvironment` | radio | Always `silence` for automated sessions |
+| `colorAffinity` | radio | `blue`, `orange`, or `no` — scientifically interesting: does the model report a colour pull that correlates with performance? |
+| `finalThoughts` | textarea | Optional — observations, notable patterns |
 
 ---
 
@@ -185,6 +271,6 @@ The participant profile accumulates:
 
 | Collection | Purpose |
 |---|---|
-| `prescreen_sessions_exp5` | One doc per session, contains per-block stats, Hurst history, audit results, post-survey |
-| `prescreen_participants` | One doc per email hash, cumulative arrays across all sessions |
+| `prescreen_sessions_exp5` | One doc per session — per-block stats, Hurst history, raw bits (base64), audit results, post-survey, per-session analysis fields (`session_rank`, `session_ks_p`, etc.), and cumulative analysis fields written on session 5+ (`prescreen_rank`, `prescreen_eligible`, etc.) |
+| `prescreen_participants` | One doc per email hash — cumulative arrays across all sessions, cached cumulative verdict, session metadata |
 | `exp5_invites` | Invite form submissions from eligible participants |

@@ -69,22 +69,32 @@ export async function signInWithEmailPassword(email, password) {
 }
 
 // Ensure we have a user (anonymous) before Firestore ops where needed.
-// (You can choose NOT to call this on pages where you don't want anon sign-in.)
+// Module-level promise ensures concurrent callers (e.g. React 18 StrictMode double-invoke)
+// share a single signInAnonymously call rather than creating two anonymous users.
+let _pendingSignIn = null;
 export async function ensureSignedIn() {
   await persistenceReady;
   if (authInstance.currentUser) return authInstance.currentUser;
-  await signInAnonymously(authInstance);
-  return new Promise((resolve, reject) => {
-    const off = onAuthStateChanged(
-      authInstance,
-      (u) => {
-        if (!u) return;
-        off();
-        resolve(u);
-      },
-      reject
-    );
-  });
+  if (_pendingSignIn) return _pendingSignIn;
+  _pendingSignIn = (async () => {
+    try {
+      await signInAnonymously(authInstance);
+      return await new Promise((resolve, reject) => {
+        const off = onAuthStateChanged(
+          authInstance,
+          (u) => {
+            if (!u) return;
+            off();
+            resolve(u);
+          },
+          reject
+        );
+      });
+    } finally {
+      _pendingSignIn = null;
+    }
+  })();
+  return _pendingSignIn;
 }
 
 // 6) Public exports used by your app

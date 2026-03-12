@@ -54,6 +54,50 @@ function shuffled(arr) {
   return a;
 }
 
+// ── Standard normal CDF (Abramowitz & Stegun approximation) ──────────────────
+function normCDF(z) {
+  const a1 =  0.254829592, a2 = -0.284496736, a3 =  1.421413741;
+  const a4 = -1.453152027, a5 =  1.061405429, p  =  0.3275911;
+  const sign = z < 0 ? -1 : 1;
+  z = Math.abs(z) / Math.SQRT2;
+  const t = 1 / (1 + p * z);
+  const y = 1 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-z * z);
+  return 0.5 * (1 + sign * y);
+}
+
+// ── Cliff's delta (non-parametric effect size) ───────────────────────────────
+// Compares raw distributions: P(X > Y) - P(X < Y), bounded [-1, 1].
+// Positive δ means values in `a` tend to exceed values in `b`.
+// Interpretation: |δ| < 0.147 negligible, < 0.33 small, < 0.474 medium, else large.
+// Note: This compares unpaired distributions (like KS), not paired differences.
+function cliffsD(a, b) {
+  if (!a.length || !b.length) return 0;
+  let greater = 0, less = 0;
+  for (const x of a) {
+    for (const y of b) {
+      if (x > y) greater++;
+      else if (x < y) less++;
+    }
+  }
+  return (greater - less) / (a.length * b.length);
+}
+
+// ── Wasserstein distance (1D, L1 / Earth Mover's Distance) ───────────────────
+// For equal-length samples: mean of |sorted_a[i] - sorted_b[i]|.
+// Interpretation: average "work" to transform one distribution into the other,
+// in the same units as the input (Hurst exponent units here).
+function wasserstein1D(a, b) {
+  if (!a.length || !b.length) return 0;
+  const sa = [...a].sort((x, y) => x - y);
+  const sb = [...b].sort((x, y) => x - y);
+  const n = Math.min(sa.length, sb.length);
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    sum += Math.abs(sa[i] - sb[i]);
+  }
+  return sum / n;
+}
+
 // ── Pearson r (diagnostic only — not used in any gate) ───────────────────────
 function pearsonR(a, b) {
   const n = a.length;
@@ -71,7 +115,8 @@ function pearsonR(a, b) {
 }
 
 // ── Main session analysis ─────────────────────────────────────────────────────
-// subjectBitsHistory : Array<Array<0|1>>  — raw bits per block (for shuffle test)
+// subjectBitsHistory : Array<Array<0|1>>  — raw subject bits per block (for subject shuffle test)
+// demonBitsHistory   : Array<Array<0|1>>  — raw demon bits per block (for artifact diagnostic)
 // hurstSubjectHistory: Array<number>      — H_subject per block
 // hurstDemonHistory  : Array<number>      — H_demon per block
 // nullHurst          : { mean, sd }       — finite-sample null from config
@@ -80,6 +125,7 @@ function pearsonR(a, b) {
 // totalDemonTrials   : number|null        — cumulative demon trial count (for ghostZ)
 export function computeSessionAnalysis(
   subjectBitsHistory,
+  demonBitsHistory,
   hurstSubjectHistory,
   hurstDemonHistory,
   nullHurst,
@@ -94,24 +140,46 @@ export function computeSessionAnalysis(
   const originalD = ksDist(hurstSubjectHistory, hurstDemonHistory);
   const originalP = ksPValue(originalD, nBlocks, nBlocks);
 
-  // 2. Shuffle test: for each iteration shuffle bits within every block,
-  //    recompute H_subject, re-run KS against the same H_demon
-  let nGreater = 0;
-  let totalShuffledD = 0;
+  // 2. Shuffle tests: subject-side (primary eligibility) + demon-side (artifact diagnostic)
+  //    Both use the same originalD as reference — symmetric test of which stream drove the separation.
+  //    Subject shuffle: shuffle subject bits → recompute H_subject → KS vs H_demon
+  //    Demon shuffle:   shuffle demon bits  → recompute H_demon  → KS vs H_subject
+  // hasDemonBits requires strict lockstep with subject bits.
+  // In cumulative analysis, any session predating the demon-bits feature will cause
+  // newDemonBits.length < newBits.length → hasDemonBits=false → artifact flag unavailable.
+  // This resolves naturally once all usable sessions in a participant's history are post-feature.
+  const hasDemonBits = Array.isArray(demonBitsHistory) && demonBitsHistory.length === subjectBitsHistory.length;
+
+  let nGreaterSubj = 0, totalShuffledDSubj = 0;
+  let nGreaterDemon = 0, totalShuffledDDemon = 0;
 
   for (let s = 0; s < nShuffles; s++) {
     const hSubjShuffled = subjectBitsHistory.map(bits => hurstApprox(shuffled(bits)));
-    const d = ksDist(hSubjShuffled, hurstDemonHistory);
-    totalShuffledD += d;
-    if (d >= originalD) nGreater++;
+    const dSubj = ksDist(hSubjShuffled, hurstDemonHistory);
+    totalShuffledDSubj += dSubj;
+    if (dSubj >= originalD) nGreaterSubj++;
+
+    if (hasDemonBits) {
+      const hDemonShuffled = demonBitsHistory.map(bits => hurstApprox(shuffled(bits)));
+      const dDemon = ksDist(hurstSubjectHistory, hDemonShuffled);
+      totalShuffledDDemon += dDemon;
+      if (dDemon >= originalD) nGreaterDemon++;
+    }
   }
 
-  const meanShuffledD = totalShuffledD / nShuffles;
+  const meanShuffledDSubj = totalShuffledDSubj / nShuffles;
   // collapseP = Pr(D_shuffled >= D_original): small → original D anomalously large → collapse confirmed
   // +1 correction avoids collapseP = 0.0 (overconfident with small shuffle counts)
-  const collapseP = (nGreater + 1) / (nShuffles + 1);
-  // dDrop: relative collapse magnitude
-  const dDrop = originalD > 0 ? (originalD - meanShuffledD) / originalD : 0;
+  const subjectCollapseP = (nGreaterSubj + 1) / (nShuffles + 1);
+  const subjectDDrop = originalD > 0 ? (originalD - meanShuffledDSubj) / originalD : 0;
+
+  let demonCollapseP = null, demonDDrop = null, deltaDGap = null;
+  if (hasDemonBits) {
+    const meanShuffledDDemon = totalShuffledDDemon / nShuffles;
+    demonCollapseP = (nGreaterDemon + 1) / (nShuffles + 1);
+    demonDDrop = originalD > 0 ? (originalD - meanShuffledDDemon) / originalD : 0;
+    deltaDGap = subjectDDrop - demonDDrop;
+  }
 
   // 3. PCS quality diagnostics (informational — none are gates)
   // nullZ: how far did the demon stream's mean Hurst drift from null?
@@ -137,19 +205,37 @@ export function computeSessionAnalysis(
   //   Expected ~0.35 due to within-fetch QRNG adjacency — diagnostic only.
   const crossCorr = pearsonR(hurstSubjectHistory, hurstDemonHistory);
 
-  // 4. ΔH intensity (mean and SE across blocks)
+  // 4. ΔH distribution analysis (paired differences per block)
   //    Used by evaluatePrescreen to assign Tier 1/2/3 within eligible ranks.
   const deltaHList = hurstSubjectHistory.map((h, i) => h - hurstDemonHistory[i]);
   const meanDeltaH = deltaHList.reduce((a, b) => a + b, 0) / nBlocks;
   const varDeltaH  = deltaHList.reduce((s, v) => s + (v - meanDeltaH) ** 2, 0) / nBlocks;
   const seDeltaH   = nBlocks > 1 ? Math.sqrt(varDeltaH) / Math.sqrt(nBlocks) : 0;
 
+  // Sign test: fraction of blocks where ΔH > 0 (subject beat demon)
+  // Under null, ~50%. Binomial test for systematic bias.
+  const nPositive = deltaHList.filter(d => d > 0).length;
+  const signRate  = nPositive / nBlocks;
+  // Two-tailed binomial p-value: P(|X - n/2| >= |nPositive - n/2|) under p=0.5
+  // Using normal approximation for large n: Z = (nPositive - n/2) / sqrt(n/4)
+  const signZ = (nPositive - nBlocks / 2) / Math.sqrt(nBlocks / 4);
+  const signP = 2 * (1 - normCDF(Math.abs(signZ)));
+
+  // 5. Effect size diagnostics (metadata only — not used in any gate)
+  //    Cliff's δ: compares raw H distributions, P(H_subj > H_demon) - P(H_subj < H_demon).
+  //    Wasserstein: EMD in Hurst units, captures distribution shift magnitude.
+  const cliffsDelta = cliffsD(hurstSubjectHistory, hurstDemonHistory);
+  const wassersteinDist = wasserstein1D(hurstSubjectHistory, hurstDemonHistory);
+
   return {
     nBlocks,
     ks: { originalD, originalP },
-    shuffle: { collapseP, meanShuffledD, dDrop, nShuffles },
+    effectSize: { cliffsDelta, wassersteinDist },
+    shuffleSubject: { collapseP: subjectCollapseP, dDrop: subjectDDrop, meanShuffledD: meanShuffledDSubj, nShuffles },
+    shuffleDemon:   { collapseP: demonCollapseP,   dDrop: demonDDrop,   available: hasDemonBits },
+    artifactContrast: { deltaDGap },
     pcs: { demonMean, demonSD, nullZ, ghostZ, sdRatio, crossCorr },
-    deltaH: { meanDeltaH, seDeltaH },
+    deltaH: { meanDeltaH, seDeltaH, signRate, signP },
   };
 }
 
@@ -165,29 +251,31 @@ export function computeSessionAnalysis(
 //   pcsWarning   — informational amber flag (any PCS metric anomalous)
 //   pcsFlags     — { nullZ, ghostZ, sdRatio } — which metrics triggered
 //
-// Gold:      eligible + dDrop > 0.30  (high-confidence structural influencer)
-// Silver:    eligible + dDrop ≤ 0.30  (includes collapseP-only signals; still invited)
+// Gold:      eligible + (collapseP < PRESCREEN_COLLAPSE_GOLD OR dDrop >= PRESCREEN_DDROP_GOLD)
+// Silver:    eligible, gold criteria not met  (includes collapseP-only signals; still invited)
 // Candidate: ksGate && !collapseGate — tag for manual review, no invite
 // pcsWarning never blocks eligibility or changes rank
 
 export function evaluatePrescreen(analysis, C) {
-  const { ks, shuffle, pcs, deltaH } = analysis;
+  const { ks, shuffleSubject, shuffleDemon, pcs, deltaH } = analysis;
 
   // Layer 1 — KS anomaly gate
   const ksGate = ks.originalP < C.PRESCREEN_KS_ALPHA;
 
   // Layer 2 — Shuffle collapse gate (OR: probability OR magnitude)
   const collapseGate =
-    shuffle.collapseP < C.PRESCREEN_COLLAPSE_ALPHA ||
-    shuffle.dDrop     >= C.PRESCREEN_DDROP_MIN;
+    shuffleSubject.collapseP < C.PRESCREEN_COLLAPSE_ALPHA ||
+    shuffleSubject.dDrop     >= C.PRESCREEN_DDROP_MIN;
 
   const eligible = ksGate && collapseGate;
 
   // Database rank (first-match, strictest first)
   // Candidate is exactly: ksGate passes but collapseGate fails — no other conditions
+  // Gold: strong evidence via probability (collapseP) OR magnitude (dDrop)
   let rank = 'none';
   if (eligible) {
-    rank = shuffle.dDrop > 0.30 ? 'gold' : 'silver';
+    const isGold = shuffleSubject.collapseP < C.PRESCREEN_COLLAPSE_GOLD || shuffleSubject.dDrop >= C.PRESCREEN_DDROP_GOLD;
+    rank = isGold ? 'gold' : 'silver';
   } else if (ksGate && !collapseGate) {
     rank = 'candidate'; // signal without confirmed temporal structure — manual review
   }
@@ -211,5 +299,24 @@ export function evaluatePrescreen(analysis, C) {
   const pcsWarning  = nullZFlag || ghostZFlag || sdRatioFlag;
   const pcsFlags    = { nullZFlag, ghostZFlag, sdRatioFlag };
 
-  return { ksGate, collapseGate, eligible, rank, intensityTier, pcsWarning, pcsFlags };
+  // Artifact warning — fires when demon stream independently passes its own collapse gate,
+  // suggesting temporal structure may be QRNG-level rather than subject-driven.
+  const demonPassesCollapse = shuffleDemon?.available &&
+    shuffleDemon.collapseP !== null && (
+      shuffleDemon.collapseP < C.PRESCREEN_COLLAPSE_ALPHA ||
+      shuffleDemon.dDrop     >= C.PRESCREEN_DDROP_MIN
+    );
+  const artifactWarning = !!demonPassesCollapse;
+
+  // When artifactWarning fires on an eligible result, cap rank to 'candidate' — the structure
+  // is not confirmed as subject-specific so no invite is warranted.
+  // wouldBeRank records what the subject stream alone would have earned, allowing researchers
+  // to identify cases where both streams show strong collapse (possible shared-fetch effect).
+  const wouldBeRank = rank;
+  if (artifactWarning && eligible) {
+    rank = 'candidate';
+    intensityTier = null; // tier is meaningless when rank is capped
+  }
+
+  return { ksGate, collapseGate, eligible, rank, wouldBeRank, intensityTier, pcsWarning, pcsFlags, artifactWarning };
 }
