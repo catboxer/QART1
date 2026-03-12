@@ -4,5 +4,5 @@
 
 module.exports = {
   AI_MODE_SESSIONS: 5, // Number of AI agent sessions to run (must match src/config.js)
-  EXPERIMENT_URL: 'http://localhost:8888/exp5-prescreen/#ai', //https://experiments.whatthequark.com/exp5/#ai
+  EXPERIMENT_URL: 'https://experiments.whatthequark.com/exp5-prescreen/#ai' //http://localhost:8888/exp5-prescreen/#ai'
 };

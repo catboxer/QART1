@@ -285,7 +285,7 @@ export default function MainApp() {
           );
         }
       }
-      goToNext();
+      isAIMode ? goToDone() : goToNext();
     } else if ((phase === 'done' && isAutoMode) || phase === 'summary') {
       // Auto-mode: skip post-questionnaire; AI-mode: show questions for agent to fill
       goToNext();

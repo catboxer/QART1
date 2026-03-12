@@ -100,9 +100,11 @@ async function runAISession() {
   // Initialize state tracking
   const conversationHistory = [];
   let target = null;
-  // 80 blocks × ~6 messages each = ~480 max. Keep full session history so GPT can reflect
-  // on the entire arc when answering post-session questions. Cost: ~$0.004/session with gpt-4o-mini.
+  // Full history kept in memory so GPT can reflect on the entire arc when answering
+  // post-session questions. Per-block calls (ready/pulsing/score) only send the last
+  // SEND_HISTORY_LENGTH messages to stay well under the 200k TPM limit.
   const MAX_HISTORY_LENGTH = 600;
+  const SEND_HISTORY_LENGTH = 20; // messages sent per block call (~1-2k tokens vs ~30k for full history)
 
   // Wait for page to load
   await new Promise(resolve => setTimeout(resolve, 3000));
@@ -375,6 +377,10 @@ Respond with a brief acknowledgment that you understand the critical moment is w
           lastBlockProcessed = -1;
           lastAuditProcessed = -1;
           donePhaseHandled = false;
+          // Reset conversation history so each session's post-questions reflect only
+          // that session's experience — mirrors a human's session-scoped recall.
+          conversationHistory.length = 0;
+          console.log('🔄 Conversation history cleared for new session');
         }
 
         if (currentBlock >= lastBlockProcessed) {
@@ -386,7 +392,7 @@ Respond with a brief acknowledgment that you understand the critical moment is w
           console.log('🤖 Prompting AI before quantum fetch...');
 
           const readyResponse = await callOpenAIWithRetry(
-            [...conversationHistory, { role: 'user', content: readyPrompt }],
+            [...conversationHistory.slice(-SEND_HISTORY_LENGTH), { role: 'user', content: readyPrompt }],
             30
           );
 
@@ -446,7 +452,7 @@ Respond with a brief acknowledgment that you understand the critical moment is w
           console.log('🤖 Notifying AI about pulsing...');
 
           const pulsingResponse = await callOpenAIWithRetry(
-            [...conversationHistory, { role: 'user', content: pulsingPrompt }],
+            [...conversationHistory.slice(-SEND_HISTORY_LENGTH), { role: 'user', content: pulsingPrompt }],
             20
           );
 
@@ -492,7 +498,7 @@ Respond with a brief acknowledgment that you understand the critical moment is w
           const restPrompt = `Block ${currentBlockIdx}/${totalBlocks} done. Score: ${score}% (${hits}/${trials} hits). Target: ${target}. Stay focused.`;
 
           const restResponse = await callOpenAIWithRetry(
-            [...conversationHistory, { role: 'user', content: restPrompt }],
+            [...conversationHistory.slice(-SEND_HISTORY_LENGTH), { role: 'user', content: restPrompt }],
             30
           );
 
