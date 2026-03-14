@@ -95,11 +95,6 @@ export function usePrescreenAnalysis({
       // Participant doc: scalars only — no growing arrays
       const profRef = doc(db, C.PARTICIPANT_COLLECTION, participantHash);
       const todayUTC = new Date().toISOString().slice(0, 10);
-      const lastDate = participantProfile?.last_session_date;
-      const newToday =
-        lastDate === todayUTC
-          ? (participantProfile?.sessions_today ?? 0) + 1
-          : 1;
       setDoc(
         profRef,
         {
