@@ -32,6 +32,10 @@ export function QuestionsForm({
             next[q.id] = def;
             changed = true;
           }
+          if (q.type === 'checkbox') {
+            next[q.id] = [];
+            changed = true;
+          }
           // number/text/select default to '' is fine for controlled inputs
         }
       }
@@ -69,6 +73,7 @@ export function QuestionsForm({
 
       if (isRequired) {
         if (v == null || v === '') ok = false;
+        if (q.type === 'checkbox' && (!Array.isArray(v) || v.length === 0)) ok = false;
       }
 
       if (ok && q.type === 'number') {
@@ -239,6 +244,50 @@ export function QuestionsForm({
                 </div>
               )}
 
+              {q.type === 'checkbox' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 8 }}>
+                  {(q.options || []).map((opt) => {
+                    const optValue = typeof opt === 'object' ? opt.value : opt;
+                    const optLabel = typeof opt === 'object' ? opt.label : opt;
+                    const selected = Array.isArray(value) && value.includes(optValue);
+                    const toggle = () => {
+                      const current = Array.isArray(value) ? value : [];
+                      let next;
+                      if (selected) {
+                        next = current.filter((v) => v !== optValue);
+                      } else if (optValue === 'none') {
+                        next = ['none']; // selecting None clears everything else
+                      } else {
+                        next = [...current.filter((v) => v !== 'none'), optValue]; // selecting anything clears None
+                      }
+                      setAnswer(q.id, next);
+                    };
+                    return (
+                      <label
+                        key={optValue}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 10,
+                          cursor: 'pointer', fontSize: 15,
+                          background: selected ? 'rgba(99,102,241,0.12)' : 'transparent',
+                          borderRadius: 6, padding: '6px 10px',
+                          border: selected ? '1px solid rgba(99,102,241,0.4)' : '1px solid transparent',
+                          transition: 'all 120ms',
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          value={optValue}
+                          checked={selected}
+                          onChange={toggle}
+                          style={{ accentColor: '#6366f1', width: 16, height: 16 }}
+                        />
+                        {optLabel}
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+
               {q.type === 'textarea' && (
                 <textarea
                   id={q.id}
@@ -281,6 +330,11 @@ export function QuestionsForm({
       >
         {submitting ? 'Submitting…' : 'Continue'}
       </button>
+      {!allOk && (
+        <div style={{ marginTop: 8, fontSize: 12, color: '#888', textAlign: 'center' }}>
+          All questions are required before continuing.
+        </div>
+      )}
     </form>
   );
 }
