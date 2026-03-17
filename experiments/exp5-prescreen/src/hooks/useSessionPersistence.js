@@ -147,7 +147,7 @@ export function useSessionPersistence({
         : null;
 
       // Dev-mode round-trip integrity check — zero cost in production
-      if (import.meta.env.DEV && raw_bits_b64) {
+      if (process.env.NODE_ENV === 'development' && raw_bits_b64) {
         const orig = allRawBitsRef.current;
         const rt = unpackBitsFromBase64(raw_bits_b64, orig.length, C.BITS_PER_BLOCK);
         let ok = rt.length === orig.length;
