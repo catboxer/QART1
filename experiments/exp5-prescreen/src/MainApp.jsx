@@ -82,7 +82,7 @@ export default function MainApp() {
     sessionCount, setSessionCount,
     usableSessionCount,
     pastH_s, pastH_d, pastBits, pastDemonBits,
-    pastDemonHits, pastDemonTrials,
+    pastSubjectHits, pastDemonHits, pastDemonTrials,
     requireUid,
     loadParticipant,
     loadAutoParticipant,
@@ -190,7 +190,7 @@ export default function MainApp() {
     phase, sessionCount, usableSessionCount, isAutoMode, isAIMode,
     hurstSubjectHistory, hurstDemonHistory, subjectBitsHistory, demonBitsHistory,
     totalGhostHits, totals,
-    pastH_s, pastH_d, pastBits, pastDemonBits, pastDemonHits, pastDemonTrials,
+    pastH_s, pastH_d, pastBits, pastDemonBits, pastSubjectHits, pastDemonHits, pastDemonTrials,
     runRef, allRawBitsRef,
     participantHash, participantProfile, emailPlaintext,
     onHistoryUpdated: setCumulativeHistory,
@@ -1559,6 +1559,12 @@ export default function MainApp() {
               irBg = '#fff7ed';
               irDesc =
                 'Your stream showed an unusual distribution but the collapse test was inconclusive.';
+            } else if (rawRank === 'score_anomaly') {
+              irVerdict = 'Unusual Hit Rate Detected';
+              irColor = '#7c3aed';
+              irBg = '#faf5ff';
+              irDesc =
+                'No temporal pattern was detected, but your cumulative hit rate was statistically unusual — beyond what chance alone would predict.';
             } else {
               irVerdict = 'No Pattern Detected';
               irColor = '#6b7280';
@@ -1817,10 +1823,14 @@ export default function MainApp() {
   // FINAL SCREEN
   if (phase === 'summary') {
     // Invite eligibility from usePrescreenAnalysis — inviteStatus is single source of truth
-    // Preview mode (#preview) forces gold for UI review
+    // Preview mode: #preview forces gold, #preview-score forces score_anomaly, #preview-candidate forces candidate
     const isCumulativeSession = isCumulativeReady;
-    const inviteEligible = isPreviewMode || inviteStatus.showInvite;
-    const summaryRank = isPreviewMode ? 'gold' : inviteStatus.summaryRank;
+    const previewRank = window.location.hash.includes('preview-score') ? 'score_anomaly'
+      : window.location.hash.includes('preview-candidate') ? 'candidate'
+      : isPreviewMode ? 'gold'
+      : null;
+    const inviteEligible = !!previewRank || inviteStatus.showInvite;
+    const summaryRank = previewRank ?? inviteStatus.summaryRank;
 
     return (
       <div
@@ -1861,6 +1871,7 @@ export default function MainApp() {
         {inviteEligible &&
           (() => {
             const isCandidate = summaryRank === 'candidate';
+            const isScoreAnomaly = summaryRank === 'score_anomaly';
             const boxStyle = isCandidate
               ? {
                   position: 'relative',
@@ -1871,6 +1882,16 @@ export default function MainApp() {
                   borderRadius: 14,
                   boxShadow: '0 0 16px #60a5fa33',
                 }
+              : isScoreAnomaly
+              ? {
+                  position: 'relative',
+                  marginBottom: 24,
+                  padding: '24px 28px',
+                  background: '#faf5ff',
+                  border: '2px solid #a855f7',
+                  borderRadius: 14,
+                  boxShadow: '0 0 16px #a855f733',
+                }
               : {
                   position: 'relative',
                   marginBottom: 24,
@@ -1880,9 +1901,9 @@ export default function MainApp() {
                   borderRadius: 14,
                   boxShadow: '0 0 24px #f59e0b55',
                 };
-            const labelColor = isCandidate ? '#1d4ed8' : '#b45309';
-            const headColor = isCandidate ? '#1e3a8a' : '#92400e';
-            const bodyColor = isCandidate ? '#1e40af' : '#78350f';
+            const labelColor = isCandidate ? '#1d4ed8' : isScoreAnomaly ? '#7c3aed' : '#b45309';
+            const headColor  = isCandidate ? '#1e3a8a' : isScoreAnomaly ? '#581c87' : '#92400e';
+            const bodyColor  = isCandidate ? '#1e40af' : isScoreAnomaly ? '#6b21a8' : '#78350f';
             return (
               <div style={boxStyle}>
                 {!isCandidate && (
@@ -1962,6 +1983,8 @@ export default function MainApp() {
                 >
                   {isCandidate
                     ? 'INTERESTING PATTERN DETECTED'
+                    : isScoreAnomaly
+                    ? 'UNUSUAL SCORING DETECTED'
                     : 'STATUS: HIGH-RESONANCE SIGNATURE DETECTED'}
                 </div>
                 <div
@@ -1974,6 +1997,8 @@ export default function MainApp() {
                 >
                   {isCandidate
                     ? "We'd like to learn more about your session"
+                    : isScoreAnomaly
+                    ? 'Your hit rate stands out'
                     : 'You are a strong candidate for Experiment 5'}
                 </div>
                 <p
@@ -1986,6 +2011,8 @@ export default function MainApp() {
                 >
                   {isCandidate
                     ? 'Your session showed an unusual pattern in the quantum stream that our research team would like to review.'
+                    : isScoreAnomaly
+                    ? "We didn't detect a temporal pattern, but your cumulative hit rate across all sessions was statistically unusual — beyond what chance would predict. That's a different kind of signal, and we'd like to investigate further."
                     : 'Your interaction with the quantum stream has met the criteria for the next phase of our research.'}
                 </p>
                 <p
@@ -2009,7 +2036,7 @@ export default function MainApp() {
                     textAlign: 'left',
                   }}
                 >
-                  {isCandidate
+                  {isCandidate || isScoreAnomaly
                     ? "Leave your details below and we'll be in touch:"
                     : 'Leave your details below to secure your place and receive your personal results when the study concludes:'}
                 </p>

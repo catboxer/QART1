@@ -52,6 +52,7 @@ export function useParticipantProfile({ db, C }) {
   const [pastH_d, setPastH_d] = useState([]);
   const [pastBits, setPastBits] = useState([]);
   const [pastDemonBits, setPastDemonBits] = useState([]);
+  const [pastSubjectHits, setPastSubjectHits] = useState(0);
   const [pastDemonHits, setPastDemonHits] = useState(0);
   const [pastDemonTrials, setPastDemonTrials] = useState(0);
 
@@ -82,11 +83,12 @@ export function useParticipantProfile({ db, C }) {
   }, []);
 
   // ── setCumulativeHistory — update in-memory past-session arrays between auto/AI sessions ──
-  const setCumulativeHistory = useCallback(({ h_s, h_d, bits, dBits, dHits, dTrials, count, usableCount }) => {
+  const setCumulativeHistory = useCallback(({ h_s, h_d, bits, dBits, subjectHits, dHits, dTrials, count, usableCount }) => {
     setPastH_s(h_s);
     setPastH_d(h_d);
     setPastBits(bits);
     setPastDemonBits(dBits);
+    setPastSubjectHits(subjectHits ?? 0);
     setPastDemonHits(dHits);
     setPastDemonTrials(dTrials);
     setSessionCount(count);
@@ -115,6 +117,7 @@ export function useParticipantProfile({ db, C }) {
         pastH_d: h_d,
         pastBits: bits,
         pastDemonBits: dBits,
+        pastSubjectHits: sHits,
         pastDemonHits: dHits,
         pastDemonTrials: dTrials,
       } = buildParticipantHistory(snap.docs, C, { includeAllTypes: true });
@@ -122,6 +125,7 @@ export function useParticipantProfile({ db, C }) {
       setPastH_d(h_d);
       setPastBits(bits);
       setPastDemonBits(dBits);
+      setPastSubjectHits(sHits);
       setPastDemonHits(dHits);
       setPastDemonTrials(dTrials);
       setSessionCount(sc);
@@ -166,6 +170,7 @@ export function useParticipantProfile({ db, C }) {
               pastH_d: h_d,
               pastBits: bits,
               pastDemonBits: dBits,
+              pastSubjectHits: sHits,
               pastDemonHits: dHits,
               pastDemonTrials: dTrials,
             } = buildParticipantHistory(snap.docs, C);
@@ -173,6 +178,7 @@ export function useParticipantProfile({ db, C }) {
             setPastH_d(h_d);
             setPastBits(bits);
             setPastDemonBits(dBits);
+            setPastSubjectHits(sHits);
             setPastDemonHits(dHits);
             setPastDemonTrials(dTrials);
             usableCount = usc;
@@ -227,6 +233,7 @@ export function useParticipantProfile({ db, C }) {
     pastH_d,
     pastBits,
     pastDemonBits,
+    pastSubjectHits,
     pastDemonHits,
     pastDemonTrials,
     requireUid,

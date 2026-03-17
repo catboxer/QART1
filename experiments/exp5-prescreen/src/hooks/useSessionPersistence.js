@@ -128,6 +128,9 @@ export function useSessionPersistence({
     try {
       const hitRate      = totals.n > 0 ? totals.k / totals.n        : 0.5;
       const ghostHitRate = totals.n > 0 ? totalGhostHits / totals.n  : 0.5;
+      const subjectZ     = totals.n > 0
+        ? (totals.k - totals.n * 0.5) / (0.5 * Math.sqrt(totals.n))
+        : 0;
 
       const meanDH = deltaHurstHistory.length > 0
         ? deltaHurstHistory.reduce((a, b) => a + b, 0) / deltaHurstHistory.length
@@ -176,6 +179,7 @@ export function useSessionPersistence({
             totalTrials: totals.n,
             totalGhostHits,
             hitRate,
+            subjectZ,
             ghostHitRate,
             blocksCompleted: deltaHurstHistory.length,
             blocksPlanned: C.BLOCKS_TOTAL,

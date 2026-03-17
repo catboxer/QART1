@@ -39,7 +39,7 @@ export const preQuestions = [
       { label: 'Near-death experience (NDE)', value: 'nde' },
       { label: 'Contact with a deceased person', value: 'contact_deceased' },
       { label: 'Spiritual or kundalini awakening', value: 'kundalini' },
-      { label: 'Anomalous experience during meditation or contemplative practice', value: 'meditation_anomalous' },
+      { label: 'Unexplainable experience during meditation or contemplative practice', value: 'meditation_anomalous' },
       { label: 'Other — describe in the next question', value: 'other' },
       { label: 'None of the above', value: 'none' },
     ],
