@@ -649,7 +649,7 @@ export default function MainApp() {
         <h1>
           {isAIMode
             ? '🤖 AI Agent Mode'
-            : 'Assessing Randomness Suppression During Conscious Intention Tasks — Pilot Study'}
+            : 'Assessing Randomness Suppression During Conscious Intention Tasks — Pre-Screening For Experiment 5'}
         </h1>
 
         <div style={{ marginBottom: 30, marginTop: 30 }}>
@@ -695,14 +695,8 @@ export default function MainApp() {
           <button
             onClick={() => {
               if (canContinue && !isRunning) {
-                ensureRunDoc()
-                  .then(() => {
-                    setblockIdx(0);
-                    goToRest();
-                  })
-                  .catch((err) => {
-                    console.error('❌ ensureRunDoc failed:', err);
-                  });
+                setblockIdx(0);
+                goToRest();
               }
             }}
             disabled={!canContinue}
