@@ -23,7 +23,7 @@ export function usePrescreenAnalysis({
   phase, sessionCount, usableSessionCount, isAutoMode, isAIMode,
   hurstSubjectHistory, hurstDemonHistory, subjectBitsHistory, demonBitsHistory,
   totalGhostHits, totals,
-  pastH_s, pastH_d, pastBits, pastDemonBits, pastDemonHits, pastDemonTrials,
+  pastH_s, pastH_d, pastBits, pastDemonBits, pastSubjectHits = 0, pastDemonHits, pastDemonTrials,
   runRef, allRawBitsRef,
   participantHash, participantProfile, emailPlaintext,
   onHistoryUpdated,
@@ -78,6 +78,7 @@ export function usePrescreenAnalysis({
     const newH_d        = [...pastH_d,        ...hurstDemonHistory];
     const newBits       = [...pastBits,       ...subjectBitsHistory];
     const newDemonBits  = [...pastDemonBits,  ...demonBitsHistory];
+    const newSubjectHits = pastSubjectHits + totals.k;
     const newDemonHits   = pastDemonHits   + totalGhostHits;
     const newDemonTrials = pastDemonTrials + totals.n;
 
@@ -115,7 +116,7 @@ export function usePrescreenAnalysis({
     if ((isAutoMode || isAIMode) && onHistoryUpdated) {
       onHistoryUpdated({
         h_s: newH_s, h_d: newH_d, bits: newBits, dBits: newDemonBits,
-        dHits: newDemonHits, dTrials: newDemonTrials,
+        subjectHits: newSubjectHits, dHits: newDemonHits, dTrials: newDemonTrials,
         count: newCount, usableCount: usableNewCount,
       });
     }
@@ -138,15 +139,27 @@ export function usePrescreenAnalysis({
 
     const cumEval = evaluatePrescreen(cumAnalysis, C);
 
+    // Score anomaly: cumulative binomial Z for raw subject hit rate
+    const cumSubjectZ = newDemonTrials > 0
+      ? (newSubjectHits - newDemonTrials * 0.5) / (0.5 * Math.sqrt(newDemonTrials))
+      : 0;
+    const scoreAnomalyFlag = Math.abs(cumSubjectZ) >= 2;
+    // Override rank to 'score_anomaly' only when Hurst gates produced nothing
+    const effectiveRank = cumEval.rank === 'none' && scoreAnomalyFlag
+      ? 'score_anomaly'
+      : cumEval.rank;
+
     // Write cumulative prescreen_rank / prescreen_eligible to session doc
     if (runRef) {
       const sessionKind = isAutoMode ? 'baseline' : isAIMode ? 'ai' : 'human';
       setDoc(
         runRef,
         {
-          prescreen_rank: `${cumEval.rank}-${sessionKind}`,
+          prescreen_rank: `${effectiveRank}-${sessionKind}`,
           prescreen_eligible: cumEval.eligible,
-          prescreen_would_be_rank: cumEval.wouldBeRank !== cumEval.rank ? `${cumEval.wouldBeRank}-${sessionKind}` : null,
+          prescreen_would_be_rank: cumEval.wouldBeRank !== effectiveRank ? `${cumEval.wouldBeRank}-${sessionKind}` : null,
+          prescreen_score_anomaly: scoreAnomalyFlag,
+          prescreen_subject_z: cumSubjectZ,
         },
         { merge: true },
       ).catch(console.error);
@@ -159,20 +172,23 @@ export function usePrescreenAnalysis({
         profRef,
         {
           latest_cumulative_verdict: {
-            rank:            cumEval.rank,
-            wouldBeRank:     cumEval.wouldBeRank,
-            eligible:        cumEval.eligible,
-            ksGate:          cumEval.ksGate,
-            collapseGate:    cumEval.collapseGate,
-            intensityTier:   cumEval.intensityTier,
-            pcsWarning:      cumEval.pcsWarning,
-            artifactWarning: cumEval.artifactWarning,
-            ksP:             cumAnalysis.ks.originalP,
-            collapseP:       cumAnalysis.shuffleSubject.collapseP,
-            dDrop:           cumAnalysis.shuffleSubject.dDrop,
-            demonCollapseP:  cumAnalysis.shuffleDemon?.collapseP ?? null,
-            demonDDrop:      cumAnalysis.shuffleDemon?.dDrop ?? null,
-            deltaDGap:       cumAnalysis.artifactContrast?.deltaDGap ?? null,
+            rank:               effectiveRank,
+            wouldBeRank:        cumEval.wouldBeRank,
+            eligible:           cumEval.eligible,
+            ksGate:             cumEval.ksGate,
+            collapseGate:       cumEval.collapseGate,
+            intensityTier:      cumEval.intensityTier,
+            pcsWarning:         cumEval.pcsWarning,
+            artifactWarning:    cumEval.artifactWarning,
+            scoreAnomalyFlag,
+            subjectZ:           cumSubjectZ,
+            cumulativeHitRate:  newDemonTrials > 0 ? newSubjectHits / newDemonTrials : null,
+            ksP:                cumAnalysis.ks.originalP,
+            collapseP:          cumAnalysis.shuffleSubject.collapseP,
+            dDrop:              cumAnalysis.shuffleSubject.dDrop,
+            demonCollapseP:     cumAnalysis.shuffleDemon?.collapseP ?? null,
+            demonDDrop:         cumAnalysis.shuffleDemon?.dDrop ?? null,
+            deltaDGap:          cumAnalysis.artifactContrast?.deltaDGap ?? null,
           },
           latest_usable_session_count: usableNewCount,
           latest_verdict_updated_at:   serverTimestamp(),
@@ -180,7 +196,7 @@ export function usePrescreenAnalysis({
         { merge: true },
       ).catch(err => console.error('Verdict cache save failed:', err));
     }
-  }, [phase, sessionCount, usableSessionCount, cumulativeAnalysis, participantProfile, participantHash, emailPlaintext, runRef, isAutoMode, isAIMode, onHistoryUpdated, hurstSubjectHistory, hurstDemonHistory, subjectBitsHistory, demonBitsHistory, totalGhostHits, totals.n, pastH_s, pastH_d, pastBits, pastDemonBits, pastDemonHits, pastDemonTrials]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [phase, sessionCount, usableSessionCount, cumulativeAnalysis, participantProfile, participantHash, emailPlaintext, runRef, isAutoMode, isAIMode, onHistoryUpdated, hurstSubjectHistory, hurstDemonHistory, subjectBitsHistory, demonBitsHistory, totalGhostHits, totals.n, totals.k, pastH_s, pastH_d, pastBits, pastDemonBits, pastSubjectHits, pastDemonHits, pastDemonTrials]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Effect 3: Per-session QA stats write (fires when sessionAnalysis is ready) ─
   // prescreen_rank / prescreen_eligible are NOT written here — they require cumulative
@@ -226,6 +242,17 @@ export function usePrescreenAnalysis({
   // ── Derived: decision and inviteStatus ────────────────────────────────────────
   const isCumulativeReady = cumulativeAnalysis != null;
 
+  // Score anomaly: cumulative binomial Z for raw subject hit rate (cumulative only)
+  let scoreAnomalyFlag = false;
+  if (isCumulativeReady) {
+    const cumHits   = pastSubjectHits + totals.k;
+    const cumTrials = pastDemonTrials + totals.n;
+    if (cumTrials > 0) {
+      const z = (cumHits - cumTrials * 0.5) / (0.5 * Math.sqrt(cumTrials));
+      scoreAnomalyFlag = Math.abs(z) >= 2;
+    }
+  }
+
   // Use cumulative analysis when available, session analysis otherwise.
   // NOTE: eligible and showInvite are always false before isCumulativeReady —
   // this preserves the 5-session gate for confetti and the invite form.
@@ -233,13 +260,17 @@ export function usePrescreenAnalysis({
   let decision = {
     scope: null, rank: null, eligible: false,
     ksGate: false, collapseGate: false,
-    intensityTier: null, pcsWarning: false, pcsFlags: {},
+    intensityTier: null, pcsWarning: false, pcsFlags: {}, scoreAnomalyFlag: false,
   };
   if (activeAnalysis) {
     const scope = cumulativeAnalysis ? 'cumulative' : 'session';
     const ev = evaluatePrescreen(activeAnalysis, C);
+    let finalRank = ev.rank;
+    if (isCumulativeReady && finalRank === 'none' && scoreAnomalyFlag) {
+      finalRank = 'score_anomaly';
+    }
     // eligible is only meaningful once we have cumulative confirmation
-    decision = { scope, ...ev, eligible: isCumulativeReady ? ev.eligible : false };
+    decision = { scope, ...ev, rank: finalRank, scoreAnomalyFlag, eligible: isCumulativeReady ? ev.eligible : false };
   }
 
   // inviteStatus: summary screen uses this to show invite form
@@ -247,8 +278,12 @@ export function usePrescreenAnalysis({
   // Both showInvite and category require cumulative data — session-only rank never triggers invite.
   // Suppress if participant has already submitted their email (stored on profile).
   const alreadySignedUp = !!participantProfile?.email;
-  const showInvite = !alreadySignedUp && isCumulativeReady && (eligible || rank === 'candidate');
-  const category = eligible ? 'eligible' : rank === 'candidate' ? 'candidate_review' : 'none';
+  const showInvite = !alreadySignedUp && isCumulativeReady &&
+    (eligible || rank === 'candidate' || rank === 'score_anomaly');
+  const category = eligible ? 'eligible'
+    : rank === 'candidate'     ? 'candidate_review'
+    : rank === 'score_anomaly' ? 'score_anomaly'
+    : 'none';
   const inviteStatus = { showInvite, category, summaryRank: rank };
 
   return {

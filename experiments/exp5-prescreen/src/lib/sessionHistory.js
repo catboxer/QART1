@@ -18,6 +18,7 @@ import { unpackBitsFromBase64 } from './rawBitsCodec.js';
  *   pastDemonBits: number[][],
  *   pastDemonHits: number,
  *   pastDemonTrials: number,
+ *   pastSubjectHits: number,
  * }}
  *
  * NOTE: pastBits and pastDemonBits are always the same length — one entry per usable block.
@@ -26,7 +27,7 @@ import { unpackBitsFromBase64 } from './rawBitsCodec.js';
  */
 export function buildParticipantHistory(snapDocs, C, { includeAllTypes = false } = {}) {
   let cumH_s = [], cumH_d = [], cumBits = [], cumDemonBits = [];
-  let cumDemonHits = 0, cumDemonTrials = 0;
+  let cumDemonHits = 0, cumDemonTrials = 0, cumSubjectHits = 0;
   let sessionCount = 0, usableSessionCount = 0;
 
   for (const d of snapDocs) {
@@ -48,8 +49,9 @@ export function buildParticipantHistory(snapDocs, C, { includeAllTypes = false }
       usableSessionCount++;
       cumH_s.push(...h_s);
       cumH_d.push(...h_d);
-      cumDemonHits  += data.aggregates?.totalGhostHits ?? 0;
-      cumDemonTrials += data.aggregates?.totalTrials   ?? 0;
+      cumSubjectHits += data.aggregates?.totalHits      ?? 0;
+      cumDemonHits   += data.aggregates?.totalGhostHits ?? 0;
+      cumDemonTrials += data.aggregates?.totalTrials    ?? 0;
 
       // Unpack full BITS_PER_BLOCK calls; re-derive subject half via assignment bit
       const blocks = unpackBitsFromBase64(bitsB64, h_s.length, C.BITS_PER_BLOCK);
@@ -71,6 +73,7 @@ export function buildParticipantHistory(snapDocs, C, { includeAllTypes = false }
     pastH_d:         cumH_d,
     pastBits:        cumBits,
     pastDemonBits:   cumDemonBits,
+    pastSubjectHits: cumSubjectHits,
     pastDemonHits:   cumDemonHits,
     pastDemonTrials: cumDemonTrials,
   };
