@@ -1,5 +1,3 @@
-// import { config } from './config.js';
-//const N_QUANTUM = config.trialsPerBlock.spoon_love;
 
 export const preQuestions = [
   {
@@ -33,13 +31,14 @@ export const preQuestions = [
       { label: 'Precognition — knowing something before you could have known it', value: 'precognition' },
       { label: 'Remote viewing — perceiving a distant location or object', value: 'remote_viewing' },
       { label: 'Telepathy — direct mind-to-mind communication', value: 'telepathy' },
+      { label: 'Psychokinesis — influencing objects or events with the mind', value: 'psychokinesis' },
       { label: 'Precognitive or prophetic dream', value: 'precog_dream' },
-      { label: 'Meaningful coincidence / synchronicity', value: 'synchronicity' },
       { label: 'Out-of-body experience (OBE)', value: 'obe' },
       { label: 'Near-death experience (NDE)', value: 'nde' },
       { label: 'Contact with a deceased person', value: 'contact_deceased' },
       { label: 'Spiritual or kundalini awakening', value: 'kundalini' },
       { label: 'Unexplainable experience during meditation or contemplative practice', value: 'meditation_anomalous' },
+      { label: 'Meaningful coincidence / synchronicity', value: 'synchronicity' },
       { label: 'Other — describe in the next question', value: 'other' },
       { label: 'None of the above', value: 'none' },
     ],
@@ -59,6 +58,16 @@ export const preQuestions = [
     max: 10,
     leftLabel: 'No, absolutely not',
     rightLabel: 'Yes, absolutely',
+  },
+  {
+    id: 'psiConfidence',
+    question:
+      'How confident are you that you personally have a psychic ability (precognition, remote viewing, telepathy, or psychokinesis)?',
+    type: 'slider',
+    min: 0,
+    max: 10,
+    leftLabel: 'Not at all confident',
+    rightLabel: 'Completely certain',
   },
 ];
 
