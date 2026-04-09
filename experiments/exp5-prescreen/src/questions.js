@@ -1,6 +1,3 @@
-// import { config } from './config.js';
-//const N_QUANTUM = config.trialsPerBlock.spoon_love;
-
 export const preQuestions = [
   {
     id: 'age',
