@@ -23,7 +23,7 @@ import {
  *
  * @param {{
  *   C,
- *   phase, target, setTarget,
+ *   phase, target,
  *   isAutoMode, isAIMode,
  *   goToScore, goToRest, goToResults,
  *   runRef,
@@ -38,7 +38,7 @@ import {
  */
 export function useTrialRunner({
   C,
-  phase, target, setTarget,
+  phase, target,
   isAutoMode, isAIMode,
   goToScore, goToRest, goToResults,
   runRef,
@@ -405,10 +405,6 @@ export function useTrialRunner({
             }, { merge: true });
           }
         }
-
-        // Randomize target for the next set of blocks
-        const randomByte = crypto.getRandomValues(new Uint8Array(1))[0];
-        setTarget(randomByte & 1 ? 'BLUE' : 'ORANGE');
       } catch (error) {
         console.error('❌ Audit failed:', error);
         // Don't block progression on audit failure
