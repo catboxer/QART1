@@ -35,8 +35,8 @@ instead of left to the production race/fallback logic.
    production race/fallback endpoint, so it can never be silently redirected to ANU or
    to a different provider than the one it asked for.
 3. **Randomized order, not alternation — via balanced block-randomized sittings.**
-   Each sitting pre-generates a random shuffle of a fixed multiset (default: 20 Outshift
-   + 20 LFDR = 40 blocks) before any bits are pulled, and logs that planned sequence
+   Each sitting pre-generates a random shuffle of a fixed multiset (default: 15 Outshift
+   + 15 LFDR = 30 blocks, matching a real Exp4 session length) before any bits are pulled, and logs that planned sequence
    up front. This avoids both strict ABAB aliasing and the failure mode where Outshift's
    daily quota exhausts mid-sitting and silently reshapes a naive per-call coin-flip into
    "early blocks are Outshift, late blocks are LFDR" — a temporal confound by construction.
@@ -61,7 +61,7 @@ instead of left to the production race/fallback logic.
 Outshift is also the production pilot's preferred provider — every call this script makes
 competes for the same daily quota as real participant sessions. To bound that risk:
 
-- Default per-sitting Outshift budget: **20 calls** (well under whatever the daily cap
+- Default per-sitting Outshift budget: **15 calls** (well under whatever the daily cap
   turns out to be, and small relative to the pilot's own usage).
 - If an Outshift call fails with a quota/rate-limit signal (matching the same `_429`
   detection `qrng-race.js`'s circuit breaker uses), the script does **not** substitute
@@ -77,7 +77,7 @@ competes for the same daily quota as real participant sessions. To bound that ri
 
 ## 4. Target sample size
 
-~2,000–2,500 blocks per provider (≈50–60 completed 40-block sittings), run across enough
+~2,000–2,500 blocks per provider (≈70–85 completed 30-block sittings), run across enough
 separate sittings/days to support the time-of-day check in §5.
 
 ## 5. Primary analysis (two-step test)
@@ -163,3 +163,31 @@ always from different providers, and writes to the same isolated collection with
 comes back ambiguous and a version with no time gap at all is needed to settle it — it costs
 additional Outshift quota (one call per block, same budget math as §3) that the spliced
 approach doesn't need at all.
+
+## 8. OSF Registration Fields
+
+**Dated:** 2026-08-19, written before any real (non-smoke-test) sitting has run.
+**Template:** standard OSF Preregistration (not Secondary Data Analysis Plan — this is genuinely new, not-yet-collected data, unlike the companion injection preregistration).
+**Subject:** Statistical Methodology.
+
+**Description:** A real, controlled, prospective test of whether the Paired-Delta Protocol's paired-subtraction architecture cancels a genuine physical common-mode artifact, using QRNG provider identity (Outshift vs. LFDR) as an experimenter-controlled, randomized, logged disturbance. Directly answers the Frontiers Chief Editor's rejection concern that provider identity was never retained or controllable as an analytic factor. Uses identical acquisition mechanics to Exp4 (301-bit call, bit-0 assignment, 150/150 split), via a standalone script that calls each provider directly, bypassing the production race/fallback so provider is fully under experimenter control rather than incidentally observed.
+
+**Research questions:**
+1. Does Outshift-served data differ from LFDR-served data in unpaired hit rate (Subject-alone or PCS-alone)?
+2. Does Outshift-served data differ from LFDR-served data in unpaired H_RS?
+3. Does the paired Subject-minus-PCS difference (hit rate) differ by provider?
+4. Does the paired Subject-minus-PCS difference (H_RS) differ by provider?
+
+**Hypotheses:** H1 (RQ1, RQ2): non-directional — no prediction of which provider will show higher/lower values if a difference exists, only that a real physical difference between two independent QRNG sources is plausible a priori. H2 (RQ3, RQ4): if a real provider-driven difference is found in RQ1/RQ2, it will not appear in the paired difference — i.e., magnitude of the paired-difference provider effect will be smaller than the unpaired provider effect, consistent with common-mode cancellation. This is the central claim under test, not assumed.
+
+**Manipulated variables:** Provider (Outshift, LFDR) — controlled, block-randomized within each 30-block sitting (15/15 split, Fisher-Yates shuffle, logged before any calls are made), never left to a race/fallback.
+
+**Sample size / stopping rule:** Target ~2,000–2,500 blocks/provider (~70–85 completed 30-block sittings), via scheduled automated sittings (~20/day) over roughly 7–8 days, or until target reached, whichever is later. A sitting halts immediately on any fetch failure (no substitution — see §3) so realized N depends on real-world API reliability and may fall short of target; this will be reported, not backfilled by relaxing the halt rule.
+
+**Measured variables:** Outcomes — hit rate and H_RS per stream (Subject, PCS) and their paired difference, per block. Predictor — `provider_actual` (the real per-call source field returned by each provider's own API response, not merely what was requested; any request/actual mismatch is logged as a flagged anomaly, not silently accepted). Also logged: `sitting_id`, `call_timestamp`, `fetch_latency_ms`.
+
+**Statistical models / equivalence bound — open design decision, stated honestly:** unlike the companion injection preregistration, there is no pre-existing dataset here to derive a resolution floor (δ) from before collection starts. Two options, neither yet chosen: (a) provisionally reuse δ=0.002 from the injection preregistration's resolution-floor derivation, with the caveat that it was derived from a different dataset/design and may not transfer; (b) collect an initial tranche (e.g. the first ~10 sittings), derive this design's own resolution floor via the same whole-sitting bootstrap method, lock it via a dated addendum to this document, then continue to the full target. Option (b) is more methodologically consistent with how δ was derived elsewhere in this project and is the tentative preference, but is not yet locked — decide and date it before analyzing beyond the initial tranche.
+
+**Inference criteria:** Two-sided bootstrap CIs (clustered by sitting), for both the unpaired (Step 1) and paired (Step 2) comparisons. Classification against whichever δ is locked per the item above. Two-of-two step logic: Step 2 conclusions are only interpreted relative to whether Step 1 found anything to cancel.
+
+**Prior knowledge / already-collected data — full disclosure:** two "smoke-test" sittings already exist in the `exp4_artificial_injection` Firestore collection, run to verify the collection script functions correctly against real APIs before any real collection: `pv_1787113000691_bdb2aa` (condition `provider_validation`, 2 blocks — 1 Outshift, 1 LFDR) and `pva_1787116665640_5c3bca` (condition `provider_validation_asymmetric`, 2 blocks). Combined, 4 real blocks of data already exist and have been looked at (to confirm the script worked), predating this registration. These are labeled `"smoke-test"` and are trivial in number (not analyzed for any research question, not included in the target sample size above), but are disclosed here rather than silently excluded, consistent with this project's disclosure practice elsewhere. Recommend either deleting them before real collection starts, or explicitly excluding sittings labeled `"smoke-test"` from all analysis queries.

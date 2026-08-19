@@ -35,7 +35,7 @@ Everything on this branch is aimed at closing that gap. There are **two compleme
 | 4 | Identical acquisition mechanics | ✅ Same 301-bit call, bit-0 assignment, 150/150 split — ported verbatim from `src/MainApp.jsx`'s `processTrials`. |
 | 5 | Timestamp/session ID, multiple sittings | ✅ Built in (`sitting_id`, `call_timestamp`, `committed_at`). No sittings actually run yet. |
 | 6 | Own condition label | ✅ `condition: 'provider_validation'`, written to Firestore collection `exp4_artificial_injection` — fully isolated from `experiment3_ai_responses` (the real pilot data). |
-| 7 | Analysis plan before collecting | ✅ `PROVIDER_VALIDATION_PRESPEC.md`, including a §7 addendum on the asymmetric/stream-specific variant. **Not yet OSF-registered** — should be, before any real collection starts (same reasoning as Track B's OSF registration). |
+| 7 | Analysis plan before collecting | ✅ `PROVIDER_VALIDATION_PRESPEC.md`, including a §7 addendum (asymmetric/stream-specific variant) and a §8 (OSF-ready fields: research questions, hypotheses, sample size/stopping rule, measured variables, an open decision on how to derive the equivalence bound, and full disclosure of the 2 smoke-test sittings). **Drafted, not yet actually submitted to OSF** — the content is ready to paste, submission itself hasn't happened. |
 
 ## What's actually blocking real data collection
 
@@ -56,10 +56,43 @@ Running real Baseline/AI sessions through the normal exp4 app (with the fix depl
 
 ## Practical numbers for running real sittings
 
-- **Outshift daily budget:** ~100,000 bits/day account-wide, shared with the live pilot. Each block call costs 304 bits (38 bytes requested, 3 discarded). Budget conservatively to **300 Outshift calls/day**, not the ~328 theoretical max, leaving headroom for the live pilot.
-- **Recommended cadence:** ~15 sittings/day at `node experiments/exp4/run-provider-validation.js --batch-size 40 --outshift-budget 20`, spread across different times of day (this is what makes the time-of-day check meaningful). ~7-8 days to reach the ~2,000-2,500 blocks/provider target in the prespec.
-- **Open question, never resolved:** whether to run a smaller staged batch first (e.g. 200-400 blocks/provider) to check for *any* detectable provider effect before committing the full week — raised because raw hit-rate differences between two working QRNGs may be too small to detect at this sample size; H_RS/structure metrics are more likely to show something. Prespec was never updated with a staged plan — worth deciding before starting.
-- **Two smoke-test sittings already sit in Firestore** (`exp4_artificial_injection`, labeled `"smoke-test"`, 2 blocks each) — harmless, filterable by label, never cleaned up. Delete or ignore.
+- **Outshift daily budget:** ~100,000 bits/day account-wide, shared with the live pilot. Each block call costs 304 bits (38 bytes requested, 3 discarded). Budget conservatively to **300 Outshift calls/day**, not the ~328 theoretical max, leaving headroom for the live pilot (per the user, only one other person's occasional testing collides with this right now — pause the automation, below, when that happens).
+- **Current defaults (as of 2026-08-19): 30 blocks/sitting, 15/15 Outshift/LFDR split** — matches a real Exp4 session length (`pkConfig.BLOCKS_TOTAL`). `node experiments/exp4/run-provider-validation.js` with no flags now uses these defaults; override with `--batch-size` / `--outshift-budget` if needed.
+- **Recommended cadence:** ~20 sittings/day at the current defaults, spread across different times of day (this is what makes the time-of-day check meaningful). ~7-8 days to reach the ~2,000-2,500 blocks/provider target in the prespec.
+- **Open question, never resolved:** whether to run a smaller staged batch first (e.g. 200-400 blocks/provider) to check for *any* detectable provider effect before committing the full week — raised because raw hit-rate differences between two working QRNGs may be too small to detect at this sample size; H_RS/structure metrics are more likely to show something.
+- **Exactly 2 smoke-test sittings exist in Firestore** (`exp4_artificial_injection`, verified directly via query on 2026-08-19): `pv_1787113000691_bdb2aa` (`provider_validation`, 2 blocks: 1 Outshift, 1 LFDR) and `pva_1787116665640_5c3bca` (`provider_validation_asymmetric`, 2 blocks). Both labeled `"smoke-test"`, disclosed in the prespec §8, never cleaned up. Filter these out of any analysis query, or delete them.
+
+## Running it unattended, throughout the day (launchd)
+
+Set up 2026-08-19, macOS `launchd` (survives this chat session ending — nothing about it depends on Claude Code staying open):
+
+- **Wrapper script:** `experiments/exp4/run-sitting-cron.sh` — runs one sitting with the current defaults, logs to `~/qart-power-run/provider-validation-logs/YYYY-MM-DD.log` (durable location, not `/tmp` — an earlier unrelated background job lost its checkpoint to a reboot when logging to `/tmp`, so this project keeps background job output at `~/qart-power-run/`).
+- **Scheduler:** `~/Library/LaunchAgents/com.qart.provider-validation.plist` — fires once immediately on load, then every 70 minutes (`StartInterval=4200`), ~20 sittings/day.
+
+**Start it:**
+```
+launchctl load ~/Library/LaunchAgents/com.qart.provider-validation.plist
+```
+
+**Pause it** (e.g. when the one other person needs to test something) — stops immediately, nothing corrupted, just won't fire again until reloaded:
+```
+launchctl unload ~/Library/LaunchAgents/com.qart.provider-validation.plist
+```
+
+**Resume:**
+```
+launchctl load ~/Library/LaunchAgents/com.qart.provider-validation.plist
+```
+
+**Check it's actually running:**
+```
+launchctl list | grep com.qart.provider-validation
+tail -f ~/qart-power-run/provider-validation-logs/$(date +%Y-%m-%d).log
+```
+
+**Requirement:** the Mac needs to stay awake (not sleep) for scheduled fires to happen — `launchd` can't wake a sleeping machine on its own for this kind of job.
+
+**To remove entirely** (not just pause): `launchctl unload` first, then `rm ~/Library/LaunchAgents/com.qart.provider-validation.plist`.
 
 ## File manifest (this directory)
 
@@ -73,11 +106,16 @@ Running real Baseline/AI sessions through the normal exp4 app (with the fix depl
 | `resolution_floor_derivation-exp4.md` | How δ=0.002 was derived — provenance record for Track B. |
 | `check-hrs-common-mode-cancellation.js` | Resolves whether paired-delta cancellation holds for the nonlinear HRS estimator (yes, via exchangeability, confirmed by simulation). Track B. |
 | `crossed_bootstrap_realization_diagnostic.py` | Decomposes session- vs. realization-driven variance; the diagnostic that set Track B's realization count. Needs `notebooks/Frozen_Blocks_2026-02-10_195735.csv` and `Frozen_Sessions_2026-02-10_195735.csv` (gitignored, kept local — present in this branch's working tree already). Track B. |
+| `run-sitting-cron.sh` | Wrapper invoked by launchd to run one sitting unattended. Not meant to be run interactively. |
+| `ARTIFICIAL_INJECTION_README.md` | This file. |
+
+Also outside this directory: `~/Library/LaunchAgents/com.qart.provider-validation.plist` (the launchd schedule — see below) and `~/qart-power-run/provider-validation-logs/` (log output).
 
 ## Recommended next steps, in order
 
-1. Decide on `fetchQRNGBits.js`: commit as-is (already done here) → get explicit go-ahead → deploy to production.
-2. Decide the staged-vs-full-target collection question above before running real sittings.
-3. Consider OSF-registering `PROVIDER_VALIDATION_PRESPEC.md` before any real Outshift/LFDR sittings begin (same rationale as Track B — no data collected yet, still genuinely prospective).
-4. Optionally: add device/browser/latency capture if you want the real Baseline/AI observational piece to close that manuscript-flagged gap too.
-5. Run real sittings per the cadence above once 1-3 are settled.
+1. Decide on `fetchQRNGBits.js`: commit as-is (already done here) → get explicit go-ahead → deploy to production. (Only needed for the real Baseline/AI observational piece, not for the controlled study below, which doesn't touch production at all.)
+2. Decide the staged-vs-full-target collection question above.
+3. Decide how to lock the equivalence bound for Track A (prespec §8 — reuse δ=0.002 from Track B, or derive fresh from an initial tranche). Not yet decided.
+4. Submit `PROVIDER_VALIDATION_PRESPEC.md` (content is ready, §8) to an OSF Study Plan before real (non-smoke-test) sittings begin.
+5. Start the launchd automation (commands above) once 2-4 are settled, or earlier if you're comfortable running before the OSF submission is finalized.
+6. Optionally: add device/browser/latency capture if you want the real Baseline/AI observational piece to close that manuscript-flagged gap too.
