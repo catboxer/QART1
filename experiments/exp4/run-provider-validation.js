@@ -26,7 +26,7 @@ const MAX_RETRIES_TRANSIENT = 2;
 
 // ---- CLI args ----
 function parseArgs(argv) {
-  const out = { batchSize: 40, outshiftBudget: 20, label: null };
+  const out = { batchSize: 30, outshiftBudget: 15, label: null }; // 30 blocks/sitting matches a real Exp4 session length (pkConfig.BLOCKS_TOTAL)
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--batch-size') out.batchSize = parseInt(argv[++i], 10);
     else if (argv[i] === '--outshift-budget') out.outshiftBudget = parseInt(argv[++i], 10);
