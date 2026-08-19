@@ -1,4 +1,7 @@
 
+# Notebooks / analysis exports (frozen data, pickles) — kept local, not tracked
+experiments/exp4/notebooks/
+
 # Node
 node_modules/
 npm-debug.log*
