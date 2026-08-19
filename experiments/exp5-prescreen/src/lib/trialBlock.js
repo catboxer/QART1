@@ -3,16 +3,25 @@ import { zFromBinom, twoSidedP } from '../stats/index.js';
 
 /**
  * Split a raw QRNG bit string into assignment, subject, and demon halves.
- * Bit 0 is the assignment bit (QRNG-based, not Math.random).
- * Bits 1..n are halfA, bits n+1..2n are halfB.
+ *
+ * The assignment bit is now supplied externally (drawn from a separate,
+ * dedicated random.org call made before this block's trial fetch, using the
+ * middle bit of the returned byte -- see useTrialRunner.js). This decouples
+ * the assignment decision from the trial content's own generation, resolving
+ * the same-call timing ambiguity described in the manuscript's Section 5.9
+ * ("Timing of stream assignment").
+ *
+ * rawBitString[0] is no longer read for assignment and is intentionally
+ * unused (vestigial) -- bits 1..n are still halfA, bits n+1..2n are still
+ * halfB, so the raw bit layout on disk is unchanged.
  *
  * @param {string} rawBitString  - e.g. "10110..." (BITS_PER_BLOCK chars)
  * @param {number} trialsPerBlock
+ * @param {number} assignmentBit - 0 or 1, drawn from the separate random.org call
  * @returns {{ assignmentBit, subjectGetsFirstHalf, parsedSubjectBits, parsedDemonBits }}
  */
-export function splitBlockBits(rawBitString, trialsPerBlock) {
+export function splitBlockBits(rawBitString, trialsPerBlock, assignmentBit) {
   const n = trialsPerBlock;
-  const assignmentBit = parseInt(rawBitString[0], 10);
   const subjectGetsFirstHalf = assignmentBit === 1;
 
   const halfA = rawBitString.slice(1, 1 + n);

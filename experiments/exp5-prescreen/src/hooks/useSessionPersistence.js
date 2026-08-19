@@ -104,6 +104,7 @@ export function useSessionPersistence({
           day_bucket,
           week_bucket,
           exitedEarly: false,
+          target,
         });
         console.log('[ensureRunDoc] addDoc success:', docRef.id);
         setRunRef(docRef);

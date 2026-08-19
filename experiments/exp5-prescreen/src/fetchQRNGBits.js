@@ -83,9 +83,12 @@ async function hashBitstream(bits) {
  * @param {number} nBits - Number of bits to fetch
  * @param {number} retries - Number of retry attempts (default 3)
  * @param {boolean} validateGhost - If true, validate randomness for ghost tape (default false)
+ * @param {string|null} sourceOverride - If set, forces this source for this call only,
+ *   ignoring config.QRNG_SOURCE. Used for the per-block assignment-bit draw, which is
+ *   always random.org regardless of what the main trial-bit source is configured to.
  * @returns {Promise<{bits: string, hash: string, timestamp: string, source: string}>} - Bits with cryptographic authentication
  */
-export async function fetchQRNGBits(nBits, retries = 3, validateGhost = false) {
+export async function fetchQRNGBits(nBits, retries = 3, validateGhost = false, sourceOverride = null) {
   // SECURITY: Verify crypto APIs haven't been tampered with
   if (typeof window !== 'undefined') {
     if (!Object.isFrozen(crypto)) {
@@ -104,7 +107,7 @@ export async function fetchQRNGBits(nBits, retries = 3, validateGhost = false) {
     }
   }
 
-  const source = config.QRNG_SOURCE || 'qrng-race';
+  const source = sourceOverride || config.QRNG_SOURCE || 'qrng-race';
 
   // Handle test mode with crypto.getRandomValues
   if (source === 'crypto-test') {

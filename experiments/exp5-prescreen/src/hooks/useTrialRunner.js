@@ -58,6 +58,7 @@ export function useTrialRunner({
   const demonHitsRef = useRef(0);
   const blockAuthRef = useRef(null);
   const auditAuthRef = useRef(null);
+  const assignmentAuthRef = useRef(null); // metadata for the per-block random.org assignment-bit call
 
   // Written once per block in the fetching effect BEFORE processTrials increments blockIdx.
   // Never re-derived from blockIdx or history lengths.
@@ -69,7 +70,7 @@ export function useTrialRunner({
 
   // ── processTrials — INTERNAL, not in public API ──────────────────────────────
   const processTrials = useCallback(
-    (quantumBits) => {
+    (quantumBits, assignmentBit) => {
       if (quantumBits.length !== C.BITS_PER_BLOCK) {
         throw new Error(`Expected ${C.BITS_PER_BLOCK} bits, got ${quantumBits.length}`);
       }
@@ -83,7 +84,7 @@ export function useTrialRunner({
 
       const targetBit = target === 'BLUE' ? 1 : 0;
 
-      const { parsedSubjectBits, parsedDemonBits } = splitBlockBits(quantumBits, C.TRIALS_PER_BLOCK);
+      const { parsedSubjectBits, parsedDemonBits } = splitBlockBits(quantumBits, C.TRIALS_PER_BLOCK, assignmentBit);
       const { k, kd, blockSubjHurst, blockPCSHurst, blockDeltaH, blockSummary } =
         computeBlockStats(parsedSubjectBits, parsedDemonBits, targetBit);
 
@@ -207,6 +208,12 @@ export function useTrialRunner({
           trial_count:  n,
         },
 
+        // Assignment: which half became Subject, decided via a separate
+        // random.org call before this block's trial fetch (see fetching effect
+        // and trialBlock.js). Duplicated here (also in block_commits.assignment)
+        // for the same reason target is duplicated in both places.
+        assignment: assignmentAuthRef.current,
+
         // Hurst delta
         hurst_delta: {
           subject: hurst,
@@ -257,6 +264,26 @@ export function useTrialRunner({
 
     (async () => {
       try {
+        // Assignment bit: a separate, dedicated random.org call made BEFORE this
+        // block's trial content is fetched -- decouples the assignment decision
+        // from the trial bits' own generation (see trialBlock.js splitBlockBits
+        // doc comment). Middle bit of the returned byte (index 3 of 8), not the
+        // first or last -- edge bit positions are the ones historically prone to
+        // provider-specific encoding artifacts (see validate-lfdr-direct.js's
+        // byte-level bit-position test, written for exactly this reason).
+        const ASSIGNMENT_BIT_INDEX = 3;
+        const assignmentData = await fetchQRNGBits(8, 3, false, 'random-org');
+        if (isCancelled) return;
+        const assignmentBit = parseInt(assignmentData.bits[ASSIGNMENT_BIT_INDEX], 10);
+
+        assignmentAuthRef.current = {
+          bit:       assignmentBit,
+          bitIndex:  ASSIGNMENT_BIT_INDEX,
+          byte:      assignmentData.bits,
+          source:    assignmentData.source,
+          timestamp: assignmentData.timestamp,
+        };
+
         const quantumData = await fetchQRNGBits(C.BITS_PER_BLOCK);
         if (isCancelled) return;
 
@@ -291,6 +318,7 @@ export function useTrialRunner({
               source:    quantumData.source,
               bitCount:  quantumData.bits.length,
             },
+            assignment: assignmentAuthRef.current,
             committedAt:      serverTimestamp(),
             clientCommitTime: new Date().toISOString(),
             target,
@@ -299,7 +327,7 @@ export function useTrialRunner({
 
         allRawBitsRef.current.push(quantumData.bits.split('').map(Number));
 
-        processTrials(quantumData.bits);
+        processTrials(quantumData.bits, assignmentBit);
         goToScore();
       } catch (error) {
         console.error('❌ Failed to fetch bits:', error);
