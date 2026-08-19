@@ -188,7 +188,17 @@ approach doesn't need at all.
 
 **Statistical models / equivalence bound — open design decision, stated honestly:** unlike the companion injection preregistration, there is no pre-existing dataset here to derive a resolution floor (δ) from before collection starts. Plan: after the first ~10 sittings, derive this design's own resolution floor via the same whole-sitting bootstrap method used in the companion registration, lock it via a dated addendum to this document, then continue to the full target. Fallback if that initial batch is too small to produce a stable estimate: reuse δ=0.002 from the companion injection preregistration instead, with that substitution also recorded in the same addendum rather than decided silently.
 
-**Sample size rationale / power analysis — also tied to the initial batch:** the ~2,000–2,500 block target was set as a practical constraint (Outshift's ~300 calls/day quota vs. wanting an adequately large sample), not a formal power analysis — no variance estimate for this design's Step 1 (unpaired) comparison exists yet to compute one from. Borrowing Track B's paired-delta variance (0.011) as a stand-in would understate the true variance, since pairing is specifically what reduces it — the wrong quantity for this comparison. A formal power calculation will be performed using the same initial ~10-sitting batch above, once this design's own achieved variance is known, and recorded in the same dated addendum.
+**Sample size rationale / power analysis:** the ~2,000–2,500 block target was originally set as a practical constraint (Outshift's ~300 calls/day quota vs. wanting an adequately large sample), not a formal power analysis. That gap is now partially closed using real data already on hand: the frozen Exp4 Baseline export (`Frozen_Blocks_2026-02-10_195735.csv`) contains 330 blocks across 11 complete sessions explicitly tagged `qrng_source == 'lfdr'` (real per-call provider identity survived for these specific blocks, from a period before later changes lost that granularity for everything else — no equivalent Outshift-tagged group exists in this export). Session-level Subject hit-rate SD from these 11 real LFDR sessions: 0.00917.
+
+Using this as the working variance estimate (two-sample comparison, equal-variance assumption, alpha=0.05 two-sided):
+
+| Target effect size | Sessions/sittings needed per provider, 80% power |
+|---|---|
+| 0.0044 (Track B's actual observed benchmark) | ~68 |
+| 0.0030 (Track B's rounded benchmark) | ~147 |
+| 0.0015 (Track B's conservative margin) | ~587 |
+
+The planned 134–167 sittings comfortably powers detection of an effect the size of Track B's actual benchmark, is borderline at 0.003, and is not adequately powered for anything as small as 0.0015. Caveats: this SD is LFDR-only (Outshift's real variance is unconfirmed and assumed similar), and comes from 11 sessions that happened to run entirely on LFDR, likely during an Outshift outage — possibly not representative of typical conditions. This will be checked directly once real two-provider paired data exists from this study's own collection (still planned, via the same initial ~10-sitting batch and dated-addendum mechanism as the delta derivation below), but is a materially better-grounded starting point than a guess or Track B's paired-delta variance (which is the wrong quantity here, since pairing specifically reduces it).
 
 **Inference criteria:** Two-sided bootstrap CIs (clustered by sitting), for both the unpaired (Step 1) and paired (Step 2) comparisons. Classification against whichever δ is locked per the item above. Two-of-two step logic: Step 2 conclusions are only interpreted relative to whether Step 1 found anything to cancel.
 
