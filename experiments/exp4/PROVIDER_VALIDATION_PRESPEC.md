@@ -67,7 +67,7 @@ competes for the same daily quota as real participant sessions. To bound that ri
   detection `qrng-race.js`'s circuit breaker uses), the script does **not** substitute
   LFDR for that slot. It logs the failure, halts the sitting immediately, and marks the
   sitting doc `ended_reason: 'outshift_exhausted'`. The next sitting starts a fresh
-  balanced 20/20 shuffle. This guarantees every *completed* sitting's provider sequence
+  balanced 15/15 shuffle. This guarantees every *completed* sitting's provider sequence
   is exactly the pre-registered random permutation — never quietly reshaped by exhaustion.
 - Any other fetch error (timeout, malformed response) after retries triggers the same
   halt-and-log behavior (`ended_reason: 'fetch_error'`), for the same reason: a sitting
@@ -77,7 +77,7 @@ competes for the same daily quota as real participant sessions. To bound that ri
 
 ## 4. Target sample size
 
-~2,000–2,500 blocks per provider (≈70–85 completed 30-block sittings), run across enough
+~2,000–2,500 blocks per provider (≈134–167 completed 30-block sittings), run across enough
 separate sittings/days to support the time-of-day check in §5.
 
 ## 5. Primary analysis (two-step test)
@@ -182,7 +182,7 @@ approach doesn't need at all.
 
 **Manipulated variables:** Provider (Outshift, LFDR) — controlled, block-randomized within each 30-block sitting (15/15 split, Fisher-Yates shuffle, logged before any calls are made), never left to a race/fallback.
 
-**Sample size / stopping rule:** Target ~2,000–2,500 blocks/provider (~70–85 completed 30-block sittings), via scheduled automated sittings (~20/day) over roughly 7–8 days, or until target reached, whichever is later. A sitting halts immediately on any fetch failure (no substitution — see §3) so realized N depends on real-world API reliability and may fall short of target; this will be reported, not backfilled by relaxing the halt rule.
+**Sample size / stopping rule:** Target ~2,000–2,500 blocks/provider (~134–167 completed 30-block sittings), via scheduled automated sittings (~20/day) over roughly 7–8 days, or until target reached, whichever is later. A sitting halts immediately on any fetch failure (no substitution — see §3) so realized N depends on real-world API reliability and may fall short of target; this will be reported, not backfilled by relaxing the halt rule.
 
 **Measured variables:** Outcomes — hit rate and H_RS per stream (Subject, PCS) and their paired difference, per block. Predictor — `provider_actual` (the real per-call source field returned by each provider's own API response, not merely what was requested; any request/actual mismatch is logged as a flagged anomaly, not silently accepted). Also logged: `sitting_id`, `call_timestamp`, `fetch_latency_ms`.
 
