@@ -188,17 +188,19 @@ approach doesn't need at all.
 
 **Statistical models / equivalence bound — open design decision, stated honestly:** unlike the companion injection preregistration, there is no pre-existing dataset here to derive a resolution floor (δ) from before collection starts. Plan: after the first ~10 sittings, derive this design's own resolution floor via the same whole-sitting bootstrap method used in the companion registration, lock it via a dated addendum to this document, then continue to the full target. Fallback if that initial batch is too small to produce a stable estimate: reuse δ=0.002 from the companion injection preregistration instead, with that substitution also recorded in the same addendum rather than decided silently.
 
-**Sample size rationale / power analysis:** the ~2,000–2,500 block target was originally set as a practical constraint (Outshift's ~300 calls/day quota vs. wanting an adequately large sample), not a formal power analysis. That gap is now partially closed using real data already on hand: the frozen Exp4 Baseline export (`Frozen_Blocks_2026-02-10_195735.csv`) contains 330 blocks across 11 complete sessions explicitly tagged `qrng_source == 'lfdr'` (real per-call provider identity survived for these specific blocks, from a period before later changes lost that granularity for everything else — no equivalent Outshift-tagged group exists in this export). Session-level Subject hit-rate SD from these 11 real LFDR sessions: 0.00917.
+**Sample size rationale / power analysis:** the ~2,000–2,500 block target balances a practical constraint (Outshift's ~300 calls/day quota vs. wanting an adequately large sample) against a real, data-grounded power calculation, not a guess.
 
-Using this as the working variance estimate (two-sample comparison, equal-variance assumption, alpha=0.05 two-sided):
+Grounding: `experiments/exp5-prescreen` (a sibling experiment, same acquisition mechanics — same 301-bit call, same bit-0 assignment, same 150/150 split, byte-identical `hurstApprox` implementation) has complete, correctly-recorded per-block provider identity for every block, unlike Exp4's own frozen export. Its Baseline-condition subset (4,720 blocks, 59 sessions, no possible intention confound, same reasoning as restricting to Baseline elsewhere in this document) contains 1,232 real Outshift-served blocks (17 sessions) and 1,744 real LFDR-served blocks (22 sessions). Session-level H_RS SD: Outshift 0.00746, LFDR 0.00486, pooled 0.00612.
+
+Using this pooled SD as the working variance estimate (two-sample comparison, alpha=0.05 two-sided):
 
 | Target effect size | Sessions/sittings needed per provider, 80% power |
 |---|---|
-| 0.0044 (Track B's actual observed benchmark) | ~68 |
-| 0.0030 (Track B's rounded benchmark) | ~147 |
-| 0.0015 (Track B's conservative margin) | ~587 |
+| 0.0044 (Track B's actual observed benchmark) | ~30 |
+| 0.0030 (Track B's rounded benchmark) | ~65 |
+| 0.0015 (Track B's conservative margin) | ~261 |
 
-The planned 134–167 sittings comfortably powers detection of an effect the size of Track B's actual benchmark, is borderline at 0.003, and is not adequately powered for anything as small as 0.0015. Caveats: this SD is LFDR-only (Outshift's real variance is unconfirmed and assumed similar), and comes from 11 sessions that happened to run entirely on LFDR, likely during an Outshift outage — possibly not representative of typical conditions. This will be checked directly once real two-provider paired data exists from this study's own collection (still planned, via the same initial ~10-sitting batch and dated-addendum mechanism as the delta derivation below), but is a materially better-grounded starting point than a guess or Track B's paired-delta variance (which is the wrong quantity here, since pairing specifically reduces it).
+The planned 134–167 sittings comfortably powers detection of an effect the size of either of Track B's first two benchmarks, and is short (by roughly half) of what would be needed for the most conservative 0.0015 benchmark. This is a real two-provider comparison (unlike an earlier, since-superseded version of this section that used a one-sided LFDR-only estimate from Exp4's own partial data), though it draws on a different experiment's data, not Exp4's own — a real, if smaller, caveat than before. Will be checked directly once real two-provider data exists from this study's own collection (still planned, via the same initial ~10-sitting batch and dated-addendum mechanism as the delta derivation below).
 
 **Inference criteria:** Two-sided bootstrap CIs (clustered by sitting), for both the unpaired (Step 1) and paired (Step 2) comparisons. Classification against whichever δ is locked per the item above. Two-of-two step logic: Step 2 conclusions are only interpreted relative to whether Step 1 found anything to cancel.
 
