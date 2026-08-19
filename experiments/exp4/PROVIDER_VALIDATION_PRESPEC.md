@@ -77,8 +77,10 @@ competes for the same daily quota as real participant sessions. To bound that ri
 
 ## 4. Target sample size
 
-~2,000–2,500 blocks per provider (≈134–167 completed 30-block sittings), run across enough
-separate sittings/days to support the time-of-day check in §5.
+~3,930 blocks per provider (262 completed 30-block sittings), run across enough
+separate sittings/days to support the time-of-day check in §5. Sized to reach 80% power
+against the most conservative benchmark effect size considered in §8, not just the more
+likely ones (see §8 for the full power table and reasoning).
 
 ## 5. Primary analysis (two-step test)
 
@@ -182,17 +184,19 @@ approach doesn't need at all.
 
 **Manipulated variables:** Provider (Outshift, LFDR) — controlled, block-randomized within each 30-block sitting (15/15 split, Fisher-Yates shuffle, logged before any calls are made), never left to a race/fallback.
 
-**Sample size / stopping rule:** Target ~2,000–2,500 blocks/provider (~134–167 completed 30-block sittings), via scheduled automated sittings (~20/day) over roughly 7–8 days, or until target reached, whichever is later. A sitting halts immediately on any fetch failure (no substitution — see §3) so realized N depends on real-world API reliability and may fall short of target; this will be reported, not backfilled by relaxing the halt rule.
+**Sample size / stopping rule:** Target ~3,930 blocks/provider (262 completed 30-block sittings), via scheduled automated sittings (~20/day) over roughly 13 days, or until target reached, whichever is later. Sized for 80% power against the most conservative benchmark effect size, not just the more likely ones (see Sample size rationale below). A sitting halts immediately on any fetch failure (no substitution — see §3) so realized N depends on real-world API reliability and may fall short of target; this will be reported, not backfilled by relaxing the halt rule.
 
 **Measured variables:** Outcomes — hit rate and H_RS per stream (Subject, PCS) and their paired difference, per block. Predictor — `provider_actual` (the real per-call source field returned by each provider's own API response, not merely what was requested; any request/actual mismatch is logged as a flagged anomaly, not silently accepted). Also logged: `sitting_id`, `call_timestamp`, `fetch_latency_ms`.
 
 **Statistical models / equivalence bound — open design decision, stated honestly:** unlike the companion injection preregistration, there is no pre-existing dataset here to derive a resolution floor (δ) from before collection starts. Plan: after the first ~10 sittings, derive this design's own resolution floor via the same whole-sitting bootstrap method used in the companion registration, lock it via a dated addendum to this document, then continue to the full target. Fallback if that initial batch is too small to produce a stable estimate: reuse δ=0.002 from the companion injection preregistration instead, with that substitution also recorded in the same addendum rather than decided silently.
 
-**Sample size rationale / power analysis:** the ~2,000–2,500 block target balances a practical constraint (Outshift's ~300 calls/day quota vs. wanting an adequately large sample) against a real, data-grounded power calculation, not a guess.
+**Sample size rationale / power analysis:** the ~3,930 block target balances a practical constraint (Outshift's ~300 calls/day quota vs. wanting an adequately large sample) against a real, data-grounded power calculation, deliberately sized to reach 80% power against the most conservative benchmark considered, not just the more likely ones.
 
 Grounding: `experiments/exp5-prescreen` (a sibling experiment, same acquisition mechanics — same 301-bit call, same bit-0 assignment, same 150/150 split, byte-identical `hurstApprox` implementation) has complete, correctly-recorded per-block provider identity for every block, unlike Exp4's own frozen export. Its Baseline-condition subset (4,720 blocks, 59 sessions, no possible intention confound, same reasoning as restricting to Baseline elsewhere in this document) contains 1,232 real Outshift-served blocks (17 sessions) and 1,744 real LFDR-served blocks (22 sessions). Session-level H_RS SD: Outshift 0.00746, LFDR 0.00486, pooled 0.00612.
 
-Using this pooled SD as the working variance estimate (two-sample comparison, alpha=0.05 two-sided):
+A secondary check on this same exp5-prescreen data: the session-level Outshift-vs-LFDR H_RS difference itself has a 95% bootstrap CI of [-0.00770, -0.00008] — barely excluding zero, but a real, detectable difference in that dataset, not obviously noise. Treated with appropriate caution (a barely-significant result in one dataset is not strong evidence on its own, and may shrink toward zero on independent replication), but it meaningfully raises the odds that Step 1 of this study finds a genuine effect to test cancellation of, rather than nothing.
+
+Using the pooled SD as the working variance estimate (two-sample comparison, alpha=0.05 two-sided):
 
 | Target effect size | Sessions/sittings needed per provider, 80% power |
 |---|---|
@@ -200,7 +204,7 @@ Using this pooled SD as the working variance estimate (two-sample comparison, al
 | 0.0030 (Track B's rounded benchmark) | ~65 |
 | 0.0015 (Track B's conservative margin) | ~261 |
 
-The planned 134–167 sittings comfortably powers detection of an effect the size of either of Track B's first two benchmarks, and is short (by roughly half) of what would be needed for the most conservative 0.0015 benchmark. This is a real two-provider comparison (unlike an earlier, since-superseded version of this section that used a one-sided LFDR-only estimate from Exp4's own partial data), though it draws on a different experiment's data, not Exp4's own — a real, if smaller, caveat than before. Will be checked directly once real two-provider data exists from this study's own collection (still planned, via the same initial ~10-sitting batch and dated-addendum mechanism as the delta derivation below).
+The target of 262 sittings (3,930 blocks/provider) is set to reach 80% power against all three benchmarks, including the most conservative one — a deliberate choice to avoid landing in the same "barely significant, could be noise" territory as the exp5-prescreen check above. This pooled SD is a real two-provider comparison (unlike an earlier, since-superseded version of this section that used a one-sided LFDR-only estimate from Exp4's own partial data), though it draws on a different experiment's data, not Exp4's own — a real, if smaller, caveat than before. Will be checked directly once real two-provider data exists from this study's own collection (still planned, via the same initial ~10-sitting batch and dated-addendum mechanism as the delta derivation below).
 
 **Inference criteria:** Two-sided bootstrap CIs (clustered by sitting), for both the unpaired (Step 1) and paired (Step 2) comparisons. Classification against whichever δ is locked per the item above. Two-of-two step logic: Step 2 conclusions are only interpreted relative to whether Step 1 found anything to cancel.
 
