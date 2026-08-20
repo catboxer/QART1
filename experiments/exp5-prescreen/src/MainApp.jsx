@@ -327,7 +327,7 @@ export default function MainApp() {
     return (
       <div style={{ position: 'relative' }}>
         <ConsentGate
-          title="Experiment 4b: Attention and Quantum Random Numbers"
+          title="Experiment 4b: Intent and Quantum Random Number Generators"
           showBlindingNote={false}
           studyDescription={`This session identifies individuals who show high resonance with quantum random systems. You will complete ${C.BLOCKS_TOTAL} blocks each ~2 seconds long and brief questionnaires (approximately 5 minutes total).`}
           bullets={[
@@ -560,7 +560,7 @@ export default function MainApp() {
         <h1>
           {isAIMode
             ? '🤖 AI Agent Mode'
-            : 'Experiment 4b: Attention and Quantum Random Numbers'}
+            : 'Experiment 4b: Intent and Quantum Random Number Generators'}
         </h1>
 
         <div style={{ marginBottom: 30, marginTop: 30 }}>
@@ -1335,6 +1335,12 @@ export default function MainApp() {
             contact the research team at{' '}
             <a href="mailto:h@whatthequark.com">h@whatthequark.com</a>
           </p>
+          <p>
+            Your session number is <strong>{runRef?.id ?? 'unavailable'}</strong>.
+            Please include this session number if you email us with a
+            question, an issue, or a request to delete this session
+            from our records for privacy reasons.
+          </p>
         </div>
 
         <div
@@ -1347,7 +1353,7 @@ export default function MainApp() {
         >
           <p style={{ marginTop: 0 }}>
             <a
-              href="https://zenodo.org/records/18714884"
+              href="https://zenodo.org/records/22004303"
               target="_blank"
               rel="noopener noreferrer"
               style={{
@@ -1361,12 +1367,12 @@ export default function MainApp() {
 
           <ul style={{ textAlign: 'left', marginTop: 16 }}>
             <li>
-              Feel free to run more sessions — spread them across
+              Feel free to run more sessions. Spread them across
               different days for best results.
             </li>
             <li>
               Share with friends and family interested in
-              participating in our study — large datasets matter
+              participating in our study. Large datasets matter
               here.
             </li>
           </ul>
