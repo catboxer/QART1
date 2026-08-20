@@ -31,7 +31,7 @@ import {
  *   setIsRunning, setLastBlock,
  *   setTotals, setTotalGhostHits,
  *   setDeltaHurstHistory, setHurstSubjectHistory,
- *   setHurstDemonHistory, setSubjectBitsHistory, setDemonBitsHistory,
+ *   setHurstDemonHistory,
  *   saveSessionAggregates, lastPersistedBlockRef,
  *   fetchTriggeredAtRef, allRawBitsRef, qrngProviderRef, qrngProviderSeqRef,
  * }} options
@@ -46,7 +46,7 @@ export function useTrialRunner({
   setIsRunning, setLastBlock,
   setTotals, setTotalGhostHits,
   setDeltaHurstHistory, setHurstSubjectHistory,
-  setHurstDemonHistory, setSubjectBitsHistory, setDemonBitsHistory,
+  setHurstDemonHistory,
   saveSessionAggregates, lastPersistedBlockRef,
   fetchTriggeredAtRef, allRawBitsRef, qrngProviderRef, qrngProviderSeqRef,
 }) {
@@ -100,8 +100,6 @@ export function useTrialRunner({
       setDeltaHurstHistory((prev) => [...prev, blockDeltaH]);
       setHurstSubjectHistory((prev) => [...prev, blockSubjHurst]);
       setHurstDemonHistory((prev) => [...prev, blockPCSHurst]);
-      setSubjectBitsHistory((prev) => [...prev, parsedSubjectBits]);
-      setDemonBitsHistory((prev) => [...prev, parsedDemonBits]);
 
       // Increment block index last — the block-persistence effect fires on this change
       setblockIdx((prev) => prev + 1);

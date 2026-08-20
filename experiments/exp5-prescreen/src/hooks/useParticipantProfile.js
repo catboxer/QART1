@@ -1,10 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import {
-  collection, doc, getDoc, getDocs,
-  query, where, orderBy, limit,
-} from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 import { ensureSignedIn } from '../firebase.js';
-import { buildParticipantHistory } from '../lib/sessionHistory.js';
 
 // ── email → truncated SHA-256 hex ────────────────────────────────────────────
 async function hashEmail(email) {
@@ -17,12 +13,16 @@ async function hashEmail(email) {
 }
 
 /**
- * Owns Firebase sign-in, participant profile load, and session history.
+ * Owns Firebase sign-in and participant profile load.
  *
  * loadParticipant(email) — call from ConsentGate.onAgree.
  *   Sets all participant state, returns { skipPreQ }.
  *
  * requireUid() — async; throws if auth fails (use before Firestore writes).
+ *
+ * sessionCount comes straight off the participant profile doc's own scalar
+ * counter -- no per-session history query or bit-array reconstruction needed,
+ * since nothing here computes cumulative analysis anymore.
  *
  * @param {{ db, C }} options
  */
@@ -42,19 +42,10 @@ export function useParticipantProfile({ db, C }) {
     }
   });
 
-  // Multi-session accumulation (populated by loadParticipant)
   const [participantHash, setParticipantHash] = useState(null);
   const [participantProfile, setParticipantProfile] = useState(null);
   const [emailPlaintext, setEmailPlaintext] = useState('');
   const [sessionCount, setSessionCount] = useState(0);
-  const [usableSessionCount, setUsableSessionCount] = useState(0);
-  const [pastH_s, setPastH_s] = useState([]);
-  const [pastH_d, setPastH_d] = useState([]);
-  const [pastBits, setPastBits] = useState([]);
-  const [pastDemonBits, setPastDemonBits] = useState([]);
-  const [pastSubjectHits, setPastSubjectHits] = useState(0);
-  const [pastDemonHits, setPastDemonHits] = useState(0);
-  const [pastDemonTrials, setPastDemonTrials] = useState(0);
 
   // ── sign-in effect (runs once at mount) ─────────────────────────────────────
   useEffect(() => {
@@ -82,63 +73,28 @@ export function useParticipantProfile({ db, C }) {
     return u.uid;
   }, []);
 
-  // ── setCumulativeHistory — update in-memory past-session arrays between auto/AI sessions ──
-  const setCumulativeHistory = useCallback(({ h_s, h_d, bits, dBits, subjectHits, dHits, dTrials, count, usableCount }) => {
-    setPastH_s(h_s);
-    setPastH_d(h_d);
-    setPastBits(bits);
-    setPastDemonBits(dBits);
-    setPastSubjectHits(subjectHits ?? 0);
-    setPastDemonHits(dHits);
-    setPastDemonTrials(dTrials);
-    setSessionCount(count);
-    setUsableSessionCount(usableCount);
-  }, []);
-
   // ── loadAutoParticipant — called once at mount for auto/AI modes ─────────────
-  // Uses uid as participantHash; queries by participant_id (not participant_hash,
-  // since existing auto/AI session docs have participant_hash: null).
+  // Uses uid as participantHash; reads the participant profile doc's session_count
+  // scalar directly (participants/{uid}, same doc useSessionPersistence writes to).
   const loadAutoParticipant = useCallback(async () => {
     if (!uid) return { usableCount: 0 };
     setParticipantHash(uid);
     try {
-      const sessionsQ = query(
-        collection(db, C.PRESCREEN_COLLECTION),
-        where('participant_id', '==', uid),
-        where('completed', '==', true),
-        orderBy('createdAt', 'asc'),
-        limit(50),
-      );
-      const snap = await getDocs(sessionsQ);
-      const {
-        sessionCount: sc,
-        usableSessionCount: usc,
-        pastH_s: h_s,
-        pastH_d: h_d,
-        pastBits: bits,
-        pastDemonBits: dBits,
-        pastSubjectHits: sHits,
-        pastDemonHits: dHits,
-        pastDemonTrials: dTrials,
-      } = buildParticipantHistory(snap.docs, C, { includeAllTypes: true });
-      setPastH_s(h_s);
-      setPastH_d(h_d);
-      setPastBits(bits);
-      setPastDemonBits(dBits);
-      setPastSubjectHits(sHits);
-      setPastDemonHits(dHits);
-      setPastDemonTrials(dTrials);
+      const profRef = doc(db, C.PARTICIPANT_COLLECTION, uid);
+      const profSnap = await getDoc(profRef);
+      const profile = profSnap.exists() ? profSnap.data() : null;
+      setParticipantProfile(profile);
+      const sc = profile?.session_count ?? 0;
       setSessionCount(sc);
-      setUsableSessionCount(usc);
-      return { usableCount: usc };
+      return { usableCount: sc };
     } catch (err) {
-      console.error('Auto participant history load failed (non-blocking):', err);
+      console.error('Auto participant profile load failed (non-blocking):', err);
       return { usableCount: 0 };
     }
   }, [db, C, uid]);
 
   // ── loadParticipant — called from ConsentGate.onAgree ───────────────────────
-  // Returns { skipPreQ, usableCount } so the caller can navigate (and gate on max sessions).
+  // Returns { skipPreQ, usableCount } so the caller can navigate.
   const loadParticipant = useCallback(
     async (email) => {
       let profile = null;
@@ -152,43 +108,8 @@ export function useParticipantProfile({ db, C }) {
           const profSnap = await getDoc(profRef);
           profile = profSnap.exists() ? profSnap.data() : null;
           setParticipantProfile(profile);
-
-          // Query past sessions for cumulative reconstruction
-          try {
-            const sessionsQ = query(
-              collection(db, C.PRESCREEN_COLLECTION),
-              where('participant_hash', '==', hash),
-              where('completed', '==', true),
-              orderBy('createdAt', 'asc'),
-              limit(50),
-            );
-            const snap = await getDocs(sessionsQ);
-            const {
-              sessionCount: sc,
-              usableSessionCount: usc,
-              pastH_s: h_s,
-              pastH_d: h_d,
-              pastBits: bits,
-              pastDemonBits: dBits,
-              pastSubjectHits: sHits,
-              pastDemonHits: dHits,
-              pastDemonTrials: dTrials,
-            } = buildParticipantHistory(snap.docs, C);
-            setPastH_s(h_s);
-            setPastH_d(h_d);
-            setPastBits(bits);
-            setPastDemonBits(dBits);
-            setPastSubjectHits(sHits);
-            setPastDemonHits(dHits);
-            setPastDemonTrials(dTrials);
-            usableCount = usc;
-            setSessionCount(sc);           // all human sessions — display + profile write
-            setUsableSessionCount(usc);    // sessions with full data — analysis gate
-          } catch (err) {
-            console.error('Session history query failed (non-blocking):', err);
-            // Fall back to stored profile counter for display; usable stays 0
-            setSessionCount(profile?.session_count ?? 0);
-          }
+          usableCount = profile?.session_count ?? 0;
+          setSessionCount(usableCount);
         } catch (err) {
           console.error('Profile load error (non-blocking):', err);
         }
@@ -226,19 +147,10 @@ export function useParticipantProfile({ db, C }) {
     participantHash,
     participantProfile,
     emailPlaintext,
-    sessionCount,        // all completed human sessions — display + profile write
+    sessionCount,        // all completed sessions — display + profile write
     setSessionCount,     // for postQ session-count increment
-    usableSessionCount,  // sessions with full reconstructable data — analysis gate
-    pastH_s,
-    pastH_d,
-    pastBits,
-    pastDemonBits,
-    pastSubjectHits,
-    pastDemonHits,
-    pastDemonTrials,
     requireUid,
     loadParticipant,
     loadAutoParticipant,
-    setCumulativeHistory,
   };
 }

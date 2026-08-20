@@ -8,9 +8,7 @@ import React, {
 import { pkConfig as C } from './config.js';
 import { db } from './firebase.js';
 import {
-  collection,
   doc,
-  addDoc,
   setDoc,
   getDoc,
   updateDoc,
@@ -18,11 +16,9 @@ import {
 } from 'firebase/firestore';
 import { preQuestions, postQuestions } from './questions.js';
 import { QuestionsForm } from './Forms.jsx';
-import confetti from 'canvas-confetti';
 import ConsentGate from './ui/ConsentGate.jsx';
 import { usePhaseRouter } from './hooks/usePhaseRouter.js';
 import { useParticipantProfile } from './hooks/useParticipantProfile.js';
-import { usePrescreenAnalysis } from './hooks/usePrescreenAnalysis.js';
 import { useSessionPersistence } from './hooks/useSessionPersistence.js';
 import { useTrialRunner } from './hooks/useTrialRunner.js';
 
@@ -79,13 +75,9 @@ export default function MainApp() {
     participantProfile,
     emailPlaintext,
     sessionCount, setSessionCount,
-    usableSessionCount,
-    pastH_s, pastH_d, pastBits, pastDemonBits,
-    pastSubjectHits, pastDemonHits, pastDemonTrials,
     requireUid,
     loadParticipant,
     loadAutoParticipant,
-    setCumulativeHistory,
   } = useParticipantProfile({ db, C });
 
   // ---- target assignment
@@ -132,7 +124,6 @@ export default function MainApp() {
     loadAutoParticipant();
   }, [isAutoMode, isAIMode, profileLoading, uid, loadAutoParticipant]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // savedCumulativeRef owned by usePrescreenAnalysis (accessed via resetAnalysis())
   const fetchTriggeredAtRef = useRef(null); // Capture when fetching was triggered (button press or auto-timer)
   const qrngProviderRef = useRef(null); // Track QRNG provider across blocks ('mixed' if it changes)
   const qrngProviderSeqRef = useRef([]); // Per-block provider labels, for RLE encoding at session end
@@ -157,16 +148,15 @@ export default function MainApp() {
   const [deltaHurstHistory, setDeltaHurstHistory] = useState([]);
   const [hurstSubjectHistory, setHurstSubjectHistory] = useState([]);
   const [hurstDemonHistory, setHurstDemonHistory] = useState([]);
-  const [subjectBitsHistory, setSubjectBitsHistory] = useState([]);
-  const [demonBitsHistory, setDemonBitsHistory] = useState([]);
 
-  // ---- session persistence: runRef creation + aggregate writes
+  // ---- session persistence: runRef creation + aggregate writes + completion bookkeeping
   const {
     runRef,
     setRunRef,
     ensureRunDoc,
     lastPersistedBlockRef,
     saveSessionAggregates,
+    resetCompletionFlag,
   } = useSessionPersistence({
     db, C,
     target, uid, requireUid,
@@ -174,25 +164,7 @@ export default function MainApp() {
     totals, totalGhostHits,
     deltaHurstHistory, hurstSubjectHistory, hurstDemonHistory,
     allRawBitsRef, qrngProviderRef, qrngProviderSeqRef,
-  });
-
-  // ---- prescreen analysis (session + cumulative) + rank writes
-  const {
-    sessionAnalysis,
-    cumulativeAnalysis,
-    isCumulativeReady,
-    decision,
-    inviteStatus,
-    resetAnalysis,
-  } = usePrescreenAnalysis({
-    db, C,
-    phase, sessionCount, usableSessionCount, isAutoMode, isAIMode,
-    hurstSubjectHistory, hurstDemonHistory, subjectBitsHistory, demonBitsHistory,
-    totalGhostHits, totals,
-    pastH_s, pastH_d, pastBits, pastDemonBits, pastSubjectHits, pastDemonHits, pastDemonTrials,
-    runRef, allRawBitsRef,
-    participantHash, participantProfile, emailPlaintext,
-    onHistoryUpdated: setCumulativeHistory,
+    phase, sessionCount, participantProfile, emailPlaintext,
   });
 
   // ---- trial runner: refs, processTrials (internal), persistMinute (internal),
@@ -207,21 +179,10 @@ export default function MainApp() {
     setIsRunning, setLastBlock,
     setTotals, setTotalGhostHits,
     setDeltaHurstHistory, setHurstSubjectHistory,
-    setHurstDemonHistory, setSubjectBitsHistory, setDemonBitsHistory,
+    setHurstDemonHistory,
     saveSessionAggregates, lastPersistedBlockRef,
     fetchTriggeredAtRef, allRawBitsRef, qrngProviderRef, qrngProviderSeqRef,
   });
-
-  const [inviteForm, setInviteForm] = useState({
-    firstName: '',
-    lastName: '',
-    location: '',
-    age: '',
-    email: '',
-  });
-  const [inviteSubmitted, setInviteSubmitted] = useState(false);
-  const [inviteSubmitting, setInviteSubmitting] = useState(false);
-  const [inviteError, setInviteError] = useState(null);
 
   // Auto-mode and AI-mode: Skip consent/questions, auto-restart, and auto-continue rest screens
   useEffect(() => {
@@ -313,9 +274,7 @@ export default function MainApp() {
         setDeltaHurstHistory([]);
         setHurstSubjectHistory([]);
         setHurstDemonHistory([]);
-        setSubjectBitsHistory([]);
-        setDemonBitsHistory([]);
-        resetAnalysis(); // clears sessionAnalysis, cumulativeAnalysis, savedCumulativeRef
+        resetCompletionFlag();
 
         // Reset target flag so new target gets assigned
         targetAssignedRef.current = false;
@@ -332,55 +291,11 @@ export default function MainApp() {
       }, 100);
     }
     // Note: blockIdxToPersistRef is a ref, not state, so it doesn't need to be in the dep array
-    // All goTo* functions, resetAnalysis, setRunRef, lastPersistedBlockRef are stable
+    // All goTo* functions, resetCompletionFlag, setRunRef, lastPersistedBlockRef are stable
   }, [isAutoMode, isAIMode, phase, blockIdx, autoSessionCount, autoSessionTarget, runRef, saveSessionAggregates]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Note: processTrials, persistMinute, endMinute, fetching effect, audit effect,
   // and block-persistence effect are owned by useTrialRunner above.
-
-  // Pre-fill invite form email from consent when entering summary
-  useEffect(() => {
-    if (phase !== 'summary') return;
-    if (!emailPlaintext) return;
-    setInviteForm((f) =>
-      f.email ? f : { ...f, email: emailPlaintext },
-    );
-  }, [phase]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Fire confetti on summary screen when subject is invite-eligible (gold or silver)
-  useEffect(() => {
-    if (phase !== 'summary') return;
-    if (!decision.eligible) return;
-    // Gold confetti burst
-    confetti({
-      particleCount: 120,
-      spread: 80,
-      colors: ['#f59e0b', '#fcd34d', '#fbbf24', '#d97706', '#fff'],
-      origin: { y: 0.5 },
-    });
-    setTimeout(
-      () =>
-        confetti({
-          particleCount: 60,
-          spread: 55,
-          angle: 60,
-          colors: ['#f59e0b', '#fcd34d', '#fff'],
-          origin: { x: 0, y: 0.6 },
-        }),
-      300,
-    );
-    setTimeout(
-      () =>
-        confetti({
-          particleCount: 60,
-          spread: 55,
-          angle: 120,
-          colors: ['#f59e0b', '#fcd34d', '#fff'],
-          origin: { x: 1, y: 0.6 },
-        }),
-      300,
-    );
-  }, [phase]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Note: Exit functionality removed - sessions complete automatically or handle early exits in useEffect
 
@@ -393,8 +308,6 @@ export default function MainApp() {
       ensureRunDoc().catch(console.error);
     }
   }, [phase, runRef, target, uid, ensureRunDoc]);
-
-  // Analysis effects moved to usePrescreenAnalysis hook
 
   // ===== flow gates =====
   if (profileLoading || !target) {
@@ -423,14 +336,13 @@ export default function MainApp() {
             'When focused and ready, press "I\'m Ready" and keep focusing as your color pulses. This triggers the quantum random number generator and the sigantures in the QRNG during your focused intention is what we\'re testing.',
             'We collect data on quantum random sequences, your performance metrics, timing patterns, and your questionnaire responses.',
             'Participation is completely voluntary; you may exit at any time.',
-            'If you provide your email, we store it to link your sessions across devices and to contact you if you are selected for the next phase of research. Your email will not be shared with third parties or used for any other purpose.',
+            'If you provide your email, we store it to link your sessions across devices. Your email will not be shared with third parties or used for any other purpose.',
             'To request deletion of your data, email h@whatthequark.com with the subject line "Data Deletion Request". Include the email address you used when participating and we will remove your records.',
             'Data will be retained indefinitely to enable scientific replication and analysis, unless a deletion request is received.',
             'Hosting providers may log IP addresses for security purposes; these logs are not linked to your study data.',
           ]}
           onAgree={async ({ email } = {}) => {
-            // Reset analysis state so it's recomputed fresh for this session
-            resetAnalysis();
+            resetCompletionFlag();
             const { skipPreQ, usableCount } = await loadParticipant(email);
             if (usableCount >= C.MAX_SESSIONS_FOR_ANALYSIS) {
               goToMaxSessions();
@@ -1260,183 +1172,6 @@ export default function MainApp() {
     const heroBorder =
       hr > 50 ? '#86efac' : hr < 50 ? '#fed7aa' : '#e5e7eb';
 
-    // Sessions 1–4: simplified view — hit rate + "need more sessions" message.
-    // isDecisionSession is true only when cumulative analysis has actually run
-    // (5+ usable sessions). This is the definitive gate — no array-length arithmetic.
-    if (!isCumulativeReady) {
-      const remaining = Math.max(0, C.MIN_SESSIONS_FOR_DECISION - (usableSessionCount + 1));
-      const earlyRank = sessionAnalysis
-        ? decision.rank
-        : null;
-      return (
-        <div
-          className="App"
-          style={{
-            textAlign: 'center',
-            maxWidth: 600,
-            margin: '0 auto',
-            padding: 24,
-          }}
-        >
-          <h1>Session Average</h1>
-
-          <div
-            style={{
-              padding: '28px 32px',
-              borderRadius: 16,
-              background: heroBg,
-              border: `2px solid ${heroBorder}`,
-              marginBottom: 20,
-            }}
-          >
-            <div
-              style={{
-                fontSize: 13,
-                color: '#6b7280',
-                marginBottom: 4,
-                letterSpacing: '0.05em',
-              }}
-            >
-              TARGET: EXCEED 50%
-            </div>
-            <div
-              style={{
-                fontSize: 72,
-                fontWeight: 900,
-                color: heroColor,
-                lineHeight: 1,
-                marginBottom: 6,
-              }}
-            >
-              {hitRate}%
-            </div>
-            <div style={{ fontSize: 14, color: '#6b7280' }}>
-              {totals.k.toLocaleString()} hits out of{' '}
-              {totals.n.toLocaleString()} trials · {nBlocks} blocks
-            </div>
-          </div>
-
-          <div
-            style={{
-              padding: 20,
-              background: '#f8fafc',
-              borderRadius: 12,
-              border: '1px solid #e2e8f0',
-              marginBottom: 16,
-              textAlign: 'left',
-            }}
-          >
-            <p
-              style={{
-                fontSize: 15,
-                color: '#374151',
-                marginBottom: 10,
-              }}
-            >
-              We need{' '}
-              <strong>
-                {remaining} more session{remaining !== 1 ? 's' : ''}
-              </strong>{' '}
-              to establish your cumulative result. Each session adds
-              statistical power — results become much more reliable
-              after {C.MIN_SESSIONS_FOR_DECISION} sessions.
-            </p>
-            <p
-              style={{
-                fontSize: 13,
-                color: '#6b7280',
-                marginBottom: 0,
-              }}
-            >
-              💡 <strong>Note:</strong> No more than 3 sessions a day
-              please as we have rate limits with our quantum random
-              API.
-            </p>
-          </div>
-
-          {(earlyRank === 'gold' || earlyRank === 'silver') && (
-            <div
-              style={{
-                padding: 20,
-                background: earlyRank === 'gold' ? '#fffbeb' : '#f0fdf4',
-                borderRadius: 12,
-                border: `2px solid ${earlyRank === 'gold' ? '#f59e0b' : '#34d399'}`,
-                marginBottom: 16,
-                textAlign: 'left',
-              }}
-            >
-              <p
-                style={{
-                  fontSize: 15,
-                  fontWeight: 600,
-                  color: earlyRank === 'gold' ? '#92400e' : '#065f46',
-                  marginBottom: 6,
-                }}
-              >
-                {earlyRank === 'gold' ? '⚡ Strong early signal' : '✦ Interesting early signal'}
-              </p>
-              <p
-                style={{
-                  fontSize: 13,
-                  color: earlyRank === 'gold' ? '#78350f' : '#064e3b',
-                  marginBottom: 0,
-                  lineHeight: 1.6,
-                }}
-              >
-                {earlyRank === 'gold'
-                  ? 'Your session produced a pattern well above what chance would predict — this is rare. We need more sessions to confirm it, but this is a very encouraging start.'
-                  : 'Your session showed an interesting pattern worth following up on. More sessions will tell us whether it holds up.'}
-              </p>
-            </div>
-          )}
-
-          <div
-            style={{
-              padding: 16,
-              background: '#eff6ff',
-              borderRadius: 12,
-              border: '1px solid #bfdbfe',
-              marginBottom: 20,
-              textAlign: 'left',
-            }}
-          >
-            <p
-              style={{
-                fontSize: 13,
-                color: '#1e40af',
-                marginBottom: 0,
-                lineHeight: 1.6,
-              }}
-            >
-              <strong>A note on the score:</strong> The percentage is
-              just a focusing target, not what we're measuring. We're
-              looking at the underlying patterns in how the random
-              numbers were generated during your session, which a
-              simple hit rate doesn't reveal. A score below 50% is
-              just as valuable to the research as one above it.
-            </p>
-          </div>
-
-          <button
-            className="primary-btn"
-            onClick={() => goToDone()}
-            style={{ marginTop: 8 }}
-          >
-            Continue
-          </button>
-        </div>
-      );
-    }
-
-    // Session 5+: wait for cumulative analysis
-    if (!isCumulativeReady) {
-      return (
-        <div style={{ padding: 24, textAlign: 'center' }}>
-          Computing cumulative analysis…
-        </div>
-      );
-    }
-
     return (
       <div
         className="App"
@@ -1567,16 +1302,6 @@ export default function MainApp() {
 
   // FINAL SCREEN
   if (phase === 'summary') {
-    // Invite eligibility from usePrescreenAnalysis — inviteStatus is single source of truth
-    // Preview mode: #preview forces gold, #preview-score forces score_anomaly, #preview-candidate forces candidate
-    const isCumulativeSession = isCumulativeReady;
-    const previewRank = window.location.hash.includes('preview-score') ? 'score_anomaly'
-      : window.location.hash.includes('preview-candidate') ? 'candidate'
-      : isPreviewMode ? 'gold'
-      : null;
-    const inviteEligible = !!previewRank || inviteStatus.showInvite;
-    const summaryRank = previewRank ?? inviteStatus.summaryRank;
-
     return (
       <div
         className="App"
@@ -1612,439 +1337,6 @@ export default function MainApp() {
           </p>
         </div>
 
-        {/* Invite box — gold/silver (strong signal) or candidate (anomalous pattern, manual review) */}
-        {inviteEligible &&
-          (() => {
-            const isCandidate = summaryRank === 'candidate';
-            const isScoreAnomaly = summaryRank === 'score_anomaly';
-            const boxStyle = isCandidate
-              ? {
-                  position: 'relative',
-                  marginBottom: 24,
-                  padding: '24px 28px',
-                  background: '#eff6ff',
-                  border: '2px solid #60a5fa',
-                  borderRadius: 14,
-                  boxShadow: '0 0 16px #60a5fa33',
-                }
-              : isScoreAnomaly
-              ? {
-                  position: 'relative',
-                  marginBottom: 24,
-                  padding: '24px 28px',
-                  background: '#faf5ff',
-                  border: '2px solid #a855f7',
-                  borderRadius: 14,
-                  boxShadow: '0 0 16px #a855f733',
-                }
-              : {
-                  position: 'relative',
-                  marginBottom: 24,
-                  padding: '24px 28px',
-                  background: '#fffbeb',
-                  border: '3px solid #f59e0b',
-                  borderRadius: 14,
-                  boxShadow: '0 0 24px #f59e0b55',
-                };
-            const labelColor = isCandidate ? '#1d4ed8' : isScoreAnomaly ? '#7c3aed' : '#b45309';
-            const headColor  = isCandidate ? '#1e3a8a' : isScoreAnomaly ? '#581c87' : '#92400e';
-            const bodyColor  = isCandidate ? '#1e40af' : isScoreAnomaly ? '#6b21a8' : '#78350f';
-            return (
-              <div style={boxStyle}>
-                {!isCandidate && (
-                  <>
-                    <span
-                      style={{
-                        position: 'absolute',
-                        top: -14,
-                        left: 10,
-                        fontSize: 24,
-                      }}
-                    >
-                      ⭐
-                    </span>
-                    <span
-                      style={{
-                        position: 'absolute',
-                        top: -14,
-                        left: '50%',
-                        transform: 'translateX(-50%)',
-                        fontSize: 24,
-                      }}
-                    >
-                      ⭐
-                    </span>
-                    <span
-                      style={{
-                        position: 'absolute',
-                        top: -14,
-                        right: 10,
-                        fontSize: 24,
-                      }}
-                    >
-                      ⭐
-                    </span>
-                    <span
-                      style={{
-                        position: 'absolute',
-                        bottom: -14,
-                        left: 10,
-                        fontSize: 24,
-                      }}
-                    >
-                      ⭐
-                    </span>
-                    <span
-                      style={{
-                        position: 'absolute',
-                        bottom: -14,
-                        left: '50%',
-                        transform: 'translateX(-50%)',
-                        fontSize: 24,
-                      }}
-                    >
-                      ⭐
-                    </span>
-                    <span
-                      style={{
-                        position: 'absolute',
-                        bottom: -14,
-                        right: 10,
-                        fontSize: 24,
-                      }}
-                    >
-                      ⭐
-                    </span>
-                  </>
-                )}
-                <div
-                  style={{
-                    fontSize: 11,
-                    fontWeight: 700,
-                    letterSpacing: '0.1em',
-                    color: labelColor,
-                    marginBottom: 6,
-                  }}
-                >
-                  {isCandidate
-                    ? 'INTERESTING PATTERN DETECTED'
-                    : isScoreAnomaly
-                    ? 'UNUSUAL SCORING DETECTED'
-                    : 'STATUS: HIGH-RESONANCE SIGNATURE DETECTED'}
-                </div>
-                <div
-                  style={{
-                    fontWeight: 700,
-                    fontSize: 17,
-                    color: headColor,
-                    marginBottom: 12,
-                  }}
-                >
-                  {isCandidate
-                    ? "We'd like to learn more about your session"
-                    : isScoreAnomaly
-                    ? 'Your hit rate stands out'
-                    : 'You are a strong candidate for Experiment 5'}
-                </div>
-                <p
-                  style={{
-                    margin: '0 0 10px',
-                    color: bodyColor,
-                    fontSize: 14,
-                    textAlign: 'left',
-                  }}
-                >
-                  {isCandidate
-                    ? 'Your session showed an unusual pattern in the quantum stream that our research team would like to review.'
-                    : isScoreAnomaly
-                    ? "We didn't detect a temporal pattern, but your cumulative hit rate across all sessions was statistically unusual — beyond what chance would predict. That's a different kind of signal, and we'd like to investigate further."
-                    : 'Your interaction with the quantum stream has met the criteria for the next phase of our research.'}
-                </p>
-                <p
-                  style={{
-                    margin: '0 0 10px',
-                    color: bodyColor,
-                    fontSize: 14,
-                    textAlign: 'left',
-                  }}
-                >
-                  Participants who participate in Experiment 5 will
-                  receive a personal performance report including your
-                  individual scores and how your results compare to
-                  the broader participant pool.
-                </p>
-                <p
-                  style={{
-                    margin: '0 0 16px',
-                    color: bodyColor,
-                    fontSize: 14,
-                    textAlign: 'left',
-                  }}
-                >
-                  {isCandidate || isScoreAnomaly
-                    ? "Leave your details below and we'll be in touch:"
-                    : 'Leave your details below to secure your place and receive your personal results when the study concludes:'}
-                </p>
-
-                {inviteSubmitted ? (
-                  <div
-                    style={{
-                      padding: '12px 16px',
-                      background: '#dcfce7',
-                      borderRadius: 8,
-                      color: '#15803d',
-                      fontWeight: 600,
-                      fontSize: 14,
-                    }}
-                  >
-                    Thank you — we'll be in touch!
-                  </div>
-                ) : (
-                  <form
-                    onSubmit={async (e) => {
-                      e.preventDefault();
-                      setInviteSubmitting(true);
-                      setInviteError(null);
-                      try {
-                        await addDoc(collection(db, 'exp5_invites'), {
-                          ...inviteForm,
-                          age:
-                            Number(inviteForm.age) || inviteForm.age,
-                          submittedAt: serverTimestamp(),
-                          experimentId: C.EXPERIMENT_ID,
-                          sessionId: runRef?.id ?? null,
-                          rank: summaryRank,
-                        });
-                        setInviteSubmitted(true);
-                      } catch (err) {
-                        console.error('Invite save failed:', err);
-                        setInviteError(
-                          err?.message ||
-                            'Submission failed — please try again.',
-                        );
-                      }
-                      setInviteSubmitting(false);
-                    }}
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: '1fr 1fr',
-                      gap: 10,
-                      textAlign: 'left',
-                    }}
-                  >
-                    <div>
-                      <label
-                        style={{
-                          fontSize: 12,
-                          fontWeight: 600,
-                          color: '#92400e',
-                          display: 'block',
-                          marginBottom: 3,
-                        }}
-                      >
-                        First Name
-                      </label>
-                      <input
-                        required
-                        value={inviteForm.firstName}
-                        onChange={(e) =>
-                          setInviteForm((f) => ({
-                            ...f,
-                            firstName: e.target.value,
-                          }))
-                        }
-                        style={{
-                          width: '100%',
-                          padding: '7px 10px',
-                          borderRadius: 6,
-                          border: '1px solid #f59e0b',
-                          fontSize: 14,
-                          boxSizing: 'border-box',
-                        }}
-                      />
-                    </div>
-                    <div>
-                      <label
-                        style={{
-                          fontSize: 12,
-                          fontWeight: 600,
-                          color: '#92400e',
-                          display: 'block',
-                          marginBottom: 3,
-                        }}
-                      >
-                        Last Name
-                      </label>
-                      <input
-                        required
-                        value={inviteForm.lastName}
-                        onChange={(e) =>
-                          setInviteForm((f) => ({
-                            ...f,
-                            lastName: e.target.value,
-                          }))
-                        }
-                        style={{
-                          width: '100%',
-                          padding: '7px 10px',
-                          borderRadius: 6,
-                          border: '1px solid #f59e0b',
-                          fontSize: 14,
-                          boxSizing: 'border-box',
-                        }}
-                      />
-                    </div>
-                    <div>
-                      <label
-                        style={{
-                          fontSize: 12,
-                          fontWeight: 600,
-                          color: '#92400e',
-                          display: 'block',
-                          marginBottom: 3,
-                        }}
-                      >
-                        Country
-                      </label>
-                      <input
-                        required
-                        placeholder="Country"
-                        value={inviteForm.location}
-                        onChange={(e) =>
-                          setInviteForm((f) => ({
-                            ...f,
-                            location: e.target.value,
-                          }))
-                        }
-                        style={{
-                          width: '100%',
-                          padding: '7px 10px',
-                          borderRadius: 6,
-                          border: '1px solid #f59e0b',
-                          fontSize: 14,
-                          boxSizing: 'border-box',
-                        }}
-                      />
-                    </div>
-                    <div>
-                      <label
-                        style={{
-                          fontSize: 12,
-                          fontWeight: 600,
-                          color: '#92400e',
-                          display: 'block',
-                          marginBottom: 3,
-                        }}
-                      >
-                        Age
-                      </label>
-                      <input
-                        required
-                        type="number"
-                        min="18"
-                        max="120"
-                        value={inviteForm.age}
-                        onChange={(e) =>
-                          setInviteForm((f) => ({
-                            ...f,
-                            age: e.target.value,
-                          }))
-                        }
-                        style={{
-                          width: '100%',
-                          padding: '7px 10px',
-                          borderRadius: 6,
-                          border: '1px solid #f59e0b',
-                          fontSize: 14,
-                          boxSizing: 'border-box',
-                        }}
-                      />
-                    </div>
-                    <div style={{ gridColumn: '1 / -1' }}>
-                      <label
-                        style={{
-                          fontSize: 12,
-                          fontWeight: 600,
-                          color: '#92400e',
-                          display: 'block',
-                          marginBottom: 3,
-                        }}
-                      >
-                        Email
-                      </label>
-                      <input
-                        required
-                        type="email"
-                        value={inviteForm.email}
-                        onChange={(e) =>
-                          setInviteForm((f) => ({
-                            ...f,
-                            email: e.target.value,
-                          }))
-                        }
-                        style={{
-                          width: '100%',
-                          padding: '7px 10px',
-                          borderRadius: 6,
-                          border: '1px solid #f59e0b',
-                          fontSize: 14,
-                          boxSizing: 'border-box',
-                        }}
-                      />
-                    </div>
-                    {inviteError && (
-                      <div
-                        style={{
-                          gridColumn: '1 / -1',
-                          padding: '10px 14px',
-                          background: '#fef2f2',
-                          border: '1px solid #fca5a5',
-                          borderRadius: 8,
-                          color: '#dc2626',
-                          fontSize: 13,
-                        }}
-                      >
-                        {inviteError}
-                      </div>
-                    )}
-                    <div
-                      style={{
-                        gridColumn: '1 / -1',
-                        textAlign: 'center',
-                        marginTop: 4,
-                      }}
-                    >
-                      <button
-                        type="submit"
-                        disabled={inviteSubmitting}
-                        style={{
-                          padding: '10px 28px',
-                          background: isCandidate
-                            ? '#ea580c'
-                            : '#f59e0b',
-                          color: '#fff',
-                          border: 'none',
-                          borderRadius: 8,
-                          fontWeight: 700,
-                          fontSize: 14,
-                          cursor: inviteSubmitting
-                            ? 'wait'
-                            : 'pointer',
-                        }}
-                      >
-                        {inviteSubmitting
-                          ? 'Submitting…'
-                          : isCandidate
-                            ? 'Request Further Testing'
-                            : 'Join Experiment 5'}
-                      </button>
-                    </div>
-                  </form>
-                )}
-              </div>
-            );
-          })()}
-
         <div
           style={{
             padding: '16px',
@@ -2063,36 +1355,21 @@ export default function MainApp() {
                 textDecoration: 'underline',
               }}
             >
-              Read about the methodology behind this pre-screening for
-              Experiment 5.
+              Read about the methodology behind this research.
             </a>
           </p>
 
-          {isCumulativeSession ? (
-            <p
-              style={{
-                textAlign: 'left',
-                fontSize: 14,
-                color: '#374151',
-              }}
-            >
-              Each session adds statistical power — feel free to run
-              more sessions to refine your result. Spread sessions
-              across different days for best results.
-            </p>
-          ) : (
-            <ul style={{ textAlign: 'left', marginTop: 16 }}>
-              <li>
-                Repeat this experiment at least 5 times — results
-                become much more reliable across sessions.
-              </li>
-              <li>
-                Share with friends and family interested in
-                participating in our study — large datasets matter
-                here.
-              </li>
-            </ul>
-          )}
+          <ul style={{ textAlign: 'left', marginTop: 16 }}>
+            <li>
+              Feel free to run more sessions — spread them across
+              different days for best results.
+            </li>
+            <li>
+              Share with friends and family interested in
+              participating in our study — large datasets matter
+              here.
+            </li>
+          </ul>
 
           <button
             onClick={() => window.location.reload()}

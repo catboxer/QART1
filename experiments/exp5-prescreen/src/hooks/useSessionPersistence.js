@@ -1,6 +1,6 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import {
-  collection, addDoc, setDoc, serverTimestamp,
+  collection, doc, addDoc, setDoc, serverTimestamp,
 } from 'firebase/firestore';
 import { packBitsToBase64, unpackBitsFromBase64 } from '../lib/rawBitsCodec.js';
 import { normalCdf } from '../stats/index.js';
@@ -47,6 +47,7 @@ function rleEncode(arr) {
  *   totals, totalGhostHits,
  *   deltaHurstHistory, hurstSubjectHistory, hurstDemonHistory,
  *   allRawBitsRef, qrngProviderRef, qrngProviderSeqRef,
+ *   phase, sessionCount, participantProfile, emailPlaintext,
  * }} options
  */
 export function useSessionPersistence({
@@ -56,6 +57,7 @@ export function useSessionPersistence({
   totals, totalGhostHits,
   deltaHurstHistory, hurstSubjectHistory, hurstDemonHistory,
   allRawBitsRef, qrngProviderRef, qrngProviderSeqRef,
+  phase, sessionCount, participantProfile, emailPlaintext,
 }) {
   const [runRef, setRunRef] = useState(null);
   const ensureRunDocPromiseRef = useRef(null);
@@ -64,6 +66,13 @@ export function useSessionPersistence({
   // lastPersistedBlockRef: persistence concern — guards double-saves across renders.
   // Reset to -1 on session reset (caller's responsibility via the returned setter).
   const lastPersistedBlockRef = useRef(-1);
+
+  // savedCompletionRef: guards the completion effect below against double-saves
+  // per session. Reset via resetCompletionFlag() on session reset.
+  const savedCompletionRef = useRef(false);
+  const resetCompletionFlag = useCallback(() => {
+    savedCompletionRef.current = false;
+  }, []);
 
   // ── ensureRunDoc: idempotent run-doc creation ────────────────────────────────
   const ensureRunDoc = useCallback(async () => {
@@ -215,11 +224,43 @@ export function useSessionPersistence({
     }
   }, [runRef, totals, totalGhostHits, deltaHurstHistory, hurstSubjectHistory, hurstDemonHistory]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── Completion effect: mark session complete + update participant profile ─────
+  // Plain bookkeeping only (no scoring/analysis) -- participant_hash on the run
+  // doc (written by ensureRunDoc above) is what ties sessions together for
+  // post-hoc analysis; this just keeps the profile doc's counters current.
+  useEffect(() => {
+    if (phase !== 'results') return;
+    if (savedCompletionRef.current) return;
+    if (!participantHash) return;
+    savedCompletionRef.current = true;
+
+    if (runRef && allRawBitsRef.current.length === C.BLOCKS_TOTAL) {
+      setDoc(runRef, { completed: true }, { merge: true }).catch(console.error);
+    }
+
+    const profRef = doc(db, C.PARTICIPANT_COLLECTION, participantHash);
+    const todayUTC = new Date().toISOString().slice(0, 10);
+    setDoc(
+      profRef,
+      {
+        session_count: sessionCount + 1,
+        last_session_date: todayUTC,
+        pre_q_completed: true,
+        participant_type: isAutoMode ? 'baseline' : isAIMode ? 'ai' : 'human',
+        updated_at: serverTimestamp(),
+        ...(emailPlaintext ? { email: emailPlaintext } : {}),
+        ...(!participantProfile ? { created_at: serverTimestamp() } : {}),
+      },
+      { merge: true },
+    ).catch((err) => console.error('Profile save failed:', err));
+  }, [phase, participantHash, runRef, sessionCount, isAutoMode, isAIMode, emailPlaintext, participantProfile]); // eslint-disable-line react-hooks/exhaustive-deps
+
   return {
     runRef,
     setRunRef,             // for auto-mode session reset to clear runRef
     ensureRunDoc,
     lastPersistedBlockRef,
     saveSessionAggregates,
+    resetCompletionFlag,
   };
 }
