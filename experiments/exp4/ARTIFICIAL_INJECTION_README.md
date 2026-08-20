@@ -94,7 +94,18 @@ launchctl list | grep com.qart.provider-validation
 tail -f ~/qart-power-run/provider-validation-logs/$(date +%Y-%m-%d).log
 ```
 
-**Requirement:** the Mac needs to stay awake (not sleep) for scheduled fires to happen — `launchd` can't wake a sleeping machine on its own for this kind of job.
+**Requirement: the Mac needs to stay awake, and it will go to sleep on its own even with the lid open** (idle sleep, on its own timer, separate from lid-closure sleep) — `launchd` can't wake a sleeping machine for a job like this, so a missed 80-minute window just doesn't happen and the next one might too.
+
+Fix: a second LaunchAgent that runs `caffeinate` continuously, self-healing (`KeepAlive`, so launchd restarts it if it ever dies) rather than a background process in a terminal that dies when the terminal closes:
+```
+launchctl load ~/Library/LaunchAgents/com.qart.caffeinate.plist
+```
+Uses `caffeinate -i -s` (prevent idle sleep, prevent sleep on AC power). **Keep the laptop plugged in for the ~14.6-day run** — `-s` only has an effect on AC power, and battery obviously won't last that long regardless.
+
+To stop preventing sleep (e.g. genuinely done, or want the Mac to sleep normally again):
+```
+launchctl unload ~/Library/LaunchAgents/com.qart.caffeinate.plist
+```
 
 **To remove entirely** (not just pause): `launchctl unload` first, then `rm ~/Library/LaunchAgents/com.qart.provider-validation.plist`.
 
