@@ -1174,6 +1174,14 @@ export default function MainApp() {
     const sessionNumber = sessionCount + 1;
     const sessionsRemain = sessionNumber < C.TARGET_SESSIONS;
 
+    // Cumulative average from cheap running scalar totals on the participant
+    // profile doc (cumulative_hits/cumulative_trials), not a per-session
+    // history query -- see the comment in useSessionPersistence.js.
+    const cumTrials = (participantProfile?.cumulative_trials ?? 0) + totals.n;
+    const cumSubjectHitRate = cumTrials > 0
+      ? ((100 * ((participantProfile?.cumulative_hits ?? 0) + totals.k)) / cumTrials).toFixed(1)
+      : '50.0';
+
     return (
       <div
         className="App"
@@ -1225,6 +1233,22 @@ export default function MainApp() {
 
         <div
           style={{
+            padding: 20,
+            background: '#f8fafc',
+            borderRadius: 12,
+            border: '1px solid #e2e8f0',
+            marginBottom: 16,
+            textAlign: 'left',
+          }}
+        >
+          <p style={{ fontSize: 15, color: '#374151', marginBottom: 0 }}>
+            <strong>Your average across all completed sessions:</strong>{' '}
+            {cumSubjectHitRate}%
+          </p>
+        </div>
+
+        <div
+          style={{
             padding: 16,
             background: '#f0fdf4',
             borderRadius: 12,
@@ -1237,6 +1261,33 @@ export default function MainApp() {
             {sessionsRemain
               ? `Session ${sessionNumber} of ${C.TARGET_SESSIONS} complete`
               : `Thank you for completing ${C.TARGET_SESSIONS} sessions`}
+          </p>
+        </div>
+
+        <div
+          style={{
+            padding: 16,
+            background: '#eff6ff',
+            borderRadius: 12,
+            border: '1px solid #bfdbfe',
+            marginBottom: 20,
+            textAlign: 'left',
+          }}
+        >
+          <p
+            style={{
+              fontSize: 13,
+              color: '#1e40af',
+              marginBottom: 0,
+              lineHeight: 1.6,
+            }}
+          >
+            <strong>A note on the score:</strong> The percentage is
+            just a focusing target, not what we're measuring. We're
+            looking at the underlying patterns in how the random
+            numbers were generated during your session, which a
+            simple hit rate doesn't reveal. A score below 50% is
+            just as valuable to the research as one above it.
           </p>
         </div>
 

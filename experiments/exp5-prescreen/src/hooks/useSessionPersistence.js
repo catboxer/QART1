@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import {
-  collection, doc, addDoc, setDoc, serverTimestamp,
+  collection, doc, addDoc, setDoc, serverTimestamp, increment,
 } from 'firebase/firestore';
 import { packBitsToBase64, unpackBitsFromBase64 } from '../lib/rawBitsCodec.js';
 import { normalCdf } from '../stats/index.js';
@@ -244,6 +244,12 @@ export function useSessionPersistence({
       profRef,
       {
         session_count: sessionCount + 1,
+        // Cumulative hit/trial scalars -- cheap running totals for the
+        // results screen's cumulative-average display. Deliberately NOT a
+        // per-session history query + bit-array reconstruction (that's the
+        // pattern we removed elsewhere for being expensive dead weight).
+        cumulative_hits: increment(totals.k),
+        cumulative_trials: increment(totals.n),
         last_session_date: todayUTC,
         pre_q_completed: true,
         participant_type: isAutoMode ? 'baseline' : isAIMode ? 'ai' : 'human',
@@ -253,7 +259,7 @@ export function useSessionPersistence({
       },
       { merge: true },
     ).catch((err) => console.error('Profile save failed:', err));
-  }, [phase, participantHash, runRef, sessionCount, isAutoMode, isAIMode, emailPlaintext, participantProfile]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [phase, participantHash, runRef, sessionCount, isAutoMode, isAIMode, emailPlaintext, participantProfile, totals]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return {
     runRef,
