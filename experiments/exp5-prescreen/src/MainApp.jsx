@@ -18,7 +18,6 @@ import {
 } from 'firebase/firestore';
 import { preQuestions, postQuestions } from './questions.js';
 import { QuestionsForm } from './Forms.jsx';
-import { HurstDeltaGauge } from './Scoring.jsx';
 import confetti from 'canvas-confetti';
 import ConsentGate from './ui/ConsentGate.jsx';
 import { usePhaseRouter } from './hooks/usePhaseRouter.js';
@@ -1438,37 +1437,6 @@ export default function MainApp() {
       );
     }
 
-    const analysis = cumulativeAnalysis;
-    const cumNBlocks = analysis.nBlocks; // total blocks across all sessions
-    const finalDeltaH = analysis.deltaH.meanDeltaH;
-
-    // ── Evaluation on cumulative data — from pre-computed decision ─────────────
-    const { ksGate, collapseGate, eligible, rank: rawRank, intensityTier } = decision;
-    const verified = rawRank === 'gold';
-    const shuffleYes = collapseGate;
-
-    // SE intensity label (from evaluatePrescreen — session-empirical SD(ΔH)/√n)
-    const tierLabels = {
-      1: 'Subtle',
-      2: 'Solid Presence',
-      3: 'Exceptional',
-    };
-    const tierLabel = intensityTier
-      ? tierLabels[intensityTier]
-      : null;
-
-    // Modality (null-based SE for direction classification, cumulative SE)
-    const SE = C.NULL_HURST_SD / Math.sqrt(cumNBlocks);
-    const absDelta = Math.abs(finalDeltaH);
-    const isDynamic = ksGate && absDelta < SE;
-    let modality = null;
-    if (isDynamic)
-      modality = { label: 'Dynamic Harmonic', sub: 'Oscillation' };
-    else if (finalDeltaH >= SE)
-      modality = { label: 'Flow-Oriented', sub: 'Persistence' };
-    else if (finalDeltaH <= -SE)
-      modality = { label: 'Pulse-Oriented', sub: 'Anti-Persistence' };
-
     return (
       <div
         className="App"
@@ -1479,7 +1447,7 @@ export default function MainApp() {
           padding: 24,
         }}
       >
-        <h1>Prescreening Results</h1>
+        <h1>Results</h1>
 
         {/* ── Hero: Hit Score ─────────────────────────────────────────────── */}
         <div
@@ -1517,229 +1485,6 @@ export default function MainApp() {
             {totals.n.toLocaleString()} trials · {nBlocks} blocks
           </div>
         </div>
-
-        {/* ── Hurst Delta Gauge ───────────────────────────────────────────── */}
-        <HurstDeltaGauge
-          meanDeltaH={finalDeltaH}
-          blockCount={cumNBlocks}
-        />
-        <div
-          style={{
-            fontSize: 11,
-            color: '#9ca3af',
-            textAlign: 'center',
-            marginTop: 2,
-            marginBottom: 8,
-          }}
-        >
-          Cumulative trend across{' '}
-          {Math.round(cumNBlocks / C.BLOCKS_TOTAL)} sessions (
-          {cumNBlocks} blocks). Statistical confirmation below.
-        </div>
-
-        {/* ── Cumulative Analysis ──────────────────────────────────────────── */}
-        {analysis &&
-          (() => {
-            let irVerdict, irColor, irBg, irDesc;
-            if (eligible && verified) {
-              irVerdict = 'Verified Temporal Influencer';
-              irColor = '#15803d';
-              irBg = '#dcfce7';
-              irDesc =
-                'Pattern detected and confirmed — the structure lived in the sequence order, not just the bit count.';
-            } else if (eligible) {
-              irVerdict = 'Candidate Signal Detected';
-              irColor = '#1d4ed8';
-              irBg = '#eff6ff';
-              irDesc =
-                'A signal was detected and showed meaningful collapse upon scrambling.';
-            } else if (rawRank === 'candidate') {
-              irVerdict = 'Possible Signal — Inconclusive';
-              irColor = '#b45309';
-              irBg = '#fff7ed';
-              irDesc =
-                'Your stream showed an unusual distribution but the collapse test was inconclusive.';
-            } else if (rawRank === 'score_anomaly') {
-              irVerdict = 'Unusual Hit Rate Detected';
-              irColor = '#7c3aed';
-              irBg = '#faf5ff';
-              irDesc =
-                'No temporal pattern was detected, but your cumulative hit rate was statistically unusual — beyond what chance alone would predict.';
-            } else {
-              irVerdict = 'No Pattern Detected';
-              irColor = '#6b7280';
-              irBg = '#f9fafb';
-              irDesc =
-                'Your stream was consistent with normal random variation.';
-            }
-
-            return (
-              <div
-                style={{
-                  textAlign: 'left',
-                  marginTop: 20,
-                  marginBottom: 16,
-                  fontSize: 13,
-                }}
-              >
-                <div
-                  style={{
-                    fontWeight: 600,
-                    fontSize: 12,
-                    letterSpacing: '0.08em',
-                    color: '#9ca3af',
-                    textAlign: 'center',
-                    marginBottom: 12,
-                  }}
-                >
-                  CUMULATIVE ANALYSIS · {Math.round(cumNBlocks / C.BLOCKS_TOTAL)} SESSIONS
-                </div>
-
-                {/* Verdict badge */}
-                {(eligible || rawRank === 'candidate') && (
-                  <div
-                    style={{ marginBottom: 10, textAlign: 'center' }}
-                  >
-                    {modality && (
-                      <span
-                        style={{
-                          fontSize: 14,
-                          fontWeight: 700,
-                          color: irColor,
-                        }}
-                      >
-                        {modality.label}
-                        <span
-                          style={{ fontWeight: 400, marginLeft: 6 }}
-                        >
-                          ({modality.sub})
-                        </span>
-                      </span>
-                    )}
-                    {intensityTier && (
-                      <span
-                        style={{
-                          marginLeft: 10,
-                          padding: '2px 10px',
-                          borderRadius: 10,
-                          background: irColor + '22',
-                          color: irColor,
-                          fontSize: 11,
-                          fontWeight: 600,
-                        }}
-                      >
-                        Tier {intensityTier} · {tierLabel}
-                      </span>
-                    )}
-                  </div>
-                )}
-
-                {/* Step 1 */}
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    padding: '10px 14px',
-                    borderRadius: 8,
-                    marginBottom: 6,
-                    background: '#f8f9fa',
-                    border: '1px solid #e5e7eb',
-                  }}
-                >
-                  <div>
-                    <span style={{ fontWeight: 600 }}>
-                      Signal Presence
-                    </span>
-                    <span
-                      style={{
-                        color: '#9ca3af',
-                        marginLeft: 8,
-                        fontSize: 12,
-                      }}
-                    >
-                      Did your Hurst pattern differ from the
-                      uninfluenced control stream?
-                    </span>
-                  </div>
-                  <div
-                    style={{
-                      fontWeight: 700,
-                      color: ksGate ? '#15803d' : '#9ca3af',
-                      flexShrink: 0,
-                      marginLeft: 12,
-                    }}
-                  >
-                    {ksGate ? 'YES' : 'NO'}
-                  </div>
-                </div>
-
-                {/* Step 2 */}
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    padding: '10px 14px',
-                    borderRadius: 8,
-                    marginBottom: 6,
-                    background: '#f8f9fa',
-                    border: '1px solid #e5e7eb',
-                  }}
-                >
-                  <div>
-                    <span style={{ fontWeight: 600 }}>
-                      Pattern Structure
-                    </span>
-                    <span
-                      style={{
-                        color: '#9ca3af',
-                        marginLeft: 8,
-                        fontSize: 12,
-                      }}
-                    >
-                      Did the pattern collapse when bit order was
-                      randomised?
-                    </span>
-                  </div>
-                  <div
-                    style={{
-                      fontWeight: 700,
-                      color: shuffleYes ? '#15803d' : '#9ca3af',
-                      flexShrink: 0,
-                      marginLeft: 12,
-                    }}
-                  >
-                    {shuffleYes ? 'YES' : 'NO'}
-                  </div>
-                </div>
-
-                {/* Verdict */}
-                <div
-                  style={{
-                    padding: '12px 16px',
-                    borderRadius: 10,
-                    background: irBg,
-                    border: `2px solid ${irColor}`,
-                  }}
-                >
-                  <div
-                    style={{
-                      fontWeight: 700,
-                      fontSize: 14,
-                      color: irColor,
-                      marginBottom: 4,
-                    }}
-                  >
-                    {irVerdict}
-                  </div>
-                  <div style={{ color: '#555', fontSize: 12 }}>
-                    {irDesc}
-                  </div>
-                </div>
-              </div>
-            );
-          })()}
 
         <button
           className="primary-btn"
