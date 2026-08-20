@@ -58,7 +58,7 @@ Running real Baseline/AI sessions through the normal exp4 app (with the fix depl
 
 - **Outshift daily budget:** ~100,000 bits/day account-wide, shared with the live pilot. Each block call costs 304 bits (38 bytes requested, 3 discarded). Budget conservatively to **300 Outshift calls/day**, not the ~328 theoretical max, leaving headroom for the live pilot (per the user, only one other person's occasional testing collides with this right now — pause the automation, below, when that happens).
 - **Current defaults (as of 2026-08-19): 30 blocks/sitting, 15/15 Outshift/LFDR split** — matches a real Exp4 session length (`pkConfig.BLOCKS_TOTAL`). `node experiments/exp4/run-provider-validation.js` with no flags now uses these defaults; override with `--batch-size` / `--outshift-budget` if needed.
-- **Recommended cadence:** ~20 sittings/day at the current defaults, spread across different times of day (this is what makes the time-of-day check meaningful). ~13 days to reach the 3,930 blocks/provider (262 sittings) target in the prespec — sized for 80% power against the most conservative of three benchmark effect sizes, not just the more likely ones (see prespec §8 for the full power table and the exp5-prescreen data it's grounded in).
+- **Recommended cadence:** 18 sittings/day (270 Outshift calls/day, 82,080 bits — comfortable margin under the 100,000/day cap), spread across different times of day (this is what makes the time-of-day check meaningful). ~14.6 days to reach the 3,930 blocks/provider (262 sittings, 7,860 total blocks) target in the prespec — sized for 80% power against the most conservative of three benchmark effect sizes, not just the more likely ones (see prespec §8 for the full power table and the exp5-prescreen data it's grounded in).
 - **Open question, never resolved:** whether to run a smaller staged batch first (e.g. 200-400 blocks/provider) to check for *any* detectable provider effect before committing the full week — raised because raw hit-rate differences between two working QRNGs may be too small to detect at this sample size; H_RS/structure metrics are more likely to show something.
 - **Exactly 2 smoke-test sittings exist in Firestore** (`exp4_artificial_injection`, verified directly via query on 2026-08-19): `pv_1787113000691_bdb2aa` (`provider_validation`, 2 blocks: 1 Outshift, 1 LFDR) and `pva_1787116665640_5c3bca` (`provider_validation_asymmetric`, 2 blocks). Both labeled `"smoke-test"`, disclosed in the prespec §8, never cleaned up. Filter these out of any analysis query, or delete them.
 
@@ -67,7 +67,7 @@ Running real Baseline/AI sessions through the normal exp4 app (with the fix depl
 Set up 2026-08-19, macOS `launchd` (survives this chat session ending — nothing about it depends on Claude Code staying open):
 
 - **Wrapper script:** `experiments/exp4/run-sitting-cron.sh` — runs one sitting with the current defaults, logs to `~/qart-power-run/provider-validation-logs/YYYY-MM-DD.log` (durable location, not `/tmp` — an earlier unrelated background job lost its checkpoint to a reboot when logging to `/tmp`, so this project keeps background job output at `~/qart-power-run/`).
-- **Scheduler:** `~/Library/LaunchAgents/com.qart.provider-validation.plist` — fires once immediately on load, then every 70 minutes (`StartInterval=4200`), ~20 sittings/day.
+- **Scheduler:** `~/Library/LaunchAgents/com.qart.provider-validation.plist` — fires once immediately on load, then every 80 minutes (`StartInterval=4800`), 18 sittings/day.
 
 **Start it:**
 ```
