@@ -415,9 +415,9 @@ export default function MainApp() {
     return (
       <div style={{ position: 'relative' }}>
         <ConsentGate
-          title="Pre-Screening: Potential Participant Qualification"
+          title="Experiment 4b: Attention and Quantum Random Numbers"
           showBlindingNote={false}
-          studyDescription={`You are participating in a pre-screening session to determine eligibility for a future research study (Experiment 5). This session identifies individuals who show high resonance with quantum random systems. You will complete ${C.BLOCKS_TOTAL} blocks each ~2 seconds long and brief questionnaires (approximately 5 minutes total).`}
+          studyDescription={`This session identifies individuals who show high resonance with quantum random systems. You will complete ${C.BLOCKS_TOTAL} blocks each ~2 seconds long and brief questionnaires (approximately 5 minutes total).`}
           bullets={[
             'You will receive a target color assignment (blue or orange)',
             'Your task is to get your target color above 50%. Concentrate your attention on your target color right before and during the moment quantum data is fetched from a quantum random number generator.',
