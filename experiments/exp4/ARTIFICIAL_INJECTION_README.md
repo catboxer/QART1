@@ -74,15 +74,19 @@ Set up 2026-08-19, macOS `launchd` (survives this chat session ending — nothin
 launchctl load ~/Library/LaunchAgents/com.qart.provider-validation.plist
 ```
 
-**Pause it** (e.g. when the one other person needs to test something) — stops immediately, nothing corrupted, just won't fire again until reloaded:
+**Pause it gracefully** (e.g. when the one other person needs to test something) — a flag file the wrapper script checks at the *start* of each firing, never during an in-flight sitting, so a currently running sitting always finishes naturally on its own; this only prevents the *next* one from starting:
 ```
-launchctl unload ~/Library/LaunchAgents/com.qart.provider-validation.plist
+touch ~/qart-power-run/provider-validation-logs/PAUSE
 ```
 
 **Resume:**
 ```
-launchctl load ~/Library/LaunchAgents/com.qart.provider-validation.plist
+rm ~/qart-power-run/provider-validation-logs/PAUSE
 ```
+
+launchd itself stays loaded the whole time with this approach — no need to unload/reload at all, the schedule keeps firing every 80 minutes, each firing just checks the flag first and skips if it's present (logged as a no-op line, not silently).
+
+If you do want to stop the schedule entirely rather than pause (e.g. genuinely done for the day), `launchctl unload` also works, but note it may interrupt a sitting if one happens to be actively running at that exact moment — the flag-file approach above avoids that uncertainty entirely.
 
 **Check it's actually running:**
 ```
