@@ -102,7 +102,7 @@ launchctl load ~/Library/LaunchAgents/com.qart.caffeinate.plist
 ```
 Uses `caffeinate -i -s` (prevent idle sleep, prevent sleep on AC power). **Keep the laptop plugged in for the ~14.6-day run** — `-s` only has an effect on AC power, and battery obviously won't last that long regardless.
 
-**Lid must stay open.** Closing the lid triggers clamshell sleep, a separate mechanism from idle sleep — `caffeinate` does not override it. (The only way to run lid-closed is with an external display connected while on AC power, which wasn't set up here.) Dimming the screen brightness, even all the way down, is fine and does not trigger sleep — it's unrelated to the lid-close/idle-sleep mechanisms.
+**Lid must stay open.** Closing the lid triggers clamshell sleep, a separate mechanism from idle sleep — `caffeinate` does not override it. (The only way to run lid-closed is with an external display connected while on AC power, which wasn't set up here.)
 
 To stop preventing sleep (e.g. genuinely done, or want the Mac to sleep normally again):
 ```
