@@ -1171,6 +1171,9 @@ export default function MainApp() {
     const heroBorder =
       hr > 50 ? '#86efac' : hr < 50 ? '#fed7aa' : '#e5e7eb';
 
+    const sessionNumber = sessionCount + 1;
+    const sessionsRemain = sessionNumber < C.TARGET_SESSIONS;
+
     return (
       <div
         className="App"
@@ -1218,6 +1221,23 @@ export default function MainApp() {
             {totals.k.toLocaleString()} hits out of{' '}
             {totals.n.toLocaleString()} trials · {nBlocks} blocks
           </div>
+        </div>
+
+        <div
+          style={{
+            padding: 16,
+            background: '#f0fdf4',
+            borderRadius: 12,
+            border: '1px solid #bbf7d0',
+            marginBottom: 16,
+            textAlign: 'center',
+          }}
+        >
+          <p style={{ fontSize: 15, color: '#15803d', marginBottom: 0, fontWeight: 600 }}>
+            {sessionsRemain
+              ? `Session ${sessionNumber} of ${C.TARGET_SESSIONS} complete`
+              : `Thank you for completing ${C.TARGET_SESSIONS} sessions`}
+          </p>
         </div>
 
         <button

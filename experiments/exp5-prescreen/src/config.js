@@ -104,7 +104,7 @@ config.experiments = {
     // Firestore collection for prescreen sessions
     PRESCREEN_COLLECTION: 'prescreen_sessions_exp5',
     // Multi-session accumulation
-    MIN_SESSIONS_FOR_DECISION: 5, // sessions 1-4 show "come back" screen; 5+ show cumulative result
+    TARGET_SESSIONS: 10, // soft target — shows a completion message but does not block further sessions
     MAX_SESSIONS_FOR_ANALYSIS: 20, // consent gate blocks further sessions beyond this usable count
     PARTICIPANT_COLLECTION: 'prescreen_participants',
 
