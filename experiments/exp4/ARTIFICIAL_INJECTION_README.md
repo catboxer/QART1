@@ -94,6 +94,8 @@ launchctl list | grep com.qart.provider-validation
 tail -f ~/qart-power-run/provider-validation-logs/$(date +%Y-%m-%d).log
 ```
 
+**What happens when Outshift's daily quota runs out mid-run:** the sitting in progress halts immediately (per the halt-on-failure design, no substitution) and gets logged with `ended_reason=outshift_exhausted`, `completed=0/30` -- excluded, not partial data. This is not a special retry path -- `launchd`'s 80-minute timer was always going to fire again regardless of the last outcome, so the next scheduled sitting just tries fresh. If the quota is still exhausted it fails the same cheap way and excludes itself again; once Outshift's daily quota actually resets, the next firing succeeds normally. No action needed unless you want to pause it (e.g. to cap how much of a freshly-reset quota gets used before you're back).
+
 **Requirement: the Mac needs to stay awake, and it will go to sleep on its own even with the lid open** (idle sleep, on its own timer, separate from lid-closure sleep) — `launchd` can't wake a sleeping machine for a job like this, so a missed 80-minute window just doesn't happen and the next one might too.
 
 Fix: a second LaunchAgent that runs `caffeinate` continuously, self-healing (`KeepAlive`, so launchd restarts it if it ever dies) rather than a background process in a terminal that dies when the terminal closes:
