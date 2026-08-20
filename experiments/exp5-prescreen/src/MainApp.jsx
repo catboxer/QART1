@@ -882,9 +882,8 @@ export default function MainApp() {
           </p>
           <p style={{ fontSize: 16, marginBottom: 0, color: '#555' }}>
             <strong>
-              Bring your attention to your target color just before
-              clicking the button, and sustain that steady focus while
-              the screen flashes.
+              Bring your attention to your target color and form your
+              intent before clicking the button.
             </strong>
           </p>
         </div>
