@@ -649,7 +649,7 @@ export default function MainApp() {
         <h1>
           {isAIMode
             ? '🤖 AI Agent Mode'
-            : 'Assessing Randomness Suppression During Conscious Intention Tasks — Pre-Screening For Experiment 5'}
+            : 'Experiment 4b: Attention and Quantum Random Numbers'}
         </h1>
 
         <div style={{ marginBottom: 30, marginTop: 30 }}>
