@@ -331,11 +331,11 @@ export default function MainApp() {
           showBlindingNote={false}
           studyDescription={`This session identifies individuals who show high resonance with quantum random systems. You will complete ${C.BLOCKS_TOTAL} blocks each ~2 seconds long and brief questionnaires (approximately 5 minutes total).`}
           bullets={[
-            'You will receive a target color assignment (blue or orange)',
+            'You will receive one target color assignment (blue or orange) for the entire session',
             'Your task is to get your target color above 50%. Concentrate your attention on your target color right before and during the moment quantum data is fetched from a quantum random number generator.',
             'When focused and ready, press "I\'m Ready" and keep focusing as your color pulses. This triggers the quantum random number generator and the sigantures in the QRNG during your focused intention is what we\'re testing.',
             'We collect data on quantum random sequences, your performance metrics, timing patterns, and your questionnaire responses.',
-            'Participation is completely voluntary; you may exit at any time.',
+            'Participation is completely voluntary; you may exit at any time. At the end of each session you will be provided a Session ID for your records. This can be used to request removal at any time.',
             'If you provide your email, we store it to link your sessions across devices. Your email will not be shared with third parties or used for any other purpose.',
             'To request deletion of your data, email h@whatthequark.com with the subject line "Data Deletion Request". Include the email address you used when participating and we will remove your records.',
             'Data will be retained indefinitely to enable scientific replication and analysis, unless a deletion request is received.',
