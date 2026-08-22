@@ -8,7 +8,7 @@ import { pkConfig as C } from '../config.js';
 export default function ConsentGate({
   onAgree,
   title = 'Consent to Participate',
-  contactEmail = 'h@whatthequark.com',
+  contactEmail = 'a.campbell@lmu.de',
   version = C?.CONSENT_VERSION || 'v1',
   bullets = [], // Accept bullets as props
   studyDescription = null, // Optional override for the main description
@@ -16,11 +16,10 @@ export default function ConsentGate({
 }) {
   const [isAdult, setIsAdult] = useState(false);
   const [consent, setConsent] = useState(false);
-  const [visualWarning, setVisualWarning] = useState(false);
   const [emailValue, setEmailValue] = useState('');
   const [emailOptIn, setEmailOptIn] = useState(false);
 
-  const ready = isAdult && consent && visualWarning;
+  const ready = isAdult && consent;
 
   const handleContinue = () => {
     if (!ready) return;
@@ -70,21 +69,7 @@ export default function ConsentGate({
         </ul>
       )}
 
-      <div className="question-block" style={{ marginTop: '1rem', background: '#fff3cd', padding: '12px', border: '1px solid #ffeaa7', borderRadius: '8px' }}>
-        <label
-          className="question-label"
-          style={{ display: 'flex', gap: 10, alignItems: 'center', margin: 0 }}
-        >
-          <input
-            type="checkbox"
-            checked={visualWarning}
-            onChange={(e) => setVisualWarning(e.target.checked)}
-          />
-          <span style={{ fontWeight: 'bold', color: '#d63031' }}>⚠️ I understand this experiment contains rapidly flashing visual patterns that may negatively impact individuals with photosensitive epilepsy, seizure disorders, or other visual sensitivities.</span>
-        </label>
-      </div>
-
-      <div className="question-block" style={{ marginTop: '0.6rem' }}>
+      <div className="question-block" style={{ marginTop: '1rem' }}>
         <label
           className="question-label"
           style={{ display: 'flex', gap: 10, alignItems: 'center', margin: 0 }}
@@ -108,7 +93,7 @@ export default function ConsentGate({
             checked={consent}
             onChange={(e) => setConsent(e.target.checked)}
           />
-          I consent to participate and understand some details will be explained after participation.
+          I consent to participate in this study. I understand that I may withdraw at any time by closing my browser tab, and that I may request deletion of my data at any time by emailing a request.
         </label>
       </div>
 
@@ -160,7 +145,7 @@ export default function ConsentGate({
           className="field-hint"
           style={{ textAlign: 'center', marginTop: '0.75rem' }}
         >
-          Check all three boxes to continue.
+          Check both boxes to continue.
         </div>
       )}
 

@@ -1,10 +1,6 @@
 // src/MainApp.jsx
 import './App.css';
-import React, {
-  useEffect,
-  useRef,
-  useState,
-} from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { pkConfig as C } from './config.js';
 import { db } from './firebase.js';
 import {
@@ -74,11 +70,15 @@ export default function MainApp() {
     participantHash,
     participantProfile,
     emailPlaintext,
-    sessionCount, setSessionCount,
+    sessionCount,
+    setSessionCount,
     requireUid,
     loadParticipant,
     loadAutoParticipant,
   } = useParticipantProfile({ db, C });
+
+  // ---- consent: email-contact permission (set in ConsentGate.onAgree)
+  const emailOptInRef = useRef(false);
 
   // ---- target assignment
   const [target, setTarget] = useState(null);
@@ -122,7 +122,13 @@ export default function MainApp() {
     if (autoParticipantLoadedRef.current) return;
     autoParticipantLoadedRef.current = true;
     loadAutoParticipant();
-  }, [isAutoMode, isAIMode, profileLoading, uid, loadAutoParticipant]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [
+    isAutoMode,
+    isAIMode,
+    profileLoading,
+    uid,
+    loadAutoParticipant,
+  ]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchTriggeredAtRef = useRef(null); // Capture when fetching was triggered (button press or auto-timer)
   const qrngProviderRef = useRef(null); // Track QRNG provider across blocks ('mixed' if it changes)
@@ -132,11 +138,21 @@ export default function MainApp() {
   // ---- phase & per-minute state
   const {
     phase,
-    goToPreQ, goToOnboarding,
-    goToTargetAnnounce, goToFetching, goToScore,
-    goToRest, goToAudit, goToNext, goToPreparingNext,
-    goToResults, goToSummary, goToDone,
-    goToAutoComplete, goToAIComplete, goToMaxSessions,
+    goToPreQ,
+    goToOnboarding,
+    goToTargetAnnounce,
+    goToFetching,
+    goToScore,
+    goToRest,
+    goToAudit,
+    goToNext,
+    goToPreparingNext,
+    goToResults,
+    goToSummary,
+    goToDone,
+    goToAutoComplete,
+    goToAIComplete,
+    goToMaxSessions,
   } = usePhaseRouter();
   const [blockIdx, setblockIdx] = useState(-1);
   const [isRunning, setIsRunning] = useState(false);
@@ -158,30 +174,57 @@ export default function MainApp() {
     saveSessionAggregates,
     resetCompletionFlag,
   } = useSessionPersistence({
-    db, C,
-    target, uid, requireUid,
-    participantHash, isAutoMode, isAIMode,
-    totals, totalGhostHits,
-    deltaHurstHistory, hurstSubjectHistory, hurstDemonHistory,
-    allRawBitsRef, qrngProviderRef, qrngProviderSeqRef,
-    phase, sessionCount, participantProfile, emailPlaintext,
+    db,
+    C,
+    target,
+    uid,
+    requireUid,
+    participantHash,
+    isAutoMode,
+    isAIMode,
+    totals,
+    totalGhostHits,
+    deltaHurstHistory,
+    hurstSubjectHistory,
+    hurstDemonHistory,
+    allRawBitsRef,
+    qrngProviderRef,
+    qrngProviderSeqRef,
+    phase,
+    sessionCount,
+    participantProfile,
+    emailPlaintext,
+    emailOptInRef,
   });
 
   // ---- trial runner: refs, processTrials (internal), persistMinute (internal),
   //      endMinute, fetching effect, audit effect, block-persistence effect
   const { refs: trialRunnerRefs } = useTrialRunner({
     C,
-    phase, target, setTarget,
-    isAutoMode, isAIMode,
-    goToScore, goToRest, goToResults,
+    phase,
+    target,
+    setTarget,
+    isAutoMode,
+    isAIMode,
+    goToScore,
+    goToRest,
+    goToResults,
     runRef,
-    blockIdx, setblockIdx,
-    setIsRunning, setLastBlock,
-    setTotals, setTotalGhostHits,
-    setDeltaHurstHistory, setHurstSubjectHistory,
+    blockIdx,
+    setblockIdx,
+    setIsRunning,
+    setLastBlock,
+    setTotals,
+    setTotalGhostHits,
+    setDeltaHurstHistory,
+    setHurstSubjectHistory,
     setHurstDemonHistory,
-    saveSessionAggregates, lastPersistedBlockRef,
-    fetchTriggeredAtRef, allRawBitsRef, qrngProviderRef, qrngProviderSeqRef,
+    saveSessionAggregates,
+    lastPersistedBlockRef,
+    fetchTriggeredAtRef,
+    allRawBitsRef,
+    qrngProviderRef,
+    qrngProviderSeqRef,
   });
 
   // Auto-mode and AI-mode: Skip consent/questions, auto-restart, and auto-continue rest screens
@@ -206,7 +249,8 @@ export default function MainApp() {
           goToResults();
         } else {
           // Check if audit is needed based on the just-completed block (not the incremented blockIdx)
-          const completedBlockIdx = trialRunnerRefs.blockIdxToPersistRef.current;
+          const completedBlockIdx =
+            trialRunnerRefs.blockIdxToPersistRef.current;
           const needsAudit =
             completedBlockIdx >= 0 &&
             (completedBlockIdx + 1) % C.AUDIT_EVERY_N_BLOCKS === 0 &&
@@ -236,8 +280,11 @@ export default function MainApp() {
       if (runRef) {
         const isFullSession =
           allRawBitsRef.current.length === C.BLOCKS_TOTAL;
-        saveSessionAggregates().catch(err =>
-          console.error('saveSessionAggregates failed (background):', err),
+        saveSessionAggregates().catch((err) =>
+          console.error(
+            'saveSessionAggregates failed (background):',
+            err,
+          ),
         );
         if (isFullSession) {
           setDoc(runRef, { completed: true }, { merge: true }).catch(
@@ -246,7 +293,10 @@ export default function MainApp() {
         }
       }
       isAIMode ? goToDone() : goToNext();
-    } else if ((phase === 'done' && isAutoMode) || phase === 'summary') {
+    } else if (
+      (phase === 'done' && isAutoMode) ||
+      phase === 'summary'
+    ) {
       // Auto-mode: skip post-questionnaire; AI-mode: show questions for agent to fill
       goToNext();
     } else if (phase === 'next') {
@@ -292,7 +342,16 @@ export default function MainApp() {
     }
     // Note: blockIdxToPersistRef is a ref, not state, so it doesn't need to be in the dep array
     // All goTo* functions, resetCompletionFlag, setRunRef, lastPersistedBlockRef are stable
-  }, [isAutoMode, isAIMode, phase, blockIdx, autoSessionCount, autoSessionTarget, runRef, saveSessionAggregates]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [
+    isAutoMode,
+    isAIMode,
+    phase,
+    blockIdx,
+    autoSessionCount,
+    autoSessionTarget,
+    runRef,
+    saveSessionAggregates,
+  ]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Note: processTrials, persistMinute, endMinute, fetching effect, audit effect,
   // and block-persistence effect are owned by useTrialRunner above.
@@ -304,7 +363,9 @@ export default function MainApp() {
   // with the sign-in effect in useParticipantProfile and creates a duplicate anonymous user.
   useEffect(() => {
     if (phase === 'onboarding' && !runRef && target && uid) {
-      console.log('[ensureRunDoc] onboarding useEffect firing — calling ensureRunDoc');
+      console.log(
+        '[ensureRunDoc] onboarding useEffect firing — calling ensureRunDoc',
+      );
       ensureRunDoc().catch(console.error);
     }
   }, [phase, runRef, target, uid, ensureRunDoc]);
@@ -329,21 +390,23 @@ export default function MainApp() {
         <ConsentGate
           title="Experiment 4b: Intent and Quantum Random Number Generators"
           showBlindingNote={false}
-          studyDescription={`This session identifies individuals who show high resonance with quantum random systems. You will complete ${C.BLOCKS_TOTAL} blocks each ~2 seconds long and brief questionnaires (approximately 5 minutes total).`}
+          studyDescription={`Thank you for participating! You will complete ${C.BLOCKS_TOTAL} blocks each ~2 seconds long and brief questionnaires (approximately 5 minutes total).`}
           bullets={[
             'You will receive one target color assignment (blue or orange) for the entire session',
             'Your task is to get your target color above 50%. Concentrate your attention on your target color right before and during the moment quantum data is fetched from a quantum random number generator.',
-            'When focused and ready, press "I\'m Ready" and keep focusing as your color pulses. This triggers the quantum random number generator and the sigantures in the QRNG during your focused intention is what we\'re testing.',
+            'When focused and ready, press "I\'m Ready" and keep focusing while your target color is shown. This triggers the quantum random number generator, and the signatures in the QRNG during your focused intention is what we\'re testing.',
             'We collect data on quantum random sequences, your performance metrics, timing patterns, and your questionnaire responses.',
             'Participation is completely voluntary; you may exit at any time. At the end of each session you will be provided a Session ID for your records. This can be used to request removal at any time.',
             'If you provide your email, we store it to link your sessions across devices. Your email will not be shared with third parties or used for any other purpose.',
-            'To request deletion of your data, email h@whatthequark.com with the subject line "Data Deletion Request". Include the email address you used when participating and we will remove your records.',
+            'To request deletion of your data, email a.campbell@lmu.de with the subject line "Data Deletion Request". Include the email address you used when participating and we will remove your records.',
             'Data will be retained indefinitely to enable scientific replication and analysis, unless a deletion request is received.',
             'Hosting providers may log IP addresses for security purposes; these logs are not linked to your study data.',
           ]}
-          onAgree={async ({ email } = {}) => {
+          onAgree={async ({ email, emailOptIn } = {}) => {
             resetCompletionFlag();
-            const { skipPreQ, usableCount } = await loadParticipant(email);
+            emailOptInRef.current = emailOptIn;
+            const { skipPreQ, usableCount } =
+              await loadParticipant(email);
             if (usableCount >= C.MAX_SESSIONS_FOR_ANALYSIS) {
               goToMaxSessions();
               return;
@@ -361,15 +424,17 @@ export default function MainApp() {
       <div className="App" style={{ textAlign: 'left', padding: 24 }}>
         <h1 style={{ marginTop: 0 }}>Thank You for Participating</h1>
         <p>
-          You have completed the maximum number of pre-screening sessions for this study.
-          Your contributions are appreciated and have been recorded.
+          You have completed the maximum number of pre-screening
+          sessions for this study. Your contributions are appreciated
+          and have been recorded.
         </p>
         <p>
-          Please contact the study administrator if you have questions or would like to
-          continue participating in future phases of the research.
+          Please contact the study administrator if you have questions
+          or would like to continue participating in future phases of
+          the research.
         </p>
         <p>
-          <a href="mailto:h@whatthequark.com">h@whatthequark.com</a>
+          <a href="mailto:a.campbell@lmu.de">a.campbell@lmu.de</a>
         </p>
       </div>
     );
@@ -537,8 +602,11 @@ export default function MainApp() {
     // AI mode — auto-initialize runRef to enable Continue button (but still require AI to click it)
     // Mirrors exp4's proven approach: render-body call is belt-and-suspenders alongside the useEffect.
     if (isAIMode && !canContinue && !isRunning && target && uid) {
-      ensureRunDoc().catch(err =>
-        console.error('❌ AI-MODE: Failed to initialize runRef:', err),
+      ensureRunDoc().catch((err) =>
+        console.error(
+          '❌ AI-MODE: Failed to initialize runRef:',
+          err,
+        ),
       );
     }
 
@@ -580,7 +648,7 @@ export default function MainApp() {
               <strong>Critical moment:</strong> Immediately before and
               as you click <em>"I'm Ready"</em>, the system will
               retrieve quantum random data while your target color
-              pulses on the screen.{' '}
+              fills the screen.{' '}
               <strong>
                 This is the period to sustain clear, steady focus on
                 your target color. Focus your intention before and
@@ -589,9 +657,9 @@ export default function MainApp() {
             </li>
 
             <li>
-              You will see your target color flashing during the
-              fetch. After the quantum data is retrieved, results
-              appear instantly. The goal is to score over 50% as often
+              You will see your target color displayed steadily during the
+              fetch, with a loading spinner. After the quantum data is retrieved,
+              results appear instantly. The goal is to score over 50% as often
               as possible.
             </li>
             <li>
@@ -639,7 +707,8 @@ export default function MainApp() {
         ? Math.round((100 * lastBlock.k) / lastBlock.n)
         : 0;
     // Use the just-completed block index (the one that was saved, not the incremented one)
-    const completedBlockIdx = trialRunnerRefs.blockIdxToPersistRef.current;
+    const completedBlockIdx =
+      trialRunnerRefs.blockIdxToPersistRef.current;
     const completedBlockNum = completedBlockIdx + 1; // Human-readable (1-30)
     // Show audit after blocks 5, 10, 15, 20, 25 (when completed block is 4, 9, 14, 19, 24 in 0-indexed)
     const needsAudit =
@@ -940,7 +1009,8 @@ export default function MainApp() {
   // AUDIT - Rest & recovery screen with audit fetch in background
   if (phase === 'audit') {
     // Use the just-completed block for display
-    const completedBlockIdx = trialRunnerRefs.blockIdxToPersistRef.current;
+    const completedBlockIdx =
+      trialRunnerRefs.blockIdxToPersistRef.current;
     const completedBlockNum = completedBlockIdx + 1;
 
     return (
@@ -1023,19 +1093,13 @@ export default function MainApp() {
     );
   }
 
-  // FETCHING - Full-screen target color with 5Hz pulse + white spinner
+  // FETCHING - Full-screen solid target color + white spinner (no flashing,
+  // for photosensitivity safety; the spinner alone carries the loading signal)
   if (phase === 'fetching') {
     const targetColor = target === 'BLUE' ? '#1e40af' : '#ea580c';
-    const pulseKeyframes = `
-      @keyframes breathe {
-        0%, 100% { opacity: 0.8; }
-        50% { opacity: 1; }
-      }
-    `;
 
     return (
       <>
-        <style>{pulseKeyframes}</style>
         <div
           style={{
             position: 'fixed',
@@ -1045,7 +1109,6 @@ export default function MainApp() {
             flexDirection: 'column',
             alignItems: 'center',
             justifyContent: 'center',
-            animation: 'breathe 200ms ease-in-out infinite', // 5 Hz = 200ms cycle
           }}
         >
           {/* White spinner */}
@@ -1177,10 +1240,17 @@ export default function MainApp() {
     // Cumulative average from cheap running scalar totals on the participant
     // profile doc (cumulative_hits/cumulative_trials), not a per-session
     // history query -- see the comment in useSessionPersistence.js.
-    const cumTrials = (participantProfile?.cumulative_trials ?? 0) + totals.n;
-    const cumSubjectHitRate = cumTrials > 0
-      ? ((100 * ((participantProfile?.cumulative_hits ?? 0) + totals.k)) / cumTrials).toFixed(1)
-      : '50.0';
+    const cumTrials =
+      (participantProfile?.cumulative_trials ?? 0) + totals.n;
+    const cumSubjectHitRate =
+      cumTrials > 0
+        ? (
+            (100 *
+              ((participantProfile?.cumulative_hits ?? 0) +
+                totals.k)) /
+            cumTrials
+          ).toFixed(1)
+        : '50.0';
 
     return (
       <div
@@ -1241,8 +1311,16 @@ export default function MainApp() {
             textAlign: 'left',
           }}
         >
-          <p style={{ fontSize: 15, color: '#374151', marginBottom: 0 }}>
-            <strong>Your average across all completed sessions:</strong>{' '}
+          <p
+            style={{
+              fontSize: 15,
+              color: '#374151',
+              marginBottom: 0,
+            }}
+          >
+            <strong>
+              Your average across all completed sessions:
+            </strong>{' '}
             {cumSubjectHitRate}%
           </p>
         </div>
@@ -1257,10 +1335,17 @@ export default function MainApp() {
             textAlign: 'center',
           }}
         >
-          <p style={{ fontSize: 15, color: '#15803d', marginBottom: 0, fontWeight: 600 }}>
+          <p
+            style={{
+              fontSize: 15,
+              color: '#15803d',
+              marginBottom: 0,
+              fontWeight: 600,
+            }}
+          >
             {sessionsRemain
               ? `Session ${sessionNumber} of ${C.TARGET_SESSIONS} complete`
-              : `Thank you for completing ${C.TARGET_SESSIONS} sessions`}
+              : `Thank you for completing ${sessionNumber} sessions`}
           </p>
         </div>
 
@@ -1285,9 +1370,9 @@ export default function MainApp() {
             <strong>A note on the score:</strong> The percentage is
             just a focusing target, not what we're measuring. We're
             looking at the underlying patterns in how the random
-            numbers were generated during your session, which a
-            simple hit rate doesn't reveal. A score below 50% is
-            just as valuable to the research as one above it.
+            numbers were generated during your session, which a simple
+            hit rate doesn't reveal. A score below 50% is just as
+            valuable to the research as one above it.
           </p>
         </div>
 
@@ -1403,11 +1488,12 @@ export default function MainApp() {
           <p>
             If you have any questions about this research, please
             contact the research team at{' '}
-            <a href="mailto:h@whatthequark.com">h@whatthequark.com</a>
+            <a href="mailto:a.campbell@lmu.de">a.campbell@lmu.de</a>
           </p>
           <p>
-            Your session number is <strong>{runRef?.id ?? 'unavailable'}</strong>.
-            Please include this session number if you email us with a
+            Your session number is{' '}
+            <strong>{runRef?.id ?? 'unavailable'}</strong>. Please
+            include this session number if you email us with a
             question, an issue, or a request to delete this session
             from our records for privacy reasons.
           </p>
@@ -1442,8 +1528,7 @@ export default function MainApp() {
             </li>
             <li>
               Share with friends and family interested in
-              participating in our study. Large datasets matter
-              here.
+              participating in our study. Large datasets matter here.
             </li>
           </ul>
 

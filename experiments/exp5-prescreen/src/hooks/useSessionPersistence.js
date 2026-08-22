@@ -47,7 +47,7 @@ function rleEncode(arr) {
  *   totals, totalGhostHits,
  *   deltaHurstHistory, hurstSubjectHistory, hurstDemonHistory,
  *   allRawBitsRef, qrngProviderRef, qrngProviderSeqRef,
- *   phase, sessionCount, participantProfile, emailPlaintext,
+ *   phase, sessionCount, participantProfile, emailPlaintext, emailOptInRef,
  * }} options
  */
 export function useSessionPersistence({
@@ -57,7 +57,7 @@ export function useSessionPersistence({
   totals, totalGhostHits,
   deltaHurstHistory, hurstSubjectHistory, hurstDemonHistory,
   allRawBitsRef, qrngProviderRef, qrngProviderSeqRef,
-  phase, sessionCount, participantProfile, emailPlaintext,
+  phase, sessionCount, participantProfile, emailPlaintext, emailOptInRef,
 }) {
   const [runRef, setRunRef] = useState(null);
   const ensureRunDocPromiseRef = useRef(null);
@@ -254,12 +254,12 @@ export function useSessionPersistence({
         pre_q_completed: true,
         participant_type: isAutoMode ? 'baseline' : isAIMode ? 'ai' : 'human',
         updated_at: serverTimestamp(),
-        ...(emailPlaintext ? { email: emailPlaintext } : {}),
+        ...(emailPlaintext ? { email: emailPlaintext, email_opt_in: !!emailOptInRef?.current } : {}),
         ...(!participantProfile ? { created_at: serverTimestamp() } : {}),
       },
       { merge: true },
     ).catch((err) => console.error('Profile save failed:', err));
-  }, [phase, participantHash, runRef, sessionCount, isAutoMode, isAIMode, emailPlaintext, participantProfile, totals]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [phase, participantHash, runRef, sessionCount, isAutoMode, isAIMode, emailPlaintext, emailOptInRef, participantProfile, totals]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return {
     runRef,

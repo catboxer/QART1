@@ -282,10 +282,6 @@ export function useTrialRunner({
           timestamp: assignmentData.timestamp,
         };
 
-        console.log(
-          `[assignment] byte=${assignmentData.bits} bit[${ASSIGNMENT_BIT_INDEX}]=${assignmentBit} -> subject gets ${assignmentBit === 1 ? 'first' : 'second'} half (source: ${assignmentData.source})`
-        );
-
         const quantumData = await fetchQRNGBits(C.BITS_PER_BLOCK);
         if (isCancelled) return;
 

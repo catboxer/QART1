@@ -350,11 +350,12 @@ export default function MainApp() {
           bullets={[
             'You will receive a target color assignment (blue or orange)',
             'Your task is to get your target color above 50%. Concentrate your attention on your target color right before and during the moment quantum data is fetched from a quantum random number generator.',
-            'When focused and ready, press "I\'m Ready" and keep focusing as your color pulses. This triggers the quantum random number generator and the sigantures in the QRNG during your focused intention is what we\'re testing.',
+            'When focused and ready, press "I\'m Ready" and keep focusing while your target color is shown. This triggers the quantum random number generator, and the signatures in the QRNG during your focused intention is what we\'re testing.',
             'We collect data on quantum random sequences, your performance metrics, timing patterns, and your questionnaire responses.',
             'Participation is completely voluntary; you may exit at any time.',
+            'You will receive $25 compensation upon completing all 5 sessions. Partial completion is not compensated.',
             'If you provide your email, we use a one-way hash to link your sessions across devices. Your plaintext email is stored in a separate private record that is never included in published research data. We may use it to contact you if you are selected for the next phase of research. Your email will not be shared with third parties or used for any other purpose.',
-            'To request deletion of your data, email h@whatthequark.com with the subject line "Data Deletion Request". Include the email address you used when participating and we will remove your records.',
+            'To request deletion of your data, email a.campbell@lmu.de with the subject line "Data Deletion Request". Include the email address you used when participating and we will remove your records.',
             'Data will be retained indefinitely to enable scientific replication and analysis, unless a deletion request is received.',
             'Hosting providers may log IP addresses for security purposes; these logs are not linked to your study data.',
           ]}
@@ -459,7 +460,7 @@ export default function MainApp() {
           continue participating in future phases of the research.
         </p>
         <p>
-          <a href="mailto:h@whatthequark.com">h@whatthequark.com</a>
+          <a href="mailto:a.campbell@lmu.de">a.campbell@lmu.de</a>
         </p>
       </div>
     );
@@ -681,7 +682,7 @@ export default function MainApp() {
               <strong>Critical moment:</strong> Immediately before and
               as you click <em>"I'm Ready"</em>, the system will
               retrieve quantum random data while your target color
-              pulses on the screen.{' '}
+              fills the screen.{' '}
               <strong>
                 This is the period to sustain clear, steady focus on
                 your target color. Focus your intention before and
@@ -690,9 +691,9 @@ export default function MainApp() {
             </li>
 
             <li>
-              You will see your target color flashing during the
-              fetch. After the quantum data is retrieved, results
-              appear instantly. The goal is to score over 50% as often
+              You will see your target color displayed steadily during the
+              fetch, with a loading spinner. After the quantum data is retrieved,
+              results appear instantly. The goal is to score over 50% as often
               as possible.
             </li>
             <li>
@@ -932,9 +933,8 @@ export default function MainApp() {
           </p>
           <p style={{ fontSize: 16, marginBottom: 20, color: '#555' }}>
             <strong>
-              Bring your attention to your target color just before
-              clicking the button, and sustain that steady focus while
-              the screen flashes.
+              Bring your attention to your target color and form your
+              intent before clicking the button.
             </strong>
           </p>
           <p>Click when ready.</p>
@@ -1073,19 +1073,13 @@ export default function MainApp() {
     );
   }
 
-  // FETCHING - Full-screen target color with 5Hz pulse + white spinner
+  // FETCHING - Full-screen solid target color + white spinner (no flashing,
+  // for photosensitivity safety; the spinner alone carries the loading signal)
   if (phase === 'fetching') {
     const targetColor = target === 'BLUE' ? '#1e40af' : '#ea580c';
-    const pulseKeyframes = `
-      @keyframes breathe {
-        0%, 100% { opacity: 0.8; }
-        50% { opacity: 1; }
-      }
-    `;
 
     return (
       <>
-        <style>{pulseKeyframes}</style>
         <div
           style={{
             position: 'fixed',
@@ -1095,7 +1089,6 @@ export default function MainApp() {
             flexDirection: 'column',
             alignItems: 'center',
             justifyContent: 'center',
-            animation: 'breathe 200ms ease-in-out infinite', // 5 Hz = 200ms cycle
           }}
         >
           {/* White spinner */}
@@ -1456,7 +1449,7 @@ export default function MainApp() {
           <p>
             If you have any questions about this research, please
             contact the research team at{' '}
-            <a href="mailto:h@whatthequark.com">h@whatthequark.com</a>
+            <a href="mailto:a.campbell@lmu.de">a.campbell@lmu.de</a>
           </p>
         </div>
 
@@ -1505,21 +1498,11 @@ export default function MainApp() {
               collection is complete.
             </li>
             <li>
-              We'll post a full debrief at{' '}
-              <a
-                href="https://whatthequark.com/debriefs/"
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{ color: '#3b82f6', textDecoration: 'underline' }}
-              >
-                whatthequark.com/debriefs
+              Email{' '}
+              <a href="mailto:a.campbell@lmu.de?subject=Debrief%20Request">
+                a.campbell@lmu.de
               </a>{' '}
-              when the study closes.
-            </li>
-            <li>
-              <a href="mailto:h@whatthequark.com?subject=Experiment%20Results%20Updates">
-                Email me when results are posted
-              </a>
+              to request a full debrief once the study closes.
             </li>
           </ul>
 

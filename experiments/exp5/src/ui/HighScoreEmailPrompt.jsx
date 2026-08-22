@@ -1,7 +1,7 @@
 import React, { useEffect } from "react";
 
 export default function HighScoreEmailPrompt({
-  emailTo = "h@whatthequark.com",
+  emailTo = "a.campbell@lmu.de",
   experiment = "exp3",
   scorePct,            // number in 0..1
   sessionId,
