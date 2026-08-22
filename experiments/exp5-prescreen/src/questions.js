@@ -111,6 +111,16 @@ export const preQuestions = [
       { label: 'No', value: 'no' },
     ],
   },
+  {
+    id: 'psiFrequency',
+    question: 'How often do you exercise or practice this ability?',
+    type: 'slider',
+    min: 0,
+    max: 10,
+    leftLabel: 'Rarely / never',
+    rightLabel: 'Very often / daily',
+    showIf: { id: 'psiConfidence', values: ['yes_active', 'yes_inconsistent', 'experiences_only'] },
+  },
 ];
 
 // ——— POST ———
