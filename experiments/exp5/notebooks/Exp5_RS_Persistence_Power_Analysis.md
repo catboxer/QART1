@@ -45,7 +45,7 @@ sessions-within-participants) design — not a simplification.
 | --------- | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | σ_within  | **0.064**                                  | Pooled block-level SD of ΔH, all conditions, both datasets (exp4 + exp5-prescreen). Confirmed: pooled SD = 0.06417 (N=21,047 blocks); every individual condition/dataset breakdown fell in 0.0637–0.0653.                                                  |
 | SESOI     | **0.003**                                  | Half the pilot's Human5+ **participant-level** mean effect (+0.00643 — the unweighted average of the three Human5+ participants' own means: +0.00933, +0.00803, +0.00194). Note this is _not_ the block-weighted pooled mean, which is smaller (+0.00435). |
-| σ_between | **0.0057 (conservative) / 0.010 (stress)** | Not a trusted point estimate — real per-participant SD is highly unstable at pilot scale (ranged 0.0016–0.0115 depending on subset/dataset checked). Bracketed instead of pinned down.                                                                     |
+| σ_between | **0.00366 (conservative) / 0.01145 (stress)** | **Revised 2026-08-22 — stated rule, not an undocumented bracket.** Four candidate per-participant SD estimates exist: exp4 Human5+ (n=3, SD=0.00395), exp5-prescreen Human5+ (n=3, SD=0.00157), exp4 all-Human (n=121, SD=0.01145), exp5-prescreen all-Human (n=12, SD=0.00366). The two Human5+ estimates are excluded as candidates — same selection-bias grounds already applied elsewhere in this project: both come from the same retrospectively-selected 3-participant subgroup, so their own between-participant SD is entangled with the same selection process that inflated the mean effect, not just noisy from small n. The two full-sample, non-subgroup estimates are used directly as the bounds instead. (Previous values 0.0057/0.010 were an unexplained bracket — no stated rule connected them to the four candidate numbers; superseded.) |
 | α         | 0.05, one-sided                            | Matches this project's convention for other directional, pre-specified hypotheses.                                                                                                                                                                         |
 
 ## What was checked and didn't fully verify
@@ -66,13 +66,37 @@ immediately (crossover at ~126 blocks / ~1.6 sessions under the conservative
 scenario, ~41 blocks / ~0.5 sessions under stress) because σ_between becomes
 the dominant term. N is the lever that matters here, not K.
 
-## Final decision: 120 participants × 5 sessions × 80 blocks/session
+## Population-level minimum: revised 2026-08-22 to N=143 (was 120)
 
-(400 blocks/participant, 48,000 total Human blocks.)
+With the corrected σ_between bounds above, N=120 no longer clears 90% power under the stress
+scenario — it caps at **86.85%**, a hard ceiling from Human-side N alone that no amount of extra
+Baseline data fixes. Two layers of correction were needed to find the true minimum, not one:
 
-|                        | Conservative (σ_between=0.0057) | Stress (σ_between=0.010) |
-| ---------------------- | ------------------------------- | ------------------------ |
-| Population-level power | 99.96%                          | **93.1%**                |
+1. Treating Baseline as perfectly known (idealized, no Baseline sampling noise), the minimum is
+   N=136 (90.28% power).
+2. Once Baseline noise is properly modeled instead of idealized away (`population_power_baseline_corrected`,
+   which combines both the within-session/total-blocks term and the genuine between-session term,
+   at 900 Baseline sessions), N=136 only reaches 88.79% — still short. The actual minimum, with
+   Baseline noise correctly included, is **N=143** (90.04% power).
+
+|                        | Conservative (σ_between=0.00366) | Stress (σ_between=0.01145), Baseline properly modeled @900 sessions |
+| ---------------------- | --------------------------------- | --------------------------- |
+| Population-level power at N=120 | 100.0%                    | **86.85%** (below target)   |
+| Population-level power at N=143 | 100.0%                    | **90.04%**                   |
+
+At N=143, the minimum Baseline sessions for 90% power under stress is 880 (70,400 blocks) — the
+existing "≥500 minimum, ~900 comfortable" Baseline recommendation below already covers this; no
+change needed there.
+
+**This does not change the N=200 recruitment target already decided.** 200 was already set as a
+buffer above the (previously 120, now 143) population-level minimum specifically to support
+individual-level flagging and the psi-ability subgroup/moderation analyses, not because the
+primary test itself required 200. N=143 is still comfortably under 200.
+
+**Downstream note — resolved:** the Baseline-session tables and decomposition-check numbers further
+below in this document have now been recomputed against N=143 and the corrected σ_between bounds
+(see the script's live output); the ≥500/~900-session recommendation is unchanged and remains
+valid under the corrected inputs.
 
 **Why 5 sessions, not 3, despite population power plateauing by ~2:**
 individual-level detection (flagging a specific standout participant for
@@ -95,6 +119,11 @@ pessimistic stress scenario with real margin (93.1% vs the bare-minimum
 90.0%), for the same 5 sessions either way.
 
 ## Baseline noise (resolved 2026-08-16 — was previously "still open")
+
+**Note: this section's specific power percentages were computed at the old N=120 and are stale.
+The reasoning (why Baseline's own noise matters, how it's measured) is still valid; the numbers
+are not — see "Population-level minimum: revised 2026-08-22 to N=143" above and the CORRECTED
+MODEL output in the companion script for the current figures.**
 
 The model above treats Baseline as a perfectly-known reference (SE=0). Real
 data says otherwise: Baseline's own ΔH doesn't sit at a clean theoretical
@@ -180,9 +209,10 @@ as an explicit minimum** — currently absent from the OSF prereg, which only
 says Baseline totals are "reported as-achieved," with no floor. Baseline
 collection is automated/continuous, not recruitment-limited like Human —
 there is no real cost argument for leaving this open-ended given how much
-it moves power. ~900 sessions (~72,000 blocks) clears the target
-comfortably (91.7% under stress-Human) at the cost of API/compute time
-only, not additional human participants.
+it moves power. At the corrected N=143, ~900 sessions (~72,000 blocks) clears the target
+(90.04% under stress-Human, per the CORRECTED MODEL output above) at the cost of API/compute time
+only, not additional human participants. (This paragraph originally cited 91.7% at the old N=120;
+updated 2026-08-22.)
 
 ## Still open — not folded into this calculation
 

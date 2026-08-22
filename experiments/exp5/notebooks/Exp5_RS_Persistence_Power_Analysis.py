@@ -44,22 +44,38 @@ SESOI = 0.003
     known inflation sources (nested-threshold selection, single-participant
     sensitivity, retrospective family definition).
 
-sigma_between: NOT a single trusted number. Real per-participant-mean SD is
-    highly unstable at pilot scale (exp4 Human5+, 3 participants: SD=0.00395;
-    exp5-prescreen Human5+, 3 participants: SD=0.00157; exp4 all-121-Human:
-    SD=0.01145; exp5-prescreen all-12-Human: SD=0.00366) -- consistent with
-    the recollection's own framing that a point estimate (~0.0009) was
-    "explicitly marked untrusted." Two bracketing scenarios are used instead:
-        conservative = 0.0057
-        stress       = 0.010
+sigma_between (REVISED 2026-08-22 -- stated derivation rule, was previously an
+    undocumented bracket): four candidate per-participant-mean SD estimates
+    exist -- exp4 Human5+ (3 participants: SD=0.00395), exp5-prescreen
+    Human5+ (3 participants: SD=0.00157), exp4 all-Human (121 participants:
+    SD=0.01145), exp5-prescreen all-Human (12 participants: SD=0.00366).
+    The two Human5+ estimates are EXCLUDED as candidates on the same
+    selection-bias grounds already applied everywhere else in this project:
+    both come from the same retrospectively-selected 3-participant subgroup
+    (chosen as the strongest result among nested 2+/3+/5+ thresholds), so
+    their own between-participant SD is entangled with the same selection
+    process that inflated the mean effect, not just noisy from small n.
+    Using them to anchor a bracket that sets the recruitment target would
+    apply the n=3-distrust rule everywhere except the one place its output
+    feeds directly into N. The two full-sample, non-subgroup estimates are
+    used directly as the bracket bounds instead:
+        conservative = 0.00366  (exp5-prescreen all-Human, n=12)
+        stress       = 0.01145  (exp4 all-Human, n=121)
+    Both bounds are traceable to a named dataset and sample; neither is
+    touched by the n=3 problem.
 
 alpha = 0.05, one-sided (matches this project's convention for other
     directional, pre-specified hypotheses).
 
-FINAL DECISION (this session, 2026-08-16)
+FINAL DECISION (this session, 2026-08-16) -- SUPERSEDED 2026-08-22, see the
+sigma_between revision above and the corrected N=143 figure used throughout
+the code below. The N=120 narrative immediately following is kept for
+historical context (it explains the sessions-vs-participants reasoning,
+which is still valid) but the headline N and the specific power numbers in
+this block are stale -- do not cite 120 or 93.1% as current.
 ------------------------------------------
 120 participants x 5 sessions x 80 blocks/session (400 blocks/participant,
-48,000 total Human blocks).
+48,000 total Human blocks). [STALE N -- see above; superseded by N=143]
 
 Rationale: the population-level test plateaus almost immediately past ~2
 sessions (sigma_between dominates once K exceeds roughly 41-126 blocks,
@@ -72,9 +88,11 @@ strongest-performer-sized individual (~0.0093) is flagged with 90% power
 (vs only 73% at 3 sessions); an average-repeat-participant-sized individual
 (~0.0064) reaches 64% (vs 46% at 3 sessions).
 
-120 was chosen over the smaller ~105 minimum because it clears 90% power
-under the pessimistic stress scenario with more margin (93.1% vs the bare-
-minimum 90.0%) while asking for the same 5 sessions either way.
+[STALE -- see sigma_between revision above] 120 was chosen over the smaller
+~105 minimum because it clears 90% power under the pessimistic stress
+scenario with more margin (93.1% vs the bare-minimum 90.0%) while asking
+for the same 5 sessions either way. As of 2026-08-22 the governing minimum
+is N=143, not 120 -- see SIGMA_BETWEEN_SCENARIOS above and its docstring.
 
 BASELINE NOISE (resolved 2026-08-16, was previously "still open")
 --------------------------------------------------------------------
@@ -158,7 +176,7 @@ from scipy import stats
 
 SIGMA_WITHIN = 0.064
 SESOI = 0.003
-SIGMA_BETWEEN_SCENARIOS = {"conservative": 0.0057, "stress": 0.010}
+SIGMA_BETWEEN_SCENARIOS = {"conservative": 0.00366, "stress": 0.01145}
 ALPHA = 0.05  # one-sided
 BLOCKS_PER_SESSION = 80
 
@@ -190,7 +208,7 @@ def population_power(N, K, sigma_between, baseline_se=0.0):
 
 
 def baseline_min_sessions_for_power(sigma_between_human, sigma_between_session_baseline,
-                                     target_power, N=120, K=400, max_sessions=3000):
+                                     target_power, N=143, K=400, max_sessions=3000):
     """Minimum Baseline sessions so the Human-vs-Baseline test reaches
     target_power, given the locked Human design (N participants, K blocks each)."""
     for n_base in range(10, max_sessions, 5):
@@ -212,7 +230,7 @@ def population_power_baseline_corrected(N, K, sigma_between_human, total_baselin
     return stats.norm.cdf(SESOI / se_diff - z_alpha)
 
 
-def baseline_min_sessions_corrected(sigma_between_human, target_power, N=120, K=400, max_sessions=3000):
+def baseline_min_sessions_corrected(sigma_between_human, target_power, N=143, K=400, max_sessions=3000):
     """Minimum Baseline sessions (at 80 blocks/session) under the corrected
     total-blocks-dominated model."""
     for n_base in range(10, max_sessions, 5):
@@ -231,7 +249,11 @@ def individual_power(K, true_effect, alpha=0.05):
 
 
 if __name__ == "__main__":
-    N, SESSIONS = 120, 5
+    # Revised 2026-08-22 population-level minimum (was 120). 136 clears 90% power
+    # under stress only if Baseline is treated as perfectly known; with Baseline
+    # noise properly modeled (population_power_baseline_corrected, 900 sessions),
+    # the true minimum is 143 -- see CORRECTED MODEL output below.
+    N, SESSIONS = 143, 5
     K = SESSIONS * BLOCKS_PER_SESSION
 
     print("=" * 90)
