@@ -8,7 +8,7 @@ import { pkConfig as C } from '../config.js';
 export default function ConsentGate({
   onAgree,
   title = 'Consent to Participate',
-  contactEmail = 'a.campbell@lmu.de',
+  contactEmail = 'h@whatthequark.com',
   version = C?.CONSENT_VERSION || 'v1',
   bullets = [], // Accept bullets as props
   studyDescription = null, // Optional override for the main description

@@ -18,6 +18,7 @@ export function usePhaseRouter() {
     phase,
     // ── named transitions ────────────────────────────────────────────────────
     goToConsent:       () => setPhase('consent'),
+    goToParticipantCode: () => setPhase('participant_code'),
     goToInfo:          () => setPhase('info'),
     goToPreQ:          () => setPhase('preQ'),
     goToOnboarding:    () => setPhase('onboarding'),
@@ -31,6 +32,7 @@ export function usePhaseRouter() {
     goToResults:       () => setPhase('results'),
     goToSummary:       () => setPhase('summary'),
     goToDone:          () => setPhase('done'),
+    goToPayment:       () => setPhase('payment'),
     goToAutoComplete:  () => setPhase('auto_complete'),
     goToAIComplete:    () => setPhase('ai_complete'),
     goToMaxSessions:   () => setPhase('max_sessions'),

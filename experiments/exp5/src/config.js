@@ -26,7 +26,7 @@ config.experiments = {
     // Firestore collection for session responses
     PRESCREEN_COLLECTION: 'experiment5_responses',
     // Multi-session accumulation
-    TARGET_SESSIONS: 10, // soft target — session 10 shows a completion message but does not block further sessions
+    TARGET_SESSIONS: 5, // soft target — session 5 shows a completion message but does not block further sessions
     MAX_SESSIONS_FOR_ANALYSIS: 20, // consent gate blocks further sessions beyond this usable count (hard cap)
     PARTICIPANT_COLLECTION: 'experiment5_participants',
     EMAIL_LOOKUP_COLLECTION: 'experiment5_email_lookup',

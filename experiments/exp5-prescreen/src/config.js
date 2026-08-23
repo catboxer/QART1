@@ -106,6 +106,8 @@ config.experiments = {
     TARGET_SESSIONS: 10, // soft target — shows a completion message but does not block further sessions
     MAX_SESSIONS_FOR_ANALYSIS: 20, // consent gate blocks further sessions beyond this usable count
     PARTICIPANT_COLLECTION: 'prescreen_participants',
+    // Plaintext email lives here only, separate from the scalars-only participant doc above
+    PARTICIPANT_EMAIL_LOOKUP_EXP5_PRESCREEN: 'prescreen_email_lookup',
 
     // Audit configuration (NIST SP 800-22 Randomness Testing)
     AUDIT_EVERY_N_BLOCKS: 10, // Run audit break every N blocks

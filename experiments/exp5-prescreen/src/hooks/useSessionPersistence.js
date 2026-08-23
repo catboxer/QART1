@@ -254,11 +254,29 @@ export function useSessionPersistence({
         pre_q_completed: true,
         participant_type: isAutoMode ? 'baseline' : isAIMode ? 'ai' : 'human',
         updated_at: serverTimestamp(),
-        ...(emailPlaintext ? { email: emailPlaintext, email_opt_in: !!emailOptInRef?.current } : {}),
+        ...(emailPlaintext ? { email_opt_in: !!emailOptInRef?.current } : {}),
         ...(!participantProfile ? { created_at: serverTimestamp() } : {}),
       },
       { merge: true },
     ).catch((err) => console.error('Profile save failed:', err));
+
+    // Private lookup table: plaintext email stored separately from research data
+    if (emailPlaintext) {
+      const emailRef = doc(
+        db,
+        C.PARTICIPANT_EMAIL_LOOKUP_EXP5_PRESCREEN,
+        participantHash,
+      );
+      setDoc(
+        emailRef,
+        {
+          email: emailPlaintext,
+          email_opt_in: !!emailOptInRef?.current,
+          updated_at: serverTimestamp(),
+        },
+        { merge: true },
+      ).catch((err) => console.error('Email lookup save failed:', err));
+    }
   }, [phase, participantHash, runRef, sessionCount, isAutoMode, isAIMode, emailPlaintext, emailOptInRef, participantProfile, totals]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return {

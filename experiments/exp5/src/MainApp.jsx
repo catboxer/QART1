@@ -16,7 +16,10 @@ import {
 } from 'firebase/firestore';
 import { preQuestions, postQuestions } from './questions.js';
 import { QuestionsForm } from './Forms.jsx';
-import ConsentGate from './ui/ConsentGate.jsx';
+import ConsentInfoPage, { FRIENDLY_TITLE } from './ui/ConsentInfoPage.jsx';
+import ParticipantCodeScreen from './ui/ParticipantCodeScreen.jsx';
+import { generateParticipantCode } from './lib/participantCode.js';
+import PaymentCompletionPage from './ui/PaymentCompletionPage.jsx';
 import { usePhaseRouter } from './hooks/usePhaseRouter.js';
 import { useParticipantProfile } from './hooks/useParticipantProfile.js';
 import { useSessionPersistence } from './hooks/useSessionPersistence.js';
@@ -85,8 +88,13 @@ export default function MainApp() {
     setCumulativeHistory,
   } = useParticipantProfile({ db, C });
 
-  // ---- consent: email-contact permission (set in ConsentGate.onAgree)
+  // ---- consent: email-contact permission (set in ConsentInfoPage.onAgree)
   const emailOptInRef = useRef(false);
+  // ---- participant code: generated once after consent, shown on the
+  // participant_code phase; skipPreQAfterCodeRef holds where to go next
+  // (set by consent's onAgree, read once the code is confirmed)
+  const [participantCode, setParticipantCode] = useState(null);
+  const skipPreQAfterCodeRef = useRef(false);
 
   // ---- target assignment
   const [target, setTarget] = useState(null);
@@ -140,12 +148,14 @@ export default function MainApp() {
   // ---- phase & per-minute state
   const {
     phase,
+    goToParticipantCode,
     goToInfo, goToPreQ, goToOnboarding,
     goToTargetAnnounce, goToFetching, goToScore,
     goToRest, goToAudit, goToNext, goToPreparingNext,
-    goToResults, goToSummary, goToDone,
+    goToResults, goToSummary, goToDone, goToPayment,
     goToAutoComplete, goToAIComplete, goToMaxSessions,
   } = usePhaseRouter();
+  const [declinedParticipation, setDeclinedParticipation] = useState(false);
   const [blockIdx, setblockIdx] = useState(-1);
   const [isRunning, setIsRunning] = useState(false);
   const [lastBlock, setLastBlock] = useState(null);
@@ -331,8 +341,6 @@ export default function MainApp() {
     return <div style={{ padding: 24 }}>Loading…</div>;
   }
 
-  // In MainApp.jsx, replace the ConsentGate section with:
-
   // CONSENT - Skip for auto/AI modes
   if (phase === 'consent') {
     // Auto and AI modes skip consent and questions
@@ -341,34 +349,52 @@ export default function MainApp() {
       return null;
     }
 
+    if (declinedParticipation) {
+      return (
+        <div className="App" style={{ textAlign: 'center', padding: 24 }}>
+          <h1>You have chosen not to participate</h1>
+          <p>No information was recorded. You may now close this window.</p>
+        </div>
+      );
+    }
+
     return (
       <div style={{ position: 'relative' }}>
-        <ConsentGate
-          title="Experiment 5: Temporal Structure in Quantum Random Sequences"
-          showBlindingNote={false}
-          studyDescription={`You are participating in Experiment 5, a study of temporal structure in quantum random number sequences during focused attention. You will complete ${C.BLOCKS_TOTAL} blocks each ~1 second long and brief questionnaires (approximately 5 minutes total).`}
-          bullets={[
-            'You will receive a target color assignment (blue or orange)',
-            'Your task is to get your target color above 50%. Concentrate your attention on your target color right before and during the moment quantum data is fetched from a quantum random number generator.',
-            'When focused and ready, press "I\'m Ready" and keep focusing while your target color is shown. This triggers the quantum random number generator, and the signatures in the QRNG during your focused intention is what we\'re testing.',
-            'We collect data on quantum random sequences, your performance metrics, timing patterns, and your questionnaire responses.',
-            'Participation is completely voluntary; you may exit at any time.',
-            'You will receive $25 compensation upon completing all 5 sessions. Partial completion is not compensated.',
-            'If you provide your email, we use a one-way hash to link your sessions across devices. Your plaintext email is stored in a separate private record that is never included in published research data. We may use it to contact you if you are selected for the next phase of research. Your email will not be shared with third parties or used for any other purpose.',
-            'To request deletion of your data, email a.campbell@lmu.de with the subject line "Data Deletion Request". Include the email address you used when participating and we will remove your records.',
-            'Data will be retained indefinitely to enable scientific replication and analysis, unless a deletion request is received.',
-            'Hosting providers may log IP addresses for security purposes; these logs are not linked to your study data.',
-          ]}
-          onAgree={async ({ email, emailOptIn } = {}) => {
+        <ConsentInfoPage
+          onDecline={() => setDeclinedParticipation(true)}
+          onAgree={async ({ email, resultsContact, futureContact } = {}) => {
             // Reset completion state so it's recomputed fresh for this session
             resetCompletionFlag();
-            emailOptInRef.current = emailOptIn;
+            // Existing results-contact permission field; future-study contact
+            // (futureContact) isn't persisted anywhere yet -- UI-only for now.
+            emailOptInRef.current = resultsContact;
             const { skipPreQ, usableCount } = await loadParticipant(email);
             if (usableCount >= C.MAX_SESSIONS_FOR_ANALYSIS) {
               goToMaxSessions();
               return;
             }
-            skipPreQ ? goToInfo() : goToPreQ();
+            skipPreQAfterCodeRef.current = skipPreQ;
+            setParticipantCode(generateParticipantCode());
+            goToParticipantCode();
+          }}
+        />
+      </div>
+    );
+  }
+
+  // PARTICIPANT CODE - shown once, right after consent, before the pre-questionnaire
+  if (phase === 'participant_code') {
+    if (isAutoMode || isAIMode) {
+      goToOnboarding();
+      return null;
+    }
+
+    return (
+      <div style={{ position: 'relative' }}>
+        <ParticipantCodeScreen
+          code={participantCode}
+          onConfirmed={() => {
+            skipPreQAfterCodeRef.current ? goToInfo() : goToPreQ();
           }}
         />
       </div>
@@ -649,7 +675,7 @@ export default function MainApp() {
         <h1>
           {isAIMode
             ? '🤖 AI Agent Mode'
-            : 'Experiment 5: Temporal Structure in Quantum Random Sequences'}
+            : FRIENDLY_TITLE}
         </h1>
 
         <div style={{ marginBottom: 30, marginTop: 30 }}>
@@ -1175,18 +1201,38 @@ export default function MainApp() {
                   }
                 }
                 setSessionCount(newCount);
-                goToSummary();
+                goToPayment();
                 return;
               }
 
               // Cumulative data already saved in results phase — just update session count and proceed
               setSessionCount(sessionCount + 1);
-              goToSummary();
+              goToPayment();
             } catch (e) {
               console.warn('Post survey save error:', e);
-              goToSummary();
+              goToPayment();
             }
           }}
+        />
+      </div>
+    );
+  }
+
+  // PAYMENT - Provider-neutral session-completion screen (no payment integration yet)
+  if (phase === 'payment') {
+    if (isAutoMode || isAIMode) {
+      goToSummary();
+      return null;
+    }
+
+    return (
+      <div style={{ position: 'relative' }}>
+        <PaymentCompletionPage
+          sessionsCompleted={sessionCount}
+          totalSessions={C.TARGET_SESSIONS}
+          amountPerSession={5}
+          onReturnLater={() => goToSummary()}
+          onFinishAndRequestPayment={() => goToSummary()}
         />
       </div>
     );

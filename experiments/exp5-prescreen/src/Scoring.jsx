@@ -14,7 +14,7 @@ export function BlockScoreboard({
   hideBlockType = false,
 }) {
   const pct = last.n ? Math.round((last.k / last.n) * 100) : 50;
-  // const totPct = totals.n ? Math.round((totals.k / totals.n) * 100) : 50;
+  const totPct = totals.n ? Math.round((totals.k / totals.n) * 100) : 50;
 
   return (
     <div style={{ maxWidth: 760, margin: '16px auto', textAlign: 'center' }}>
@@ -33,11 +33,11 @@ export function BlockScoreboard({
 
       <div style={{ fontSize: 14, opacity: 0.9, marginTop: 8 }}>
         <div>
-          <b>{last.k}/{last.n}</b> hits → {pct}% · z={last.z?.toFixed?.(2)} · p={fmtP(last.pTwo)}
+          <b>{last.k}/{last.n}</b> hits → {pct}%
         </div>
         {!hideGhost && (
           <div style={{ opacity: 0.8 }}>
-            ghost: {last.kg}/{last.ng} → {last.ng ? Math.round((100 * last.kg) / last.ng) : 50}% · z={last.zg?.toFixed?.(2)} · p={fmtP(last.pg)}
+            ghost: {last.kg}/{last.ng} → {last.ng ? Math.round((100 * last.kg) / last.ng) : 50}%
           </div>
         )}
       </div>
@@ -45,8 +45,7 @@ export function BlockScoreboard({
       <hr style={{ margin: '16px auto', maxWidth: 380 }} />
 
       <div style={{ fontSize: 16 }}>
-        Totals so far: <b>{totals.k} hits/{totals.n} trials</b> 
-
+        Totals so far: <b>{totals.k} hits/{totals.n} trials</b> ({totPct}%)
       </div>
     </div>
   );

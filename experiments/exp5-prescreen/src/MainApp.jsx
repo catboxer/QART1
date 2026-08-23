@@ -12,6 +12,7 @@ import {
 } from 'firebase/firestore';
 import { preQuestions, postQuestions } from './questions.js';
 import { QuestionsForm } from './Forms.jsx';
+import { BlockScoreboard } from './Scoring.jsx';
 import ConsentGate from './ui/ConsentGate.jsx';
 import { usePhaseRouter } from './hooks/usePhaseRouter.js';
 import { useParticipantProfile } from './hooks/useParticipantProfile.js';
@@ -398,7 +399,7 @@ export default function MainApp() {
             'We collect data on quantum random sequences, your performance metrics, timing patterns, and your questionnaire responses.',
             'Participation is completely voluntary; you may exit at any time. At the end of each session you will be provided a Session ID for your records. This can be used to request removal at any time.',
             'If you provide your email, we store it to link your sessions across devices. Your email will not be shared with third parties or used for any other purpose.',
-            'To request deletion of your data, email a.campbell@lmu.de with the subject line "Data Deletion Request". Include the email address you used when participating and we will remove your records.',
+            'To request deletion of your data, email h@whatthequark.com with the subject line "Data Deletion Request". Include the email address you used when participating and we will remove your records.',
             'Data will be retained indefinitely to enable scientific replication and analysis, unless a deletion request is received.',
             'Hosting providers may log IP addresses for security purposes; these logs are not linked to your study data.',
           ]}
@@ -434,7 +435,7 @@ export default function MainApp() {
           the research.
         </p>
         <p>
-          <a href="mailto:a.campbell@lmu.de">a.campbell@lmu.de</a>
+          <a href="mailto:h@whatthequark.com">h@whatthequark.com</a>
         </p>
       </div>
     );
@@ -732,17 +733,6 @@ export default function MainApp() {
       };
     }
 
-    const sessionPct =
-      totals.n > 0
-        ? ((100 * totals.k) / totals.n).toFixed(1)
-        : '50.0';
-    const blockColor =
-      pctLast > 50 ? '#15803d' : pctLast < 50 ? '#b45309' : '#6b7280';
-    const blockBg =
-      pctLast > 50 ? '#dcfce7' : pctLast < 50 ? '#fff7ed' : '#f3f4f6';
-    const blockBorder =
-      pctLast > 50 ? '#86efac' : pctLast < 50 ? '#fed7aa' : '#e5e7eb';
-
     return (
       <div
         style={{
@@ -752,79 +742,47 @@ export default function MainApp() {
           margin: '0 auto',
         }}
       >
-        <h2 style={{ marginBottom: sessionCount > 0 ? 4 : 20 }}>
-          Block {completedBlockNum} of {C.BLOCKS_TOTAL}
+        <h2 style={{ marginBottom: 28 }}>
+          Block {completedBlockNum} Complete
         </h2>
         {sessionCount > 0 && (
           <div
             style={{
               fontSize: 11,
               color: '#9ca3af',
-              marginBottom: 14,
+              marginBottom: 16,
             }}
           >
             Session {sessionCount + 1}
           </div>
         )}
 
-        {/* Hero: block hit score */}
-        <div
-          style={{
-            padding: '40px 32px',
-            borderRadius: 16,
-            background: blockBg,
-            border: `2px solid ${blockBorder}`,
-            marginBottom: 12,
-            minHeight: 240,
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
+        {/* Show last block score */}
+        {lastBlock && lastBlock.n > 0 && (
           <div
             style={{
-              fontSize: 12,
-              color: '#6b7280',
-              letterSpacing: '0.06em',
-              marginBottom: 4,
+              display: 'inline-block',
+              padding: '16px 24px',
+              borderRadius: 12,
+              border: '2px solid #ddd',
+              background: '#f9f9f9',
+              marginBottom: 24,
+              fontSize: 24,
+              fontWeight: 600,
             }}
           >
-            THIS BLOCK
+            Your Score: {pctLast}%
           </div>
-          <div
-            style={{
-              fontSize: 72,
-              fontWeight: 900,
-              color: blockColor,
-              lineHeight: 1,
-              marginBottom: 4,
-            }}
-          >
-            {pctLast}%
-          </div>
-          <div style={{ fontSize: 13, color: '#6b7280' }}>
-            {lastBlock?.k ?? 0} hits · target &gt; 50%
-          </div>
-        </div>
+        )}
 
-        {/* Session running total */}
-        <div
-          style={{ fontSize: 13, color: '#6b7280', marginBottom: 20 }}
-        >
-          Session average:{' '}
-          <strong
-            style={{
-              color:
-                parseFloat(sessionPct) > 50 ? '#15803d' : '#6b7280',
-            }}
-          >
-            {sessionPct}%
-          </strong>
-          <span style={{ marginLeft: 8 }}>
-            ({totals.k} / {totals.n})
-          </span>
-        </div>
+        {/* Session totals */}
+        <BlockScoreboard
+          last={lastBlock || { k: 0, n: 0, kind: 'instant' }}
+          totals={totals}
+          targetSide={target}
+          hideGhost={true}
+          hideBlockType={true}
+        />
 
         <button
           onClick={() => {
@@ -837,7 +795,7 @@ export default function MainApp() {
             }
           }}
           style={{
-            marginTop: 28,
+            marginTop: 32,
             padding: '16px 32px',
             fontSize: 18,
             fontWeight: 600,
@@ -851,6 +809,10 @@ export default function MainApp() {
         >
           Continue
         </button>
+
+        <p style={{ marginTop: 16, fontSize: 14, color: '#6b7280' }}>
+          Block {completedBlockNum} of {C.BLOCKS_TOTAL}
+        </p>
       </div>
     );
   }
@@ -1488,7 +1450,7 @@ export default function MainApp() {
           <p>
             If you have any questions about this research, please
             contact the research team at{' '}
-            <a href="mailto:a.campbell@lmu.de">a.campbell@lmu.de</a>
+            <a href="mailto:h@whatthequark.com">h@whatthequark.com</a>
           </p>
           <p>
             Your session number is{' '}

@@ -312,15 +312,18 @@ export function QuestionsForm({
                     const selected = Array.isArray(value) && value.includes(optValue);
                     const freqDict = q.withFrequency && q.frequencyId ? (answers[q.frequencyId] || {}) : {};
                     const freqTier = freqDict[optValue] ?? null;
+                    // Options listed in exclusiveValues (default: just 'none') clear every
+                    // other selection when chosen, and are themselves cleared by any other pick.
+                    const exclusiveValues = q.exclusiveValues || ['none'];
                     const toggle = () => {
                       const current = Array.isArray(value) ? value : [];
                       let next;
                       if (selected) {
                         next = current.filter((v) => v !== optValue);
-                      } else if (optValue === 'none') {
-                        next = ['none'];
+                      } else if (exclusiveValues.includes(optValue)) {
+                        next = [optValue];
                       } else {
-                        next = [...current.filter((v) => v !== 'none'), optValue];
+                        next = [...current.filter((v) => !exclusiveValues.includes(v)), optValue];
                       }
                       setAnswer(q.id, next);
                       if (q.withFrequency && q.frequencyId) {

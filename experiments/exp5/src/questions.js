@@ -26,70 +26,95 @@ export const preQuestions = [
       'None / Rarely',
     ],
   },
+  // ── Investigator-developed exploratory items ──────────────────────────────
   {
     id: 'experienceTypes',
     question:
-      'Which of the following have you experienced? Select all that apply.',
+      'Which of the following types of experiences have you personally had or interpreted as having had? Select all that apply.',
     type: 'checkbox',
-    withFrequency: true,
-    frequencyId: 'experienceFrequency',
+    exclusiveValues: ['none', 'prefer_not_to_answer'],
     options: [
       {
-        label:
-          'Precognition — knowing something before you could have known it',
-        value: 'precognition',
+        label: 'An apparent premonition or precognitive dream',
+        value: 'premonition_dream',
       },
       {
-        label:
-          'Remote viewing — perceiving a distant location or object',
-        value: 'remote_viewing',
-      },
-      {
-        label: 'Telepathy — direct mind-to-mind communication',
+        label: 'An apparent experience of telepathy',
         value: 'telepathy',
       },
       {
+        label: 'An apparent perception of a distant place or event',
+        value: 'remote_perception',
+      },
+      {
         label:
-          'Psychokinesis — influencing physical objects or systems with the mind',
+          'An apparent influence on a physical object or system through intention',
         value: 'psychokinesis',
       },
       {
-        label: 'Precognitive or prophetic dream',
-        value: 'precog_dream',
-      },
-      {
-        label: 'Meaningful coincidence / synchronicity',
+        label: 'A meaningful coincidence or synchronicity',
         value: 'synchronicity',
       },
-      { label: 'Out-of-body experience (OBE)', value: 'obe' },
-      { label: 'Near-death experience (NDE)', value: 'nde' },
       {
-        label: 'Contact with a deceased person',
+        label: 'An out-of-body or near-death experience',
+        value: 'obe_nde',
+      },
+      {
+        label: 'An apparent encounter with a deceased person',
         value: 'contact_deceased',
       },
       {
-        label: 'Spiritual or kundalini awakening',
-        value: 'kundalini',
+        label: 'An unusual spiritual or meditation-related experience',
+        value: 'spiritual_meditation',
       },
-      {
-        label:
-          'Unexplainable experience during meditation or contemplative practice',
-        value: 'meditation_anomalous',
-      },
-      {
-        label: 'Other — describe in the next question',
-        value: 'other',
-      },
+      { label: 'Another unusual experience', value: 'other' },
       { label: 'None of the above', value: 'none' },
+      { label: 'Prefer not to answer', value: 'prefer_not_to_answer' },
     ],
   },
   {
-    id: 'experienceDescription',
+    id: 'psiPossibility',
     question:
-      'Describe the experience that brought you here — especially if you selected "Other." If you selected "None," tell us what drew you to take it. (optional)',
-    type: 'textarea',
-    required: false,
+      'How plausible did you consider the possibility that people can sometimes obtain information or influence physical systems through means that are not explained by ordinary sensory processes or currently established physical mechanisms?',
+    type: 'radio',
+    options: [
+      { label: 'Definitely impossible', value: 'definitely_impossible' },
+      { label: 'Probably impossible', value: 'probably_impossible' },
+      {
+        label: 'More likely impossible than possible',
+        value: 'more_likely_impossible',
+      },
+      {
+        label: 'Unsure or equally possible and impossible',
+        value: 'unsure_equal',
+      },
+      {
+        label: 'More likely possible than impossible',
+        value: 'more_likely_possible',
+      },
+      { label: 'Probably possible', value: 'probably_possible' },
+      { label: 'Definitely possible', value: 'definitely_possible' },
+    ],
   },
+  {
+    id: 'psiAbility',
+    question:
+      'Regardless of how you explain your experiences, do you believe you have an ability that you can intentionally use in situations involving intuition, anomalous information, or mental influence?',
+    type: 'radio',
+    options: [
+      { label: 'Yes, fairly consistently', value: 'yes_consistent' },
+      { label: 'Yes, but inconsistently', value: 'yes_inconsistent' },
+      {
+        label:
+          'I have had relevant experiences but do not consider them an ability',
+        value: 'experiences_only',
+      },
+      { label: 'No', value: 'no' },
+      { label: 'Unsure', value: 'unsure' },
+      { label: 'Prefer not to answer', value: 'prefer_not_to_answer' },
+    ],
+  },
+  // ── End investigator-developed exploratory items ──────────────────────────
   {
     id: 'neurodivergence',
     question:
@@ -517,36 +542,6 @@ export const preQuestions = [
   },
   // ── End BQ-18 ────────────────────────────────────────────────────────────
 
-  {
-    id: 'psiPossibility',
-    question:
-      'Do you think it is possible for humans to gain information or influence matter via intuitive or extrasensory means?',
-    type: 'slider',
-    min: 0,
-    max: 10,
-    leftLabel: 'No, absolutely not',
-    rightLabel: 'Yes, absolutely',
-  },
-  {
-    id: 'psiConfidence',
-    question: 'Do you have an intuitive or extrasensory ability?',
-    type: 'radio',
-    options: [
-      {
-        label: 'Yes, I have an ability I can actively use',
-        value: 'yes_active',
-      },
-      {
-        label: "Yes, but it's inconsistent or unreliable",
-        value: 'yes_inconsistent',
-      },
-      {
-        label: "I've had experiences but wouldn't call it a skill",
-        value: 'experiences_only',
-      },
-      { label: 'No', value: 'no' },
-    ],
-  },
 ];
 
 // ——— POST ———
