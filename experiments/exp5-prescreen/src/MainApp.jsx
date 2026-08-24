@@ -343,6 +343,7 @@ export default function MainApp() {
     }
     // Note: blockIdxToPersistRef is a ref, not state, so it doesn't need to be in the dep array
     // All goTo* functions, resetCompletionFlag, setRunRef, lastPersistedBlockRef are stable
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     isAutoMode,
     isAIMode,
@@ -352,7 +353,7 @@ export default function MainApp() {
     autoSessionTarget,
     runRef,
     saveSessionAggregates,
-  ]); // eslint-disable-line react-hooks/exhaustive-deps
+  ]);
 
   // Note: processTrials, persistMinute, endMinute, fetching effect, audit effect,
   // and block-persistence effect are owned by useTrialRunner above.
