@@ -461,8 +461,7 @@ export default function MainApp() {
             goToOnboarding();
             try {
               const uidNow = await requireUid();
-              // Save to participants collection like exp1
-              const ref = doc(db, 'participants', uidNow);
+              const ref = doc(db, C.DEMOGRAPHICS_COLLECTION, uidNow);
               const snap = await getDoc(ref);
               const demographics = { ...answers };
 
@@ -1140,13 +1139,13 @@ export default function MainApp() {
                 );
               }
 
-              // No email — use UID-based counter in participants/{uid} (same-device only)
+              // No email — use UID-based counter (same-device only)
               if (!participantHash) {
                 const newCount = sessionCount + 1;
                 if (uid) {
                   try {
                     await setDoc(
-                      doc(db, 'participants', uid),
+                      doc(db, C.DEMOGRAPHICS_COLLECTION, uid),
                       { exp5_prescreen_sessions: newCount },
                       { merge: true },
                     );

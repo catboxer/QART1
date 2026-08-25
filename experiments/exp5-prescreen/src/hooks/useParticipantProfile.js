@@ -114,10 +114,9 @@ export function useParticipantProfile({ db, C }) {
           console.error('Profile load error (non-blocking):', err);
         }
       } else if (uid) {
-        // Fallback: UID → exp5-specific counter on participants/{uid}
-        // (scoped to this experiment so it doesn't collide with other studies)
+        // Fallback: UID → session counter, own collection (DEMOGRAPHICS_COLLECTION)
         try {
-          const uidRef = doc(db, 'participants', uid);
+          const uidRef = doc(db, C.DEMOGRAPHICS_COLLECTION, uid);
           const uidSnap = await getDoc(uidRef);
           if (uidSnap.exists()) {
             setSessionCount(uidSnap.data().exp5_prescreen_sessions ?? 0);

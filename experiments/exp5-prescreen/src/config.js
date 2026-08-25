@@ -108,6 +108,10 @@ config.experiments = {
     PARTICIPANT_COLLECTION: 'prescreen_participants',
     // Plaintext email lives here only, separate from the scalars-only participant doc above
     PARTICIPANT_EMAIL_LOOKUP_EXP5_PRESCREEN: 'prescreen_email_lookup',
+    // Pre-questionnaire demographics + no-email session-count fallback, keyed on Firebase uid.
+    // Own collection so this experiment never shares/collides with other experiments' data
+    // (the shared 'participants' collection was doing that by field-name convention only).
+    DEMOGRAPHICS_COLLECTION: 'prescreen_demographics',
 
     // Audit configuration (NIST SP 800-22 Randomness Testing)
     AUDIT_EVERY_N_BLOCKS: 10, // Run audit break every N blocks
