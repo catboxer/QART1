@@ -122,8 +122,12 @@ config.experiments = {
     // 3. Longest Run Test - checks max consecutive 1s (p ≥ 0.01 to pass)
     // Reference: NIST SP 800-22 Rev. 1a (https://csrc.nist.gov/publications/detail/sp/800-22/rev-1a/final)
 
-    AUTO_MODE_SESSIONS: 5, // Number of automated baseline sessions to run (access via #auto URL)
-    AUTO_MODE_REST_MS: 1000, // 1 second auto-continue delay between blocks in auto-mode
+    AUTO_MODE_SESSIONS: 1, // Number of automated baseline sessions to run (access via #auto URL)
+    // 1 session per load so each fresh incognito window/UID produces exactly
+    // one session -- baseline collection runs as a scripted loop of fresh
+    // incognito windows (see notebooks/run_baseline_overnight.sh), not by
+    // loading #auto once and letting it run multiple sessions in one tab.
+    AUTO_MODE_REST_MS: 200, // 0.2 second auto-continue delay between blocks in auto-mode
     AI_MODE_SESSIONS: 5, // Number of AI agent sessions to run (access via #ai URL)
   },
 };

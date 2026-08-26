@@ -2,8 +2,9 @@
 // Utility to fetch quantum bits on-demand using qrng-race or random-org endpoint
 import { config } from './config.js';
 
-// Session-level flag: once Outshift hits its daily limit, skip it for the rest of the session
-let outshiftDailyLimited = false;
+// Session-level flag: once Outshift hits its daily limit, skip it for the rest of the session.
+// Also forced true up-front when config.FORCE_SKIP_OUTSHIFT is set (temporary Outshift outage).
+let outshiftDailyLimited = !!config.FORCE_SKIP_OUTSHIFT;
 
 /**
  * Test if a bit string passes basic randomness checks

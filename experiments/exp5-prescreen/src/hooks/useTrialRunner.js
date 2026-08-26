@@ -262,24 +262,22 @@ export function useTrialRunner({
 
     (async () => {
       try {
-        // Assignment bit: a separate, dedicated random.org call made BEFORE this
-        // block's trial content is fetched -- decouples the assignment decision
-        // from the trial bits' own generation (see trialBlock.js splitBlockBits
-        // doc comment). Middle bit of the returned byte (index 3 of 8), not the
-        // first or last -- edge bit positions are the ones historically prone to
-        // provider-specific encoding artifacts (see validate-lfdr-direct.js's
-        // byte-level bit-position test, written for exactly this reason).
-        const ASSIGNMENT_BIT_INDEX = 3;
-        const assignmentData = await fetchQRNGBits(8, 3, false, 'random-org');
+        // Assignment bit: drawn locally via the browser's CSPRNG (Web Crypto
+        // API), BEFORE this block's trial content is fetched -- decouples the
+        // assignment decision from the trial bits' own generation (see
+        // trialBlock.js splitBlockBits doc comment). Was previously a
+        // dedicated random.org call; switched to crypto.getRandomValues()
+        // 2026-08-25 after random.org's daily quota started blocking
+        // sessions outright. assignment.source distinguishes 'random_org'
+        // (historical blocks) from 'browser_crypto' (this and later) so the
+        // switchover point is queryable per block, not just per deploy.
+        const assignmentBit = crypto.getRandomValues(new Uint8Array(1))[0] & 1;
         if (isCancelled) return;
-        const assignmentBit = parseInt(assignmentData.bits[ASSIGNMENT_BIT_INDEX], 10);
 
         assignmentAuthRef.current = {
           bit:       assignmentBit,
-          bitIndex:  ASSIGNMENT_BIT_INDEX,
-          byte:      assignmentData.bits,
-          source:    assignmentData.source,
-          timestamp: assignmentData.timestamp,
+          source:    'browser_crypto',
+          timestamp: new Date().toISOString(),
         };
 
         const quantumData = await fetchQRNGBits(C.BITS_PER_BLOCK);

@@ -306,27 +306,14 @@ async function fromLFDR(n, timeoutMs) {
   return { source: 'lfdr', bytes: bytes.slice(0, n) };
 }
 
-async function fromANU(n, timeoutMs) {
-  const apiKey = process.env.ANU_API_KEY;
-  if (!apiKey) throw new Error('anu_no_key');
-
-  const url = `https://api.quantumnumbers.anu.edu.au/?length=${n}&type=uint8`;
-  const res = await fetchWithTimeout(
-    url,
-    {
-      headers: {
-        'x-api-key': apiKey,
-      },
-    },
-    timeoutMs
-  );
-  if (!res.ok) throw new Error(`anu_http_${res.status}`);
-  const j = await res.json();
-  if (!Array.isArray(j?.data)) throw new Error('anu_bad_shape');
-  if (j.data.length < n)
-    throw new Error(`anu_short_${j.data.length}_need_${n}`);
-  const bytes = j.data.slice(0, n).map((x) => (x >>> 0) & 255);
-  return { source: 'anu', bytes };
+// TEMPORARY (2026-08-25): ANU is a paid API and there's no budget for it right
+// now. Disabled unconditionally -- not just left to its own no-key check --
+// so it's dead for every caller: the normal sequentialFallback chain AND the
+// ?provider=anu test shortcut. The real implementation (request, response
+// parsing) is in git history (this commit's parent); restore it wholesale
+// once the budget/key situation is sorted rather than reconstructing it.
+async function fromANU() {
+  throw new Error('anu_disabled_no_budget');
 }
 
 // ---------------- sequential fallback with one retry & circuit breaker ----------------

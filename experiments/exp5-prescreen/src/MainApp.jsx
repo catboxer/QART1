@@ -372,6 +372,24 @@ export default function MainApp() {
     }
   }, [phase, runRef, target, uid, ensureRunDoc]);
 
+  // Human mode: save aggregates (hitRate, subjectZ, Hurst R/S, etc.) as soon as
+  // the session's 80 blocks are done, independent of whether the participant
+  // goes on to submit the exit survey. Auto/AI modes already save at this same
+  // point via the auto-mode effect above; keyed on runRef.id (not a manual
+  // reset ref) so it naturally re-arms for each new session's doc.
+  const savedResultsAggregatesForRef = useRef(null);
+  useEffect(() => {
+    if (isAutoMode || isAIMode) return;
+    if (phase !== 'results') return;
+    if (blockIdx < C.BLOCKS_TOTAL) return;
+    if (!runRef) return;
+    if (savedResultsAggregatesForRef.current === runRef.id) return;
+    savedResultsAggregatesForRef.current = runRef.id;
+    saveSessionAggregates().catch((err) =>
+      console.error('saveSessionAggregates failed (results phase):', err),
+    );
+  }, [isAutoMode, isAIMode, phase, blockIdx, runRef, saveSessionAggregates]);
+
   // ===== flow gates =====
   if (profileLoading || !target) {
     return <div style={{ padding: 24 }}>Loading…</div>;
