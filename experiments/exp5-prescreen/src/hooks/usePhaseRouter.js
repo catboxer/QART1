@@ -10,6 +10,7 @@ import { useState } from 'react';
  *   auto_complete | ai_complete  (auto/AI mode terminal screens)
  *   next | preparing_next        (auto/AI mode inter-block transitions)
  *   max_sessions                 (participant has reached MAX_SESSIONS_FOR_ANALYSIS)
+ *   qrng_unavailable             (QRNG fetch failed out — terminal, contact-experimenter screen)
  */
 export function usePhaseRouter() {
   const [phase, setPhase] = useState('consent');
@@ -33,5 +34,6 @@ export function usePhaseRouter() {
     goToAutoComplete:  () => setPhase('auto_complete'),
     goToAIComplete:    () => setPhase('ai_complete'),
     goToMaxSessions:   () => setPhase('max_sessions'),
+    goToQRNGUnavailable: () => setPhase('qrng_unavailable'),
   };
 }

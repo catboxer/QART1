@@ -3,7 +3,8 @@
 import { config } from './config.js';
 
 // Session-level flag: once Outshift hits its daily limit, skip it for the rest of the session.
-// Also forced true up-front when config.FORCE_SKIP_OUTSHIFT is set (temporary Outshift outage).
+// Also forced true up-front when config.FORCE_SKIP_OUTSHIFT is set (dev builds, or a temporary
+// Outshift outage) -- routes straight to LFDR since ANU is disabled unconditionally.
 let outshiftDailyLimited = !!config.FORCE_SKIP_OUTSHIFT;
 
 /**
@@ -85,8 +86,9 @@ async function hashBitstream(bits) {
  * @param {number} retries - Number of retry attempts (default 3)
  * @param {boolean} validateGhost - If true, validate randomness for ghost tape (default false)
  * @param {string|null} sourceOverride - If set, forces this source for this call only,
- *   ignoring config.QRNG_SOURCE. Used for the per-block assignment-bit draw, which is
- *   always random.org regardless of what the main trial-bit source is configured to.
+ *   ignoring config.QRNG_SOURCE. Currently unused by any caller (the assignment bit is
+ *   bit 0 of the same block stream, not a separately-sourced draw) -- kept for callers
+ *   that need a one-off source override (e.g. audit fetches).
  * @returns {Promise<{bits: string, hash: string, timestamp: string, source: string}>} - Bits with cryptographic authentication
  */
 export async function fetchQRNGBits(nBits, retries = 3, validateGhost = false, sourceOverride = null) {

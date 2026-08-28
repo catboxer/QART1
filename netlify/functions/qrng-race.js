@@ -123,10 +123,25 @@ exports.handler = async (event) => {
   }
   n = Math.max(1, Math.min(1024, n)); // clamp to provider limits
 
-  const skipOutshift = qs.skipOutshift === '1';
+  // QRNG_FORCE_LFDR_ONLY (standing as of 2026-08-28, expected to run for
+  // several weeks) forces every caller of this shared endpoint -- exp5-prescreen,
+  // exp5, and anything else hitting qrng-race -- straight to LFDR, with NO
+  // fallback to Outshift or ANU even if LFDR fails. Outshift and ANU were both
+  // found to serve from a pre-generated buffer rather than a fresh draw per
+  // call; LFDR gives a fresh QRNG draw per request. Does NOT affect
+  // run-provider-validation.js (that script calls Outshift/LFDR directly with
+  // its own ported fetchers on the exp4-artificial-injection branch, by
+  // design, to keep collecting the provider-comparison data it exists for --
+  // confirmed independent, not routed through this file). A caller-side
+  // failure surfaces as a normal qrng_unavailable error, which exp5-prescreen
+  // already turns into its terminal "contact the experimenter" screen -- no
+  // separate messaging needed here. Unset the env var (or delete this block)
+  // to revert to the normal Outshift-first race with ANU fallback.
+  const forceLFDROnly = process.env.QRNG_FORCE_LFDR_ONLY === '1';
+  const skipOutshift = forceLFDROnly || qs.skipOutshift === '1';
 
   try {
-    const result = await raceFirstThenFallback(n, skipOutshift);
+    const result = await raceFirstThenFallback(n, skipOutshift, forceLFDROnly);
     return ok({
       success: true,
       source: result.source,
@@ -317,7 +332,7 @@ async function fromANU() {
 }
 
 // ---------------- sequential fallback with one retry & circuit breaker ----------------
-async function sequentialFallback(n, skipOutshift = false) {
+async function sequentialFallback(n, skipOutshift = false, lfdrOnly = false) {
   const errors = [];
   let outshiftDailyLimit = false;
 
@@ -379,6 +394,11 @@ async function sequentialFallback(n, skipOutshift = false) {
   const r2 = await tryProvider('lfdr', fromLFDR, LFDR_TIMEOUT_MS, 1);
   if (r2) return { ...r2, outshiftDailyLimit };
 
+  // lfdrOnly (QRNG_FORCE_LFDR_ONLY): LFDR failing is terminal here -- do not
+  // fall through to ANU. The caller gets a single clean lfdr error instead of
+  // a moot anu_disabled_no_budget appended to it.
+  if (lfdrOnly) throw new Error(errors.join('; '));
+
   // Fall back to ANU
   const r3 = await tryProvider('anu', fromANU, ANU_TIMEOUT_MS, 0);
   if (r3) return { ...r3, outshiftDailyLimit };
@@ -386,10 +406,10 @@ async function sequentialFallback(n, skipOutshift = false) {
   throw new Error(errors.join('; '));
 }
 // ---- Sequential fallback to eliminate racing-induced correlations ----
-async function raceFirstThenFallback(n, skipOutshift = false) {
+async function raceFirstThenFallback(n, skipOutshift = false, lfdrOnly = false) {
   // Use deterministic sequential order to avoid bias from racing
   // Try Outshift first (usually faster), then LFDR, then ANU
-  return sequentialFallback(n, skipOutshift);
+  return sequentialFallback(n, skipOutshift, lfdrOnly);
 }
 
 // ---------------- server-side probe ----------------

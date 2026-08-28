@@ -25,7 +25,7 @@ import {
  *   C,
  *   phase, target,
  *   isAutoMode, isAIMode,
- *   goToScore, goToRest, goToResults,
+ *   goToScore, goToRest, goToResults, goToQRNGUnavailable,
  *   runRef,
  *   blockIdx, setblockIdx,
  *   setIsRunning, setLastBlock,
@@ -40,7 +40,7 @@ export function useTrialRunner({
   C,
   phase, target,
   isAutoMode, isAIMode,
-  goToScore, goToRest, goToResults,
+  goToScore, goToRest, goToResults, goToQRNGUnavailable,
   runRef,
   blockIdx, setblockIdx,
   setIsRunning, setLastBlock,
@@ -58,7 +58,7 @@ export function useTrialRunner({
   const demonHitsRef = useRef(0);
   const blockAuthRef = useRef(null);
   const auditAuthRef = useRef(null);
-  const assignmentAuthRef = useRef(null); // metadata for the per-block random.org assignment-bit call
+  const assignmentAuthRef = useRef(null); // metadata for the per-block assignment bit (stream bit 0)
 
   // Written once per block in the fetching effect BEFORE processTrials increments blockIdx.
   // Never re-derived from blockIdx or history lengths.
@@ -206,11 +206,13 @@ export function useTrialRunner({
           trial_count:  n,
         },
 
-        // Assignment: which half became Subject, decided via a separate
-        // random.org call before this block's trial fetch (see fetching effect
-        // and trialBlock.js). Duplicated here (also in block_commits.assignment)
-        // for the same reason target is duplicated in both places.
+        // Assignment: which half became Subject -- bit 0 of this block's own
+        // quantum stream (see fetching effect and trialBlock.js). Duplicated
+        // here (also in block_commits.assignment) for the same reason target
+        // is duplicated in both places.
         assignment: assignmentAuthRef.current,
+        // Flat scalar duplicate of assignment.bit -- see block_commits comment.
+        assignmentBit: assignmentAuthRef.current ? assignmentAuthRef.current.bit : null,
 
         // Hurst delta
         hurst_delta: {
@@ -262,26 +264,22 @@ export function useTrialRunner({
 
     (async () => {
       try {
-        // Assignment bit: drawn locally via the browser's CSPRNG (Web Crypto
-        // API), BEFORE this block's trial content is fetched -- decouples the
-        // assignment decision from the trial bits' own generation (see
-        // trialBlock.js splitBlockBits doc comment). Was previously a
-        // dedicated random.org call; switched to crypto.getRandomValues()
-        // 2026-08-25 after random.org's daily quota started blocking
-        // sessions outright. assignment.source distinguishes 'random_org'
-        // (historical blocks) from 'browser_crypto' (this and later) so the
-        // switchover point is queryable per block, not just per deploy.
-        const assignmentBit = crypto.getRandomValues(new Uint8Array(1))[0] & 1;
+        const quantumData = await fetchQRNGBits(C.BITS_PER_BLOCK);
         if (isCancelled) return;
+
+        // Assignment bit: bit 0 of this same block's quantum stream (Exp4's
+        // original scheme) -- the same fetch that supplies the subject/demon
+        // trial halves below also determines which half the subject gets.
+        // Reverted 2026-08-26 from a brief detour through a separate
+        // CSPRNG/random.org draw (commit 817b505); that decoupled approach is
+        // no longer used.
+        const assignmentBit = parseInt(quantumData.bits[0], 10);
 
         assignmentAuthRef.current = {
           bit:       assignmentBit,
-          source:    'browser_crypto',
-          timestamp: new Date().toISOString(),
+          source:    'qrng_stream_bit0',
+          timestamp: quantumData.timestamp,
         };
-
-        const quantumData = await fetchQRNGBits(C.BITS_PER_BLOCK);
-        if (isCancelled) return;
 
         // Capture blockIdx BEFORE processTrials increments it — invariant #1
         blockIdxToPersistRef.current = blockIdx;
@@ -308,6 +306,10 @@ export function useTrialRunner({
           await setDoc(blockCommitDoc, {
             blockIdx,
             bits: quantumData.bits,
+            // Flat scalar duplicate of assignment.bit / bits[0] -- lets a query or
+            // notebook read the assignment bit without indexing into the raw
+            // bitstream or a nested map field.
+            assignmentBit,
             auth: {
               hash:      quantumData.hash,
               timestamp: quantumData.timestamp,
@@ -344,13 +346,13 @@ export function useTrialRunner({
             });
           }
           await saveSessionAggregates();
-          goToResults();
+          goToQRNGUnavailable();
         }
       }
     })();
 
     return () => { isCancelled = true; };
-  }, [phase, blockIdx, processTrials, isAutoMode, isAIMode, runRef, target, saveSessionAggregates]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [phase, blockIdx, processTrials, isAutoMode, isAIMode, runRef, target, saveSessionAggregates, goToQRNGUnavailable]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Audit effect ─────────────────────────────────────────────────────────────
   useEffect(() => {

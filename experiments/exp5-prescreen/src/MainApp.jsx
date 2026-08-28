@@ -154,6 +154,7 @@ export default function MainApp() {
     goToAutoComplete,
     goToAIComplete,
     goToMaxSessions,
+    goToQRNGUnavailable,
   } = usePhaseRouter();
   const [blockIdx, setblockIdx] = useState(-1);
   const [isRunning, setIsRunning] = useState(false);
@@ -210,6 +211,7 @@ export default function MainApp() {
     goToScore,
     goToRest,
     goToResults,
+    goToQRNGUnavailable,
     runRef,
     blockIdx,
     setblockIdx,
@@ -460,6 +462,30 @@ export default function MainApp() {
     );
   }
 
+  // QRNG UNAVAILABLE — quantum data source is out of capacity
+  if (phase === 'qrng_unavailable') {
+    return (
+      <div className="App" style={{ textAlign: 'left', padding: 24 }}>
+        <h1 style={{ marginTop: 0 }}>Out of API Usage</h1>
+        <p>
+          We're temporarily out of quantum random number capacity and
+          can't continue your session right now. This isn't something
+          you did — please try again later, or reach out with the
+          Session ID below if you'd like it recovered.
+        </p>
+        <p>
+          Please contact the experimenter at{' '}
+          <a href="mailto:a.campbell@lmu.de">a.campbell@lmu.de</a>.
+        </p>
+        {runRef?.id && (
+          <p style={{ fontSize: 13, color: '#666' }}>
+            Session ID: <code>{runRef.id}</code>
+          </p>
+        )}
+      </div>
+    );
+  }
+
   // PRE QUESTIONS - Skip for auto/AI modes
   if (phase === 'preQ') {
     // Auto and AI modes skip questions
@@ -521,6 +547,8 @@ export default function MainApp() {
                 profileLoading: profileLoading,
                 errorCode: e?.code,
                 errorMessage: e?.message,
+                errorName: e?.name,
+                errorStack: e?.stack,
               });
             }
           }}

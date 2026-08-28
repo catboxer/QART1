@@ -4,20 +4,14 @@ import { zFromBinom, twoSidedP } from '../stats/index.js';
 /**
  * Split a raw QRNG bit string into assignment, subject, and demon halves.
  *
- * The assignment bit is now supplied externally (drawn from a separate,
- * dedicated random.org call made before this block's trial fetch, using the
- * middle bit of the returned byte -- see useTrialRunner.js). This decouples
- * the assignment decision from the trial content's own generation, resolving
- * the same-call timing ambiguity described in the manuscript's Section 5.9
- * ("Timing of stream assignment").
- *
- * rawBitString[0] is no longer read for assignment and is intentionally
- * unused (vestigial) -- bits 1..n are still halfA, bits n+1..2n are still
- * halfB, so the raw bit layout on disk is unchanged.
+ * The assignment bit is bit 0 of this same block's quantum stream (Exp4's
+ * original scheme, restored 2026-08-26) -- the caller (useTrialRunner.js)
+ * reads rawBitString[0] right after the block's bits are fetched and passes
+ * it in here. Bits 1..n are halfA, bits n+1..2n are halfB.
  *
  * @param {string} rawBitString  - e.g. "10110..." (BITS_PER_BLOCK chars)
  * @param {number} trialsPerBlock
- * @param {number} assignmentBit - 0 or 1, drawn from the separate random.org call
+ * @param {number} assignmentBit - 0 or 1, rawBitString[0] (see above)
  * @returns {{ assignmentBit, subjectGetsFirstHalf, parsedSubjectBits, parsedDemonBits }}
  */
 export function splitBlockBits(rawBitString, trialsPerBlock, assignmentBit) {
