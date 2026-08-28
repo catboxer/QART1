@@ -8,6 +8,14 @@ export const config = {
   // Set to 'random-org' for testing to avoid using paid Outshift quota
   // Set to 'crypto-test' when out of bits during development (will still test timing attack mitigations)
   QRNG_SOURCE: 'qrng-race', // Switch to 'qrng-race' for production, 'random-org' for testing, or 'crypto-test' for local testing
+
+  // Within 'qrng-race', skip straight past Outshift to LFDR (ANU is disabled
+  // unconditionally in qrng-race.js, so skipping Outshift makes LFDR the
+  // only remaining provider). Auto-gated on the dev build so local testing
+  // never burns paid Outshift quota, without needing a manual flip back
+  // before deploying -- react-scripts sets NODE_ENV to 'production' for
+  // `npm run build` / the Netlify build, 'development' for `npm start`.
+  FORCE_SKIP_OUTSHIFT: process.env.NODE_ENV === 'development',
 };
 
 // Experiment constants grouped under experiments.pk
@@ -72,33 +80,6 @@ config.experiments = {
         p99: 0.5971,
       },
     },
-
-    // Hurst delta thresholds (from pilot data: 5+ session subgroup ΔH=+0.004, KS p=0.040)
-    HURST_YELLOW_THRESHOLD: 0.002, // trending — matches 2-4 session range
-    HURST_GREEN_THRESHOLD: 0.004, // significant — matches 5+ session subgroup
-
-    // ── Prescreen eligibility gates ──────────────────────────────────────────
-    // Layer 1: KS anomaly (permissive — catch weak responders)
-    PRESCREEN_KS_ALPHA: 0.15,
-    // Layer 2: Shuffle collapse (OR logic)
-    PRESCREEN_COLLAPSE_ALPHA: 0.1, // permutation p-value gate
-    PRESCREEN_DDROP_MIN: 0.15, // magnitude collapse gate (silver threshold)
-    PRESCREEN_DDROP_GOLD: 0.2, // gold rank threshold (stronger magnitude)
-    PRESCREEN_COLLAPSE_GOLD: 0.05, // gold rank threshold (stronger probability)
-    // Intensity tier thresholds (SE multiples of |mean ΔH| for eligible sessions)
-    // Tier 1: |t| < T2  (subtle — collapseP carried the vote)
-    // Tier 2: T2 ≤ |t| < T3  (moderate — ΔH above noise)
-    // Tier 3: |t| ≥ T3  (strong — clearly above null)
-    PRESCREEN_INTENSITY_T2: 1, // 1 SE boundary
-    PRESCREEN_INTENSITY_T3: 2, // 2 SE boundary
-
-    // PCS quality warning thresholds (informational only — never gates)
-    // nullZ / ghostZ: session-mean Hurst Z and demon hit-rate Z. |Z| > 1.5 fires ~13% of null sessions.
-    PRESCREEN_PCS_NULLZ_WARN: 1.5,
-    // sdRatio: demonSD / null_SD. >1.5 means demon Hurst is 50% more dispersed than expected.
-    PRESCREEN_PCS_SD_RATIO_WARN: 1.5,
-    // Shuffle iterations (500 reduces Monte Carlo noise for cumulative analysis)
-    N_SHUFFLES: 500,
 
     // Firestore collection for prescreen sessions
     PRESCREEN_COLLECTION: 'prescreen_sessions_exp5',
