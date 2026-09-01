@@ -2,7 +2,7 @@
 export const config = {
   CONSENT_VERSION: 'v1-2025-10-12',
   QA_SECRET: 'WHAT_THE_QUARK_EXP_4',
-  APP_VERSION: 'exp5.2',
+  APP_VERSION: 'exp5.3',
 
   // QRNG source: 'qrng-race' (Outshift/LFDR/ANU), 'random-org' (Random.org), or 'crypto-test' (crypto.getRandomValues for testing)
   // Set to 'random-org' for testing to avoid using paid Outshift quota
