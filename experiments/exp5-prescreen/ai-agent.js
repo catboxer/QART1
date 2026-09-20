@@ -52,11 +52,30 @@ async function runAISession() {
 
   // Launch browser
   const browser = await puppeteer.launch({
-    headless: false, // Set to true for unattended runs
+    headless: process.env.HEADLESS === '1', // HEADLESS=1 for unattended runs
     defaultViewport: { width: 1280, height: 720 }
   });
 
   const page = await browser.newPage();
+
+  // Watchdog: force-exit if the run stalls for too long (crashed page, a provider
+  // that hangs without ever firing a dialog/error, etc). Cleared implicitly by
+  // process.exit() on any normal exit path.
+  const RUN_TIMEOUT_MS = parseInt(process.env.RUN_TIMEOUT_MS, 10) || 15 * 60 * 1000;
+  const watchdog = setTimeout(async () => {
+    console.error(`❌ TIMEOUT: run did not finish within ${RUN_TIMEOUT_MS}ms. Force-closing browser.`);
+    await browser.close().catch(() => {});
+    process.exit(1);
+  }, RUN_TIMEOUT_MS);
+  watchdog.unref?.();
+
+  let finishedNormally = false;
+  browser.on('disconnected', () => {
+    if (finishedNormally) return; // our own browser.close() also emits 'disconnected'
+    console.error('❌ Browser disconnected/crashed unexpectedly.');
+    clearTimeout(watchdog);
+    process.exit(1);
+  });
 
   // Capture browser console messages (especially Firebase errors)
   page.on('console', msg => {
@@ -846,13 +865,12 @@ Please answer these post-session questions based on your experience during this 
 
         console.log(`\n🤖 AI final response:\n${debriefResponse.choices[0].message.content}\n`);
 
-        console.log('✅ All sessions complete. Browser left open for console inspection.');
-        console.log('📊 Check browser console for QRNG consumption logs.');
-        console.log('🛑 Press Ctrl+C to close browser and exit.');
-
-        // Keep Node.js process alive without making more AI calls
-        // The SIGINT handler (Ctrl+C) will close the browser and exit
-        await new Promise(() => {}); // Never resolves - keeps process alive indefinitely
+        clearInterval(monitorInterval);
+        finishedNormally = true;
+        clearTimeout(watchdog);
+        await browser.close();
+        console.log('✅ All sessions complete. Browser closed.');
+        process.exit(0);
       }
 
     } catch (error) {
@@ -864,6 +882,8 @@ Please answer these post-session questions based on your experience during this 
   process.on('SIGINT', async () => {
     console.log('\n🛑 Shutting down...');
     clearInterval(monitorInterval);
+    finishedNormally = true;
+    clearTimeout(watchdog);
     await browser.close();
     process.exit(0);
   });

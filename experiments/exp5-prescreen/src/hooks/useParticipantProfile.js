@@ -119,7 +119,8 @@ export function useParticipantProfile({ db, C }) {
           const uidRef = doc(db, C.DEMOGRAPHICS_COLLECTION, uid);
           const uidSnap = await getDoc(uidRef);
           if (uidSnap.exists()) {
-            setSessionCount(uidSnap.data().exp5_prescreen_sessions ?? 0);
+            usableCount = uidSnap.data().exp5_prescreen_sessions ?? 0;
+            setSessionCount(usableCount);
           }
         } catch (err) {
           console.error('UID session count load failed (non-blocking):', err);

@@ -27,59 +27,9 @@ config.experiments = {
     BLOCKS_TOTAL: 80, // 80 blocks of focus → fetch → results
 
     // ── Bit stream size ───────────────────────────────────────────────────────
-    // Change TRIALS_PER_BLOCK here — BITS_PER_BLOCK and all NULL_HURST_* constants
-    // are derived automatically from the lookup table below.
+    // Change TRIALS_PER_BLOCK here — BITS_PER_BLOCK is derived automatically below.
     // Validated values: 150 | 288 | 576 | 1152
     TRIALS_PER_BLOCK: 150,
-
-    // ── Null distributions (single-scale R/S, 10k simulations per N) ─────────
-    // Source: hurst_null_distributions.ipynb — seed 42, numpy default_rng
-    NULL_DISTRIBUTIONS: {
-      150: {
-        mean: 0.52799,
-        sd: 0.04579,
-        p10: 0.46875,
-        p25: 0.49594,
-        p50: 0.52837,
-        p75: 0.55979,
-        p90: 0.58732,
-        p95: 0.60355,
-        p99: 0.63135,
-      },
-      288: {
-        mean: 0.52827,
-        sd: 0.03988,
-        p10: 0.47662,
-        p25: 0.50031,
-        p50: 0.52812,
-        p75: 0.5563,
-        p90: 0.58045,
-        p95: 0.59454,
-        p99: 0.61803,
-      },
-      576: {
-        mean: 0.52729,
-        sd: 0.035,
-        p10: 0.4823,
-        p25: 0.50301,
-        p50: 0.52737,
-        p75: 0.5512,
-        p90: 0.57247,
-        p95: 0.58601,
-        p99: 0.607,
-      },
-      1152: {
-        mean: 0.52656,
-        sd: 0.03086,
-        p10: 0.48663,
-        p25: 0.50513,
-        p50: 0.52696,
-        p75: 0.548,
-        p90: 0.56639,
-        p95: 0.5776,
-        p99: 0.5971,
-      },
-    },
 
     // Firestore collection for prescreen sessions
     PRESCREEN_COLLECTION: 'prescreen_sessions_exp5',
@@ -109,31 +59,14 @@ config.experiments = {
     // incognito windows (see notebooks/run_baseline_overnight.sh), not by
     // loading #auto once and letting it run multiple sessions in one tab.
     AUTO_MODE_REST_MS: 200, // 0.2 second auto-continue delay between blocks in auto-mode
-    AI_MODE_SESSIONS: 5, // Number of AI agent sessions to run (access via #ai URL)
+    AI_MODE_SESSIONS: 1, // Number of AI agent sessions to run (access via #ai URL)
   },
 };
 
-// ── Derive BITS_PER_BLOCK and flat NULL_HURST_* from TRIALS_PER_BLOCK ────────
+// ── Derive BITS_PER_BLOCK from TRIALS_PER_BLOCK ──────────────────────────────
 const pk = config.experiments.pk;
 
 pk.BITS_PER_BLOCK = 1 + 2 * pk.TRIALS_PER_BLOCK;
-
-const _nullDist = pk.NULL_DISTRIBUTIONS[pk.TRIALS_PER_BLOCK];
-if (!_nullDist) {
-  throw new Error(
-    `config: No null distribution for TRIALS_PER_BLOCK=${pk.TRIALS_PER_BLOCK}. ` +
-      `Add an entry to NULL_DISTRIBUTIONS or use a validated value: ${Object.keys(pk.NULL_DISTRIBUTIONS).join(', ')}.`,
-  );
-}
-pk.NULL_HURST_MEAN = _nullDist.mean;
-pk.NULL_HURST_SD = _nullDist.sd;
-pk.NULL_HURST_P10 = _nullDist.p10;
-pk.NULL_HURST_P25 = _nullDist.p25;
-pk.NULL_HURST_P50 = _nullDist.p50;
-pk.NULL_HURST_P75 = _nullDist.p75;
-pk.NULL_HURST_P90 = _nullDist.p90;
-pk.NULL_HURST_P95 = _nullDist.p95;
-pk.NULL_HURST_P99 = _nullDist.p99;
 
 // Propagate top-level fields so pkConfig consumers (C.*) can access them
 pk.APP_VERSION = config.APP_VERSION;

@@ -6,6 +6,128 @@ changelog). Newest entries at the top.
 
 ---
 
+## 2026-09-18 — Variance-narrowing session update: loose ends closed, AI arm test built, feedback-conditioning explored (one open, unresolved anomaly)
+
+Covers everything run against `Variance_Narrowing_executed-9-17-26.ipynb` and its standalone
+companion scripts (in `experiments/exp5-prescreen/notebooks/`) since that file was last saved.
+All Colab runs used `N_BOOT_DEFAULT=10000`; Human/AI resampled participant-then-session,
+Baseline session-level, throughout, unless noted.
+
+### A. Three loose ends from the prior session — all now closed with executed numbers
+
+1. **A3 session-length confound (attenuation at the surviving W).** Original A3 cell used a
+   flawed Baseline resampling scheme (flat i.i.d. window resample, `rng.choice` — not the
+   session-level cluster bootstrap used elsewhere). Rewrote as `A3_corrected_standalone.py`
+   with proper session-level Baseline resampling; executed in Colab. Result: essentially
+   unchanged from the flawed version — exp4 W=10 ratio=0.822 CI=[0.691,0.981]; exp5-prescreen
+   W=15 ratio=0.779 CI=[0.612,0.969]; W=20 ratio=0.754 CI=[0.569,0.961] — all still exclude 1.
+   **Closed: the resampling fix didn't matter here, A3's conclusion holds.**
+
+2. **Provider mix (exp5-prescreen).** Confirmed exp4 has no per-block provider field at all
+   (dead end, closes only prospectively via Exp5's single-provider design). For
+   exp5-prescreen, ran Part 18d (provider-stratified curve, W=3/5/10, proper participant/
+   session-count thresholds): ANU skipped (insufficient N); **LFDR** observed=-0.021,
+   95% CI=[-0.162,+0.126] (null); **Outshift** observed=-0.127, 95% CI=[-0.265,+0.053], even
+   90% CI=[-0.245,+0.026] (null). **Closed: neither provider individually excludes 0 under the
+   properly-powered combined-W test** — supersedes an earlier, less rigorous single-W Check-D
+   read that had flagged Outshift as significant.
+
+3. **Z_W null calibration (Baseline resampling unit).** Read the actual code (not just
+   markdown prose): the bug (Part 16b) was resampling Baseline at the *participant* level using
+   only 3 (exp4) / 9 (exp5) automated pseudo-IDs. The fix (Part 16c-e) resamples whole Baseline
+   *sessions*, matched to each analysis's real per-participant session-count structure — closer
+   to Human's actual uneven structure than a fixed group-of-5 average would be. Executed Part
+   16e/17b/17c via a standalone checkpointed script; exp4 numbers reproduced exactly against the
+   previously-pasted values (Human(all) obs=-0.0914, 95% CI=[-0.179,+0.003] — marginal, excludes
+   0 only at 90%; Human5+ obs=-0.183, 95% CI=[-0.536,-0.051] — holds). **Important correction to
+   the prior "exp5-prescreen holds at both 90%/95%" claim**: that number used W=[5,10,15,20]
+   (Part 4's original set); rerun on the notebook's own stated *confirmatory* estimand
+   (W=[3,5,10], shared across dataset variants for controlled comparison) gives exp5-prescreen
+   native Human(all) obs=-0.089, 95% CI=[-0.180,+0.024] — **does not exclude 0**. Human5+ native
+   does (obs=-0.122, 95% CI=[-0.225,-0.004]). Root cause: exp5's real effect is concentrated at
+   large W (15/20) and near-absent at small W (5/10) — averaging into W=3/5/10 (chosen because
+   that's exp4's ceiling, not because of anything about exp5) mechanically dilutes it away.
+   Truncating exp5 to exp4's 30-block length barely moves the point estimate (native -0.122 vs
+   truncated -0.120 for Human5+) — it only widens the CI (loses power), which argues against a
+   true length-driven bias and for a plain power/width-of-W-range issue instead. **Net: A3's
+   large-W finding is solid; the W=3/5/10 "confirmatory" combined-stat claim for exp5-prescreen
+   Human(all) needs walking back to "marginal/underpowered," not "holds."**
+
+### B. AI arm's status on the H2 estimand (new — Part 21)
+
+Archaeology first, before computing anything: searched `Variance_Narrowing.ipynb`,
+`Variance_Narrowing_executed.ipynb`, and `Exp4_Notebook2b_Retroactive_Structure_Metrics.ipynb`
+for any executed cell testing AI against the actual windowed-r-SD/Z_W construction. Found
+none — `Variance_Narrowing.ipynb` Part 14 states a table for AI but its code cell has zero
+execution output (same unexecuted-assertion problem the Z_W numbers above had); Notebook2b's
+AI-vs-Baseline cells test different statistics entirely (Fisher z on block-level r, Levene on
+block-level Var(Δ), MI variance, entropy). **The AI arm's status on this specific finding has
+never been established by an executed cell anywhere in this project, until now.**
+
+Checked AI's actual `participant_id` structure before picking a resampling unit (not silently):
+exp4 AI has 15 distinct IDs across 129 sessions, 1-15 sessions each (Human-like, uneven spread)
+— not Baseline's mechanically-uniform 3-ID/24-42-sessions-each pattern. exp5-prescreen AI: 5
+IDs across 17 sessions. **Decision: AI resampled participant-then-session, like Human, not
+session-level like Baseline.**
+
+Built Part 21 in the live notebook: per-W (W=5/10, exp4's ≥3-windows-per-session ceiling) and
+combined-curve (W=3/5/10) tests, AI vs Baseline, plus exp5-prescreen's AI arm at its full W set,
+plus a power/MDE check (from each AI test's own bootstrap SE, compared to Human's already-
+established magnitude) to distinguish "AI null" from "AI underpowered" per the prespecified
+three-way interpretation (goal-directedness confound / genuine dissociation / uninformative).
+**Status: cells are in place and correctly ordered (fixed one dependency-ordering bug along the
+way — a Step-3 cell referenced `ai_all_4` before it was defined; corrected), but the user has
+not yet run/reported Part 21's actual output. Open — numbers pending.**
+
+### C. PI-only session-length comparison (new, descriptive)
+
+Split the PI's own exp5-prescreen sessions by length (7 at 150 blocks vs 7 at 80 blocks, from
+the 2026-07-25 frozen export) and wrote `PI_session_length_comparison_standalone.py`: windowed-r
+variance ratio (vs. the full Baseline pool) for each length-group at W=5/10/15, session-level
+bootstrap (N=1 participant, no participant-level clustering possible). **Explicitly descriptive,
+not a powered test — 7 sessions per group from one person.** Not yet run/reported.
+
+### D. Feedback-conditioning test (H2 estimand vs. displayed hit-rate feedback) — run, one open anomaly
+
+Confirmed from source (`MainApp.jsx`/`useTrialRunner.js`) before building anything: displayed
+feedback = `Math.round(100*k/n)`, an integer percentage; AI gets the identical value via
+`window.expState.score`. Scoped to exp4 only (has real `hits`/`n` for Human, Baseline, AND AI
+directly; exp5-prescreen's frozen export lacks the session target field needed to reconstruct
+this honestly). Covariate redesigned mid-session per PI feedback: a single governing block's
+feedback (the one block immediately before a window, for lag=1), not a window-mean over each of
+a window's own preceding blocks — feedback should apply wholesale to the next block, not get
+smeared across several different lagged predecessors.
+
+**Primary test (lag=1, W=5 and W=10): null for both Human and AI, all CIs include 0** (e.g.
+Human W=5 diff=+0.086 CI=[-0.064,+0.243]; AI W=5 diff=-0.026 CI=[-0.202,+0.159]). **Baseline's
+own lag=1 arithmetic-coupling control is clean at every W** — the real test isn't contaminated.
+
+**Lag=0 (timing control — causally impossible, isolates arithmetic coupling): one marginal
+result.** Human W=5 diff=**-0.139**, 95% CI=[**-0.272,-0.007**] — excludes 0. AI stays null.
+Baseline's own lag=0 control is clean (doesn't reproduce the coupling on Baseline's data).
+Repeated on `Frozen_Exp4_RawBlockBits_2026-07-26.pkl`'s raw physical halves (halfA/halfB, fixed
+position, ignoring the per-block relabeling that decides which one is "subject" — a stream with
+literally no possible feedback channel): same direction, similar size (diff=-0.130), but CI=
+[-0.256,**+0.004**] — just barely fails to exclude 0.
+
+Checked three candidate mundane mechanisms for this specific Human-only lag=0 result, all ruled
+out: (1) Human's feedback-percentage distribution is statistically identical to Baseline's/AI's
+(mean≈50.0, SD≈4.1, range 35-64, all three); (2) the raw block-level correlation between hit-rate
+and same-block H_subject is tiny and nearly identical across Human/Baseline/AI (~0.01-0.04),
+including a magnitude-corrected version (`|hitrate-50|` vs. H/R, to account for persistence
+amplifying deviation in *either* direction rather than a signed relationship) and a check
+restricted to Human5+ specifically — flat everywhere, no condition stands out.
+
+**Conclusion, stated plainly: this is not a finding.** One border-line CI among several
+lag×W×stream comparisons, no multiple-comparisons correction applied (deliberately, given the
+exploratory framing), that doesn't reproduce on the closest alternative test and isn't explained
+by the mundane mechanisms checked — but also not explained away. Ruling out a few boring
+explanations narrows the space, it doesn't promote the result. Filed as an unresolved,
+non-feedback anomaly (lag=0 rules out feedback by timing alone) worth a clean, prespecified,
+adequately-powered test if pursued later — not something to write into the paper or lean on now.
+
+---
+
 ## 2026-08-12 — Block-level metric correlation structure: mechanical vs. genuine cross-metric agreement (new analysis, exploratory, supersedes initial framing below)
 
 Follow-up to the block-level Spearman correlation matrix across 10 direct-Subject-stream
