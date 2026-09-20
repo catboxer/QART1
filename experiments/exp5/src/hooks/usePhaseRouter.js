@@ -19,7 +19,6 @@ export function usePhaseRouter() {
     // ── named transitions ────────────────────────────────────────────────────
     goToConsent:       () => setPhase('consent'),
     goToParticipantCode: () => setPhase('participant_code'),
-    goToInfo:          () => setPhase('info'),
     goToPreQ:          () => setPhase('preQ'),
     goToOnboarding:    () => setPhase('onboarding'),
     goToTargetAnnounce:() => setPhase('target_announce'),

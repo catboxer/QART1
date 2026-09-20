@@ -1,10 +1,6 @@
 // src/MainApp.jsx
 import './App.css';
-import React, {
-  useEffect,
-  useRef,
-  useState,
-} from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { pkConfig as C } from './config.js';
 import { db } from './firebase.js';
 import {
@@ -16,7 +12,9 @@ import {
 } from 'firebase/firestore';
 import { preQuestions, postQuestions } from './questions.js';
 import { QuestionsForm } from './Forms.jsx';
-import ConsentInfoPage, { FRIENDLY_TITLE } from './ui/ConsentInfoPage.jsx';
+import ConsentInfoPage, {
+  FRIENDLY_TITLE,
+} from './ui/ConsentInfoPage.jsx';
 import ParticipantCodeScreen from './ui/ParticipantCodeScreen.jsx';
 import { generateParticipantCode } from './lib/participantCode.js';
 import PaymentCompletionPage from './ui/PaymentCompletionPage.jsx';
@@ -78,10 +76,16 @@ export default function MainApp() {
     participantHash,
     participantProfile,
     emailPlaintext,
-    sessionCount, setSessionCount,
+    sessionCount,
+    setSessionCount,
     usableSessionCount,
-    pastH_s, pastH_d, pastBits, pastDemonBits,
-    pastSubjectHits, pastDemonHits, pastDemonTrials,
+    pastH_s,
+    pastH_d,
+    pastBits,
+    pastDemonBits,
+    pastSubjectHits,
+    pastDemonHits,
+    pastDemonTrials,
     requireUid,
     loadParticipant,
     loadAutoParticipant,
@@ -138,7 +142,13 @@ export default function MainApp() {
     if (autoParticipantLoadedRef.current) return;
     autoParticipantLoadedRef.current = true;
     loadAutoParticipant();
-  }, [isAutoMode, isAIMode, profileLoading, uid, loadAutoParticipant]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [
+    isAutoMode,
+    isAIMode,
+    profileLoading,
+    uid,
+    loadAutoParticipant,
+  ]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchTriggeredAtRef = useRef(null); // Capture when fetching was triggered (button press or auto-timer)
   const qrngProviderRef = useRef(null); // Track QRNG provider across blocks ('mixed' if it changes)
@@ -149,13 +159,25 @@ export default function MainApp() {
   const {
     phase,
     goToParticipantCode,
-    goToInfo, goToPreQ, goToOnboarding,
-    goToTargetAnnounce, goToFetching, goToScore,
-    goToRest, goToAudit, goToNext, goToPreparingNext,
-    goToResults, goToSummary, goToDone, goToPayment,
-    goToAutoComplete, goToAIComplete, goToMaxSessions,
+    goToPreQ,
+    goToOnboarding,
+    goToTargetAnnounce,
+    goToFetching,
+    goToScore,
+    goToRest,
+    goToAudit,
+    goToNext,
+    goToPreparingNext,
+    goToResults,
+    goToSummary,
+    goToDone,
+    goToPayment,
+    goToAutoComplete,
+    goToAIComplete,
+    goToMaxSessions,
   } = usePhaseRouter();
-  const [declinedParticipation, setDeclinedParticipation] = useState(false);
+  const [declinedParticipation, setDeclinedParticipation] =
+    useState(false);
   const [blockIdx, setblockIdx] = useState(-1);
   const [isRunning, setIsRunning] = useState(false);
   const [lastBlock, setLastBlock] = useState(null);
@@ -178,17 +200,37 @@ export default function MainApp() {
     saveSessionAggregates,
     resetCompletionFlag,
   } = useSessionPersistence({
-    db, C,
-    target, uid, requireUid,
-    participantHash, isAutoMode, isAIMode,
-    totals, totalGhostHits,
-    deltaHurstHistory, hurstSubjectHistory, hurstDemonHistory,
-    allRawBitsRef, qrngProviderRef, qrngProviderSeqRef,
-    phase, sessionCount, usableSessionCount,
-    subjectBitsHistory, demonBitsHistory,
-    pastH_s, pastH_d, pastBits, pastDemonBits,
-    pastSubjectHits, pastDemonHits, pastDemonTrials,
-    participantProfile, emailPlaintext, emailOptInRef,
+    db,
+    C,
+    target,
+    uid,
+    requireUid,
+    participantHash,
+    isAutoMode,
+    isAIMode,
+    totals,
+    totalGhostHits,
+    deltaHurstHistory,
+    hurstSubjectHistory,
+    hurstDemonHistory,
+    allRawBitsRef,
+    qrngProviderRef,
+    qrngProviderSeqRef,
+    phase,
+    sessionCount,
+    usableSessionCount,
+    subjectBitsHistory,
+    demonBitsHistory,
+    pastH_s,
+    pastH_d,
+    pastBits,
+    pastDemonBits,
+    pastSubjectHits,
+    pastDemonHits,
+    pastDemonTrials,
+    participantProfile,
+    emailPlaintext,
+    emailOptInRef,
     onHistoryUpdated: setCumulativeHistory,
   });
 
@@ -196,17 +238,32 @@ export default function MainApp() {
   //      endMinute, fetching effect, audit effect, block-persistence effect
   const { refs: trialRunnerRefs } = useTrialRunner({
     C,
-    phase, target, setTarget,
-    isAutoMode, isAIMode,
-    goToScore, goToRest, goToResults,
+    phase,
+    target,
+    setTarget,
+    isAutoMode,
+    isAIMode,
+    goToScore,
+    goToRest,
+    goToResults,
     runRef,
-    blockIdx, setblockIdx,
-    setIsRunning, setLastBlock,
-    setTotals, setTotalGhostHits,
-    setDeltaHurstHistory, setHurstSubjectHistory,
-    setHurstDemonHistory, setSubjectBitsHistory, setDemonBitsHistory,
-    saveSessionAggregates, lastPersistedBlockRef,
-    fetchTriggeredAtRef, allRawBitsRef, qrngProviderRef, qrngProviderSeqRef,
+    blockIdx,
+    setblockIdx,
+    setIsRunning,
+    setLastBlock,
+    setTotals,
+    setTotalGhostHits,
+    setDeltaHurstHistory,
+    setHurstSubjectHistory,
+    setHurstDemonHistory,
+    setSubjectBitsHistory,
+    setDemonBitsHistory,
+    saveSessionAggregates,
+    lastPersistedBlockRef,
+    fetchTriggeredAtRef,
+    allRawBitsRef,
+    qrngProviderRef,
+    qrngProviderSeqRef,
   });
 
   // Auto-mode and AI-mode: Skip consent/questions, auto-restart, and auto-continue rest screens
@@ -218,7 +275,6 @@ export default function MainApp() {
     if (
       phase === 'consent' ||
       phase === 'pre_questions' ||
-      phase === 'info' ||
       phase === 'prime' ||
       phase === 'preQ'
     ) {
@@ -231,7 +287,8 @@ export default function MainApp() {
           goToResults();
         } else {
           // Check if audit is needed based on the just-completed block (not the incremented blockIdx)
-          const completedBlockIdx = trialRunnerRefs.blockIdxToPersistRef.current;
+          const completedBlockIdx =
+            trialRunnerRefs.blockIdxToPersistRef.current;
           const needsAudit =
             completedBlockIdx >= 0 &&
             (completedBlockIdx + 1) % C.AUDIT_EVERY_N_BLOCKS === 0 &&
@@ -261,8 +318,11 @@ export default function MainApp() {
       if (runRef) {
         const isFullSession =
           allRawBitsRef.current.length === C.BLOCKS_TOTAL;
-        saveSessionAggregates().catch(err =>
-          console.error('saveSessionAggregates failed (background):', err),
+        saveSessionAggregates().catch((err) =>
+          console.error(
+            'saveSessionAggregates failed (background):',
+            err,
+          ),
         );
         if (isFullSession) {
           setDoc(runRef, { completed: true }, { merge: true }).catch(
@@ -271,7 +331,10 @@ export default function MainApp() {
         }
       }
       isAIMode ? goToDone() : goToNext();
-    } else if ((phase === 'done' && isAutoMode) || phase === 'summary') {
+    } else if (
+      (phase === 'done' && isAutoMode) ||
+      phase === 'summary'
+    ) {
       // Auto-mode: skip post-questionnaire; AI-mode: show questions for agent to fill
       goToNext();
     } else if (phase === 'next') {
@@ -319,7 +382,16 @@ export default function MainApp() {
     }
     // Note: blockIdxToPersistRef is a ref, not state, so it doesn't need to be in the dep array
     // All goTo* functions, resetCompletionFlag, setRunRef, lastPersistedBlockRef are stable
-  }, [isAutoMode, isAIMode, phase, blockIdx, autoSessionCount, autoSessionTarget, runRef, saveSessionAggregates]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [
+    isAutoMode,
+    isAIMode,
+    phase,
+    blockIdx,
+    autoSessionCount,
+    autoSessionTarget,
+    runRef,
+    saveSessionAggregates,
+  ]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Note: processTrials, persistMinute, endMinute, fetching effect, audit effect,
   // and block-persistence effect are owned by useTrialRunner above.
@@ -331,7 +403,9 @@ export default function MainApp() {
   // with the sign-in effect in useParticipantProfile and creates a duplicate anonymous user.
   useEffect(() => {
     if (phase === 'onboarding' && !runRef && target && uid) {
-      console.log('[ensureRunDoc] onboarding useEffect firing — calling ensureRunDoc');
+      console.log(
+        '[ensureRunDoc] onboarding useEffect firing — calling ensureRunDoc',
+      );
       ensureRunDoc().catch(console.error);
     }
   }, [phase, runRef, target, uid, ensureRunDoc]);
@@ -351,9 +425,15 @@ export default function MainApp() {
 
     if (declinedParticipation) {
       return (
-        <div className="App" style={{ textAlign: 'center', padding: 24 }}>
+        <div
+          className="App"
+          style={{ textAlign: 'center', padding: 24 }}
+        >
           <h1>You have chosen not to participate</h1>
-          <p>No information was recorded. You may now close this window.</p>
+          <p>
+            No information was recorded. You may now close this
+            window.
+          </p>
         </div>
       );
     }
@@ -362,13 +442,18 @@ export default function MainApp() {
       <div style={{ position: 'relative' }}>
         <ConsentInfoPage
           onDecline={() => setDeclinedParticipation(true)}
-          onAgree={async ({ email, resultsContact, futureContact } = {}) => {
+          onAgree={async ({
+            email,
+            resultsContact,
+            futureContact,
+          } = {}) => {
             // Reset completion state so it's recomputed fresh for this session
             resetCompletionFlag();
             // Existing results-contact permission field; future-study contact
             // (futureContact) isn't persisted anywhere yet -- UI-only for now.
             emailOptInRef.current = resultsContact;
-            const { skipPreQ, usableCount } = await loadParticipant(email);
+            const { skipPreQ, usableCount } =
+              await loadParticipant(email);
             if (usableCount >= C.MAX_SESSIONS_FOR_ANALYSIS) {
               goToMaxSessions();
               return;
@@ -394,80 +479,9 @@ export default function MainApp() {
         <ParticipantCodeScreen
           code={participantCode}
           onConfirmed={() => {
-            skipPreQAfterCodeRef.current ? goToInfo() : goToPreQ();
+            skipPreQAfterCodeRef.current ? goToOnboarding() : goToPreQ();
           }}
         />
-      </div>
-    );
-  }
-
-  // INFO - Optional binaural beats info, shown once after consent, before instructions
-  if (phase === 'info') {
-    if (isAutoMode || isAIMode) {
-      goToOnboarding();
-      return null;
-    }
-
-    return (
-      <div style={{ padding: 24, maxWidth: 760, margin: '0 auto' }}>
-        <h2 style={{ marginBottom: 16 }}>
-          Optional Enhancement: Binaural Beats
-        </h2>
-        <ul style={{ fontSize: 16, lineHeight: 1.8 }}>
-          <li>
-            <strong>About binaural beats:</strong> Some people find that
-            binaural beats help facilitate a relaxed, meditative, or
-            altered state of awareness, which may make it easier to
-            sustain focused attention during the session.
-          </li>
-          <li>
-            <strong>What you need:</strong> A pair of headphones.
-          </li>
-          <li>
-            <strong>How:</strong> Use a binaural beat generator or your
-            preferred app and set the frequency between 4–6 Hz, choosing
-            the level that feels most comfortable.
-          </li>
-          <li>
-            <strong>Choose:</strong> You must choose to either use{' '}
-            <a
-              href="https://mynoise.net/NoiseMachines/binauralBrainwaveGenerator.php"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              binaural beats
-            </a>{' '}
-            for your entire session or complete the whole session without
-            them. You're welcome to take this experiment multiple times.
-            Try some sessions with binaural beats and others without them
-            to explore different approaches.
-          </li>
-          <li>
-            <strong>Prepare:</strong> Listen for at least 1–2 minutes
-            before starting. Breathe deeply and try to empty your mind.
-          </li>
-        </ul>
-
-        <div style={{ textAlign: 'center', marginTop: 32 }}>
-          <button
-            onClick={() => {
-              goToOnboarding();
-            }}
-            style={{
-              padding: '16px 48px',
-              fontSize: 20,
-              fontWeight: 'bold',
-              background: '#10b981',
-              color: '#fff',
-              border: 'none',
-              borderRadius: 8,
-              cursor: 'pointer',
-              boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
-            }}
-          >
-            Continue
-          </button>
-        </div>
       </div>
     );
   }
@@ -478,12 +492,14 @@ export default function MainApp() {
       <div className="App" style={{ textAlign: 'left', padding: 24 }}>
         <h1 style={{ marginTop: 0 }}>Thank You for Participating</h1>
         <p>
-          You have completed the maximum number of sessions for this study.
-          Your contributions are appreciated and have been recorded.
+          You have completed the maximum number of sessions for this
+          study. Your contributions are appreciated and have been
+          recorded.
         </p>
         <p>
-          Please contact the study administrator if you have questions or would like to
-          continue participating in future phases of the research.
+          Please contact the study administrator if you have questions
+          or would like to continue participating in future phases of
+          the research.
         </p>
         <p>
           <a href="mailto:a.campbell@lmu.de">a.campbell@lmu.de</a>
@@ -508,7 +524,7 @@ export default function MainApp() {
           requiredAll
           onSubmit={async (answers, { valid }) => {
             if (!valid) return;
-            goToInfo();
+            goToOnboarding();
             try {
               const uidNow = await requireUid();
               // Save to participants collection like exp1
@@ -652,8 +668,11 @@ export default function MainApp() {
     // AI mode — auto-initialize runRef to enable Continue button (but still require AI to click it)
     // Mirrors exp4's proven approach: render-body call is belt-and-suspenders alongside the useEffect.
     if (isAIMode && !canContinue && !isRunning && target && uid) {
-      ensureRunDoc().catch(err =>
-        console.error('❌ AI-MODE: Failed to initialize runRef:', err),
+      ensureRunDoc().catch((err) =>
+        console.error(
+          '❌ AI-MODE: Failed to initialize runRef:',
+          err,
+        ),
       );
     }
 
@@ -672,11 +691,7 @@ export default function MainApp() {
       <div
         style={{ padding: 24, maxWidth: 760, position: 'relative' }}
       >
-        <h1>
-          {isAIMode
-            ? '🤖 AI Agent Mode'
-            : FRIENDLY_TITLE}
-        </h1>
+        <h1>{isAIMode ? '🤖 AI Agent Mode' : FRIENDLY_TITLE}</h1>
 
         <div style={{ marginBottom: 30, marginTop: 30 }}>
           <h3 style={{ color: '#2c3e50', marginBottom: 15 }}>
@@ -717,10 +732,10 @@ export default function MainApp() {
             </li>
 
             <li>
-              You will see your target color displayed steadily during the
-              fetch, with a loading spinner. After the quantum data is retrieved,
-              results appear instantly. The goal is to score over 50% as often
-              as possible.
+              You will see your target color displayed steadily during
+              the fetch, with a loading spinner. After the quantum
+              data is retrieved, results appear instantly. The goal is
+              to score over 50% as often as possible.
             </li>
             <li>
               During breaks take a moment to breathe and clear your
@@ -767,7 +782,8 @@ export default function MainApp() {
         ? Math.round((100 * lastBlock.k) / lastBlock.n)
         : 0;
     // Use the just-completed block index (the one that was saved, not the incremented one)
-    const completedBlockIdx = trialRunnerRefs.blockIdxToPersistRef.current;
+    const completedBlockIdx =
+      trialRunnerRefs.blockIdxToPersistRef.current;
     const completedBlockNum = completedBlockIdx + 1; // Human-readable (1-30)
     // Show audit after blocks 5, 10, 15, 20, 25 (when completed block is 4, 9, 14, 19, 24 in 0-indexed)
     const needsAudit =
@@ -957,7 +973,9 @@ export default function MainApp() {
           <p style={{ fontSize: 16, marginBottom: 8, color: '#555' }}>
             We're about to fetch quantum data from the QRNG.
           </p>
-          <p style={{ fontSize: 16, marginBottom: 20, color: '#555' }}>
+          <p
+            style={{ fontSize: 16, marginBottom: 20, color: '#555' }}
+          >
             <strong>
               Bring your attention to your target color and form your
               intent before clicking the button.
@@ -1016,7 +1034,8 @@ export default function MainApp() {
   // AUDIT - Rest & recovery screen with audit fetch in background
   if (phase === 'audit') {
     // Use the just-completed block for display
-    const completedBlockIdx = trialRunnerRefs.blockIdxToPersistRef.current;
+    const completedBlockIdx =
+      trialRunnerRefs.blockIdxToPersistRef.current;
     const completedBlockNum = completedBlockIdx + 1;
 
     return (
@@ -1262,9 +1281,12 @@ export default function MainApp() {
 
     // Cumulative average across all completed sessions, including this one.
     const cumTrials = pastDemonTrials + totals.n;
-    const cumSubjectHitRate = cumTrials > 0
-      ? ((100 * (pastSubjectHits + totals.k)) / cumTrials).toFixed(1)
-      : '50.0';
+    const cumSubjectHitRate =
+      cumTrials > 0
+        ? ((100 * (pastSubjectHits + totals.k)) / cumTrials).toFixed(
+            1,
+          )
+        : '50.0';
 
     const sessionNumber = sessionCount + 1;
     const sessionsRemain = sessionNumber < C.TARGET_SESSIONS;
@@ -1327,8 +1349,16 @@ export default function MainApp() {
             textAlign: 'left',
           }}
         >
-          <p style={{ fontSize: 15, color: '#374151', marginBottom: 0 }}>
-            <strong>Your average across all completed sessions:</strong>{' '}
+          <p
+            style={{
+              fontSize: 15,
+              color: '#374151',
+              marginBottom: 0,
+            }}
+          >
+            <strong>
+              Your average across all completed sessions:
+            </strong>{' '}
             {cumSubjectHitRate}%
           </p>
         </div>
@@ -1343,7 +1373,14 @@ export default function MainApp() {
             textAlign: 'center',
           }}
         >
-          <p style={{ fontSize: 15, color: '#15803d', marginBottom: 0, fontWeight: 600 }}>
+          <p
+            style={{
+              fontSize: 15,
+              color: '#15803d',
+              marginBottom: 0,
+              fontWeight: 600,
+            }}
+          >
             {sessionsRemain
               ? `Session ${sessionNumber} of ${C.TARGET_SESSIONS} complete`
               : `Thank you for completing ${C.TARGET_SESSIONS} sessions`}
@@ -1371,9 +1408,9 @@ export default function MainApp() {
             <strong>A note on the score:</strong> The percentage is
             just a focusing target, not what we're measuring. We're
             looking at the underlying patterns in how the random
-            numbers were generated during your session, which a
-            simple hit rate doesn't reveal. A score below 50% is
-            just as valuable to the research as one above it.
+            numbers were generated during your session, which a simple
+            hit rate doesn't reveal. A score below 50% is just as
+            valuable to the research as one above it.
           </p>
         </div>
 
@@ -1510,16 +1547,16 @@ export default function MainApp() {
           <ul style={{ textAlign: 'left', marginTop: 0 }}>
             {sessionsRemain && (
               <li>
-                To be included in the study, please complete at
-                least {C.TARGET_SESSIONS} sessions (up to{' '}
+                To be included in the study, please complete at least{' '}
+                {C.TARGET_SESSIONS} sessions (up to{' '}
                 {C.MAX_SESSIONS_FOR_ANALYSIS} total). You can spread
                 these out however you like until the study closes.
               </li>
             )}
             {sessionsRemain && (
               <li>
-                We're especially interested in hearing from people
-                who are neurodivergent or who have had psi-related
+                We're especially interested in hearing from people who
+                are neurodivergent or who have had psi-related
                 experiences. If you know someone who fits that
                 description, please pass this study along to them —
                 their data is particularly valuable to this research.
@@ -1535,7 +1572,7 @@ export default function MainApp() {
                   textDecoration: 'underline',
                 }}
               >
-                Read about the methodology behind Experiment 5.
+                Read about the methodology behind Study 2.
               </a>
             </li>
             <li>
