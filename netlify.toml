@@ -17,3 +17,11 @@
 [[edge_functions]]
 function = "live"
 path = "/live"
+
+[[edge_functions]]
+function = "gate-exp5"
+path = "/exp5"
+
+[[edge_functions]]
+function = "gate-exp5"
+path = "/exp5/*"
