@@ -6,6 +6,21 @@ const puppeteer = require('puppeteer');
 const OpenAI = require('openai');
 const aiConfig = require('./ai-config.js');
 
+// msg.text() prints "JSHandle@error" for Error objects passed to console.error
+// (they don't serialize). Pull the real message/stack out of the page context.
+async function stringifyConsoleArgs(msg) {
+  const parts = await Promise.all(msg.args().map(async (arg) => {
+    try {
+      return await arg.evaluate((val) => (val instanceof Error ? (val.stack || val.message) : val));
+    } catch {
+      return null;
+    }
+  }));
+  return parts
+    .map((p) => (typeof p === 'string' ? p : JSON.stringify(p)))
+    .join(' ');
+}
+
 // Configuration
 const EXPERIMENT_URL = aiConfig.EXPERIMENT_URL;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
@@ -78,11 +93,12 @@ async function runAISession() {
   });
 
   // Capture browser console messages (especially Firebase errors)
-  page.on('console', msg => {
+  page.on('console', async msg => {
     const type = msg.type();
     const text = msg.text();
     if (type === 'error' || text.includes('Firebase') || text.includes('Firestore') || text.includes('ensureRunDoc') || text.includes('auth/')) {
-      console.log(`🌐 BROWSER ${type.toUpperCase()}: ${text}`);
+      const fullText = type === 'error' ? await stringifyConsoleArgs(msg) : text;
+      console.log(`🌐 BROWSER ${type.toUpperCase()}: ${fullText}`);
     }
   });
 

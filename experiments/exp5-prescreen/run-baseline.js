@@ -15,6 +15,21 @@
 
 const puppeteer = require('puppeteer');
 
+// msg.text() prints "JSHandle@error" for Error objects passed to console.error
+// (they don't serialize). Pull the real message/stack out of the page context.
+async function stringifyConsoleArgs(msg) {
+  const parts = await Promise.all(msg.args().map(async (arg) => {
+    try {
+      return await arg.evaluate((val) => (val instanceof Error ? (val.stack || val.message) : val));
+    } catch {
+      return null;
+    }
+  }));
+  return parts
+    .map((p) => (typeof p === 'string' ? p : JSON.stringify(p)))
+    .join(' ');
+}
+
 const EXPERIMENT_URL = 'https://experiments.whatthequark.com/exp5-prescreen/#auto';
 const HEADLESS = process.env.HEADLESS === '1';
 const SESSION_TIMEOUT_MS = parseInt(process.env.SESSION_TIMEOUT_MS, 10) || 10 * 60 * 1000;
@@ -66,8 +81,9 @@ async function runBaseline() {
     console.error('❌ Page error:', err.message);
   });
 
-  page.on('console', (msg) => {
-    console.log(`[page ${new Date().toISOString()}] ${msg.text()}`);
+  page.on('console', async (msg) => {
+    const text = await stringifyConsoleArgs(msg);
+    console.log(`[page ${new Date().toISOString()}] ${text}`);
   });
 
   const screenStatePoll = setInterval(async () => {

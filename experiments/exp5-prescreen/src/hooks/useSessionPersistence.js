@@ -21,16 +21,18 @@ function linReg(ys) {
   return { slope, pValue: 2 * (1 - normalCdf(Math.abs(t))) };
 }
 
-// Run-length encode an array of strings → [[value, count], ...]
+// Run-length encode an array of strings → [{value, count}, ...]
+// Firestore rejects arrays nested directly inside arrays, so each run is
+// encoded as an object rather than a [value, count] tuple.
 function rleEncode(arr) {
   if (!arr.length) return [];
   const out = [];
   let cur = arr[0], count = 1;
   for (let i = 1; i < arr.length; i++) {
     if (arr[i] === cur) { count++; }
-    else { out.push([cur, count]); cur = arr[i]; count = 1; }
+    else { out.push({ value: cur, count }); cur = arr[i]; count = 1; }
   }
-  out.push([cur, count]);
+  out.push({ value: cur, count });
   return out;
 }
 
