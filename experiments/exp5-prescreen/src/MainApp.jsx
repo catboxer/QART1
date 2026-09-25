@@ -410,9 +410,9 @@ export default function MainApp() {
     return (
       <div style={{ position: 'relative' }}>
         <ConsentGate
-          title="Experiment 4b: Intent and Quantum Random Number Generators"
+          title="Study 1b: Intent and Quantum Random Number Generators"
           showBlindingNote={false}
-          studyDescription={`Thank you for participating! You will complete ${C.BLOCKS_TOTAL} blocks each ~2 seconds long and brief questionnaires (approximately 5 minutes total).`}
+          studyDescription={`Thank you for participating! You will complete 5 sessions. Each session contains ${C.BLOCKS_TOTAL} blocks (each ~2 seconds long) and brief questionnaires (approximately 5 minutes total per session).`}
           bullets={[
             'You will receive one target color assignment (blue or orange) for the entire session',
             'Your task is to get your target color above 50%. Concentrate your attention on your target color right before and during the moment quantum data is fetched from a quantum random number generator.',
