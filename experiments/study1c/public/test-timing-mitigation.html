@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Timing Attack Mitigation Test</title>
+  <style>
+    body {
+      font-family: monospace;
+      padding: 20px;
+      background: #1a1a1a;
+      color: #00ff00;
+    }
+    .test-section {
+      margin: 20px 0;
+      padding: 15px;
+      border: 1px solid #00ff00;
+      border-radius: 8px;
+      background: #0a0a0a;
+    }
+    .pass { color: #00ff00; }
+    .fail { color: #ff0000; }
+    .warn { color: #ffaa00; }
+    button {
+      background: #00ff00;
+      color: #000;
+      border: none;
+      padding: 10px 20px;
+      font-family: monospace;
+      font-weight: bold;
+      cursor: pointer;
+      margin: 5px;
+    }
+    button:hover {
+      background: #00dd00;
+    }
+    pre {
+      background: #000;
+      padding: 10px;
+      border-radius: 4px;
+      overflow-x: auto;
+    }
+  </style>
+</head>
+<body>
+  <h1>🔐 Timing Attack Mitigation Test</h1>
+
+  <div class="test-section">
+    <h2>Test Objectives:</h2>
+    <ul>
+      <li>✅ Verify crypto APIs are frozen</li>
+      <li>✅ Verify network APIs are frozen</li>
+      <li>✅ Test immediate bit commitment flow</li>
+      <li>✅ Simulate abort detection</li>
+    </ul>
+  </div>
+
+  <div class="test-section">
+    <h2>Test 1: API Freezing</h2>
+    <button onclick="testAPIFreezing()">Run Test</button>
+    <pre id="api-test-output">Click "Run Test" to start...</pre>
+  </div>
+
+  <div class="test-section">
+    <h2>Test 2: Bit Commitment Flow</h2>
+    <button onclick="testBitCommitment()">Run Test</button>
+    <pre id="commit-test-output">Click "Run Test" to start...</pre>
+  </div>
+
+  <div class="test-section">
+    <h2>Test 3: Simulate Strategic Abort</h2>
+    <p class="warn">⚠️ This will start a session and abort after bit fetch. Check QA dashboard after.</p>
+    <button onclick="simulateAbort()">Simulate Abort Attack</button>
+    <pre id="abort-test-output">Click "Simulate Abort Attack" to start...</pre>
+  </div>
+
+  <div class="test-section">
+    <h2>Test 4: Check QA Dashboard</h2>
+    <button onclick="window.open('http://localhost:8888/exp3#qa', '_blank')">Open QA Dashboard</button>
+    <p>After running Test 3, check the dashboard for abort detection.</p>
+  </div>
+
+  <script>
+    function log(elementId, message, type = 'info') {
+      const el = document.getElementById(elementId);
+      const color = type === 'pass' ? 'class="pass"' :
+                    type === 'fail' ? 'class="fail"' :
+                    type === 'warn' ? 'class="warn"' : '';
+      el.innerHTML += `<div ${color}>${message}</div>`;
+    }
+
+    function clear(elementId) {
+      document.getElementById(elementId).innerHTML = '';
+    }
+
+    async function testAPIFreezing() {
+      clear('api-test-output');
+      log('api-test-output', '🧪 Testing API Freezing...\n');
+
+      let passed = 0;
+      let failed = 0;
+
+      // Test 1: Check if crypto is frozen
+      try {
+        const isFrozen = Object.isFrozen(crypto);
+        if (isFrozen) {
+          log('api-test-output', '✅ crypto object is frozen', 'pass');
+          passed++;
+        } else {
+          log('api-test-output', '❌ crypto object is NOT frozen', 'fail');
+          failed++;
+        }
+      } catch (e) {
+        log('api-test-output', `❌ Error checking crypto: ${e.message}`, 'fail');
+        failed++;
+      }
+
+      // Test 2: Check if fetch is frozen
+      try {
+        const originalFetch = window.__originalFetch;
+        if (originalFetch && window.fetch === originalFetch) {
+          log('api-test-output', '✅ fetch is protected', 'pass');
+          passed++;
+        } else {
+          log('api-test-output', '❌ fetch is NOT protected', 'fail');
+          failed++;
+        }
+      } catch (e) {
+        log('api-test-output', `❌ Error checking fetch: ${e.message}`, 'fail');
+        failed++;
+      }
+
+      // Test 3: Try to monkey-patch crypto (should fail)
+      try {
+        const oldGetRandom = crypto.getRandomValues;
+        crypto.getRandomValues = function() { return new Uint8Array([0]); };
+
+        if (crypto.getRandomValues === oldGetRandom) {
+          log('api-test-output', '✅ crypto.getRandomValues cannot be replaced', 'pass');
+          passed++;
+        } else {
+          log('api-test-output', '❌ crypto.getRandomValues WAS replaced (SECURITY ISSUE!)', 'fail');
+          failed++;
+        }
+      } catch (e) {
+        log('api-test-output', '✅ crypto.getRandomValues replacement blocked', 'pass');
+        passed++;
+      }
+
+      // Test 4: Try to replace fetch (should fail)
+      try {
+        const oldFetch = window.fetch;
+        window.fetch = function() { return Promise.resolve(new Response('hacked')); };
+
+        if (window.fetch === oldFetch) {
+          log('api-test-output', '✅ fetch cannot be replaced', 'pass');
+          passed++;
+        } else {
+          log('api-test-output', '❌ fetch WAS replaced (SECURITY ISSUE!)', 'fail');
+          failed++;
+        }
+      } catch (e) {
+        log('api-test-output', '✅ fetch replacement blocked', 'pass');
+        passed++;
+      }
+
+      log('api-test-output', `\n📊 Results: ${passed} passed, ${failed} failed`, failed > 0 ? 'fail' : 'pass');
+    }
+
+    async function testBitCommitment() {
+      clear('commit-test-output');
+      log('commit-test-output', '🧪 Testing Bit Commitment Flow...\n');
+      log('commit-test-output', 'Open Browser Console (F12) to see detailed logs');
+      log('commit-test-output', 'Look for: "🔐 COMMITTING BITS TO FIRESTORE"\n', 'warn');
+
+      log('commit-test-output', '✅ To test the full flow:');
+      log('commit-test-output', '1. Go to http://localhost:8888/exp3#ai');
+      log('commit-test-output', '2. Open Console (F12)');
+      log('commit-test-output', '3. Start a session');
+      log('commit-test-output', '4. Watch for commit logs BEFORE processing');
+    }
+
+    async function simulateAbort() {
+      clear('abort-test-output');
+      log('abort-test-output', '🚨 Simulating Strategic Abort Attack...\n', 'warn');
+      log('abort-test-output', 'Opening AI mode in new window...');
+
+      const win = window.open('http://localhost:8888/exp3#ai', '_blank');
+
+      log('abort-test-output', '\n⏱️ Wait for session to start, then:');
+      log('abort-test-output', '1. Watch console for "✅ Bits committed"');
+      log('abort-test-output', '2. CLOSE THE WINDOW immediately after commitment');
+      log('abort-test-output', '3. Check QA dashboard for abort detection\n');
+
+      log('abort-test-output', '📊 Expected Result:');
+      log('abort-test-output', '- Session doc created');
+      log('abort-test-output', '- block_commits/0 exists with bits');
+      log('abort-test-output', '- minutes/0 does NOT exist');
+      log('abort-test-output', '- QA dashboard shows abort with hypothetical score');
+    }
+  </script>
+</body>
+</html>

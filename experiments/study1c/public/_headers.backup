@@ -1,0 +1,24 @@
+# Security headers for AI-agent resistant experiment
+# Prevents inline scripts and untrusted extension injection
+
+/*
+  # Content Security Policy - blocks inline scripts and untrusted extensions
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https://*.firebaseio.com https://*.googleapis.com https://identitytoolkit.googleapis.com wss://*.firebaseio.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
+
+  # Prevent MIME type sniffing
+  X-Content-Type-Options: nosniff
+
+  # Enable XSS protection (legacy browsers)
+  X-XSS-Protection: 1; mode=block
+
+  # Prevent clickjacking
+  X-Frame-Options: DENY
+
+  # Force HTTPS
+  Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
+
+  # Control referrer information
+  Referrer-Policy: strict-origin-when-cross-origin
+
+  # Permissions policy - disable unnecessary features
+  Permissions-Policy: geolocation=(), microphone=(), camera=(), payment=(), usb=()
