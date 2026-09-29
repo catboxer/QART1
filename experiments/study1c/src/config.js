@@ -4,10 +4,10 @@ export const config = {
   QA_SECRET: 'WHAT_THE_QUARK_EXP_4',
   APP_VERSION: 'study1c.1',
 
-  // QRNG source: 'qrng-race' (Outshift/LFDR/ANU), 'random-org' (Random.org), or 'crypto-test' (crypto.getRandomValues for testing)
+  // QRNG source: 'quantis' (qpsy.de via netlify/functions/quantis.js), 'qrng-race' (Outshift/LFDR/ANU), 'random-org' (Random.org), or 'crypto-test' (crypto.getRandomValues for testing)
   // Set to 'random-org' for testing to avoid using paid Outshift quota
   // Set to 'crypto-test' when out of bits during development (will still test timing attack mitigations)
-  QRNG_SOURCE: 'qrng-race', // Switch to 'qrng-race' for production, 'random-org' for testing, or 'crypto-test' for local testing
+  QRNG_SOURCE: 'quantis', // 'quantis' (qpsy.de, Study 1c production), 'qrng-race', 'random-org' for testing, or 'crypto-test' for local testing
 
   // Within 'qrng-race', skip straight past Outshift to LFDR (ANU is disabled
   // unconditionally in qrng-race.js, so skipping Outshift makes LFDR the

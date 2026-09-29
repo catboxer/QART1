@@ -1,5 +1,5 @@
 // fetchQRNGBits.js
-// Utility to fetch quantum bits on-demand using qrng-race or random-org endpoint
+// Utility to fetch quantum bits on-demand using quantis, qrng-race, or random-org endpoint
 import { config } from './config.js';
 
 // Session-level flag: once Outshift hits its daily limit, skip it for the rest of the session.
@@ -14,7 +14,7 @@ let outshiftDailyLimited = !!config.FORCE_SKIP_OUTSHIFT;
  */
 function validateRandomness(bits) {
   const n = bits.length;
-  const ones = bits.split('').filter(b => b === '1').length;
+  const ones = bits.split('').filter((b) => b === '1').length;
   const onesRatio = ones / n;
 
   // Test 1: Proportion test (should be close to 0.5)
@@ -29,12 +29,16 @@ function validateRandomness(bits) {
     if (bits[i] !== bits[i - 1]) runs++;
   }
   const expectedRuns = (2 * ones * (n - ones)) / n + 1;
-  const runsStdDev = Math.sqrt((2 * ones * (n - ones) * (2 * ones * (n - ones) - n)) / (n * n * (n - 1)));
+  const runsStdDev = Math.sqrt(
+    (2 * ones * (n - ones) * (2 * ones * (n - ones) - n)) /
+      (n * n * (n - 1)),
+  );
   const runsZ = Math.abs((runs - expectedRuns) / runsStdDev);
   const runsPass = runsZ < 3;
 
   // Test 3: Longest run check (shouldn't have extremely long runs of same bit)
-  let maxRun = 1, currentRun = 1;
+  let maxRun = 1,
+    currentRun = 1;
   for (let i = 1; i < n; i++) {
     if (bits[i] === bits[i - 1]) {
       currentRun++;
@@ -62,8 +66,8 @@ function validateRandomness(bits) {
       runsPass,
       maxRun,
       expectedMaxRun: expectedMaxRun.toFixed(1),
-      maxRunPass
-    }
+      maxRunPass,
+    },
   };
 }
 
@@ -77,7 +81,9 @@ async function hashBitstream(bits) {
   const data = encoder.encode(bits);
   const hashBuffer = await crypto.subtle.digest('SHA-256', data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  return hashArray
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
 }
 
 /**
@@ -91,22 +97,36 @@ async function hashBitstream(bits) {
  *   that need a one-off source override (e.g. audit fetches).
  * @returns {Promise<{bits: string, hash: string, timestamp: string, source: string}>} - Bits with cryptographic authentication
  */
-export async function fetchQRNGBits(nBits, retries = 3, validateGhost = false, sourceOverride = null) {
+export async function fetchQRNGBits(
+  nBits,
+  retries = 3,
+  validateGhost = false,
+  sourceOverride = null,
+) {
   // SECURITY: Verify crypto APIs haven't been tampered with
   if (typeof window !== 'undefined') {
     if (!Object.isFrozen(crypto)) {
-      throw new Error('SECURITY VIOLATION: crypto object has been unfrozen');
+      throw new Error(
+        'SECURITY VIOLATION: crypto object has been unfrozen',
+      );
     }
     if (crypto.subtle && !Object.isFrozen(crypto.subtle)) {
-      throw new Error('SECURITY VIOLATION: crypto.subtle has been unfrozen');
+      throw new Error(
+        'SECURITY VIOLATION: crypto.subtle has been unfrozen',
+      );
     }
 
     // SECURITY: Verify network APIs haven't been tampered with
     if (window.fetch !== window.__originalFetch) {
       throw new Error('SECURITY VIOLATION: fetch has been replaced');
     }
-    if (typeof XMLHttpRequest !== 'undefined' && XMLHttpRequest !== window.__originalXMLHttpRequest) {
-      throw new Error('SECURITY VIOLATION: XMLHttpRequest has been replaced');
+    if (
+      typeof XMLHttpRequest !== 'undefined' &&
+      XMLHttpRequest !== window.__originalXMLHttpRequest
+    ) {
+      throw new Error(
+        'SECURITY VIOLATION: XMLHttpRequest has been replaced',
+      );
     }
   }
 
@@ -131,11 +151,16 @@ export async function fetchQRNGBits(nBits, retries = 3, validateGhost = false, s
       bits: result,
       hash,
       timestamp,
-      source: 'crypto-test'
+      source: 'crypto-test',
     };
   }
 
-  const endpoint = source === 'random-org' ? 'random-org-proxy' : 'qrng-race';
+  const endpoint =
+    source === 'random-org'
+      ? 'random-org-proxy'
+      : source === 'quantis'
+        ? 'quantis'
+        : 'qrng-race';
 
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
@@ -149,34 +174,57 @@ export async function fetchQRNGBits(nBits, retries = 3, validateGhost = false, s
       while (remaining > 0) {
         const chunk = Math.min(MAX_CHUNK, remaining);
 
-        const skipParam = outshiftDailyLimited ? '&skipOutshift=1' : '';
-        const response = await fetch(`/.netlify/functions/${endpoint}?n=${chunk}${skipParam}`);
+        const skipParam = outshiftDailyLimited
+          ? '&skipOutshift=1'
+          : '';
+        const response = await fetch(
+          `/.netlify/functions/${endpoint}?n=${chunk}${skipParam}`,
+        );
         if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+          throw new Error(
+            `HTTP ${response.status}: ${response.statusText}`,
+          );
         }
 
         const data = await response.json();
 
         // Reject fallback PRNG - we need true QRNG for valid data
-        if (data.success === false || data.fallback === true || data.source === 'fallback_prng') {
-          const reason = data.error || data.message || data.reason || 'unknown reason';
+        if (
+          data.success === false ||
+          data.fallback === true ||
+          data.source === 'fallback_prng'
+        ) {
+          const reason =
+            data.error ||
+            data.message ||
+            data.reason ||
+            'unknown reason';
 
           // Check if this is a quota/exhaustion error (don't retry these)
-          const isQuotaError = reason.toLowerCase().includes('quota') ||
+          const isQuotaError =
+            reason.toLowerCase().includes('quota') ||
             reason.toLowerCase().includes('exhausted') ||
             reason.toLowerCase().includes('rate limit') ||
             reason.toLowerCase().includes('insufficient');
 
           if (isQuotaError) {
-            console.error(`❌ QRNG quota exhausted: ${reason} (no retry)`);
-            throw new Error(`QRNG quota exhausted: ${reason} - DO NOT RETRY`);
+            console.error(
+              `❌ QRNG quota exhausted: ${reason} (no retry)`,
+            );
+            throw new Error(
+              `QRNG quota exhausted: ${reason} - DO NOT RETRY`,
+            );
           }
 
-          throw new Error(`QRNG unavailable (${reason}) - fallback PRNG rejected for data integrity`);
+          throw new Error(
+            `QRNG unavailable (${reason}) - fallback PRNG rejected for data integrity`,
+          );
         }
 
         if (!Array.isArray(data.bytes)) {
-          throw new Error(`Invalid response: ${JSON.stringify(data)}`);
+          throw new Error(
+            `Invalid response: ${JSON.stringify(data)}`,
+          );
         }
 
         // Capture the actual provider (outshift / lfdr / anu)
@@ -200,7 +248,9 @@ export async function fetchQRNGBits(nBits, retries = 3, validateGhost = false, s
         const validation = validateRandomness(result);
 
         if (!validation.isRandom) {
-          console.warn('⚠️ Ghost tape failed randomness tests - refetching...');
+          console.warn(
+            '⚠️ Ghost tape failed randomness tests - refetching...',
+          );
           throw new Error('Failed randomness validation');
         }
       }
@@ -213,24 +263,30 @@ export async function fetchQRNGBits(nBits, retries = 3, validateGhost = false, s
         bits: result,
         hash,
         timestamp,
-        source: fetchedSource
+        source: fetchedSource,
       };
     } catch (error) {
-      console.error(`❌ Attempt ${attempt}/${retries} failed:`, error);
+      console.error(
+        `❌ Attempt ${attempt}/${retries} failed:`,
+        error,
+      );
 
       // Check if this is a non-retryable error
-      const isNonRetryable = error.message.includes('DO NOT RETRY') ||
+      const isNonRetryable =
+        error.message.includes('DO NOT RETRY') ||
         error.message.includes('quota exhausted');
 
       if (isNonRetryable || attempt === retries) {
         // Final attempt failed or non-retryable error
-        console.error(`❌ ${isNonRetryable ? 'Non-retryable error' : 'All retry attempts exhausted'}`);
+        console.error(
+          `❌ ${isNonRetryable ? 'Non-retryable error' : 'All retry attempts exhausted'}`,
+        );
         throw error;
       }
 
       // Wait before retrying (exponential backoff)
       const delayMs = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
-      await new Promise(resolve => setTimeout(resolve, delayMs));
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
 }
