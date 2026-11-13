@@ -18,7 +18,6 @@ export function usePhaseRouter() {
     phase,
     // ── named transitions ────────────────────────────────────────────────────
     goToConsent:       () => setPhase('consent'),
-    goToParticipantCode: () => setPhase('participant_code'),
     goToPreQ:          () => setPhase('preQ'),
     goToOnboarding:    () => setPhase('onboarding'),
     goToTargetAnnounce:() => setPhase('target_announce'),

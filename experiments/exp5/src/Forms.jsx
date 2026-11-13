@@ -12,6 +12,7 @@ export function QuestionsForm({
   const [touchedSubmit, setTouchedSubmit] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [touched, setTouched] = useState({}); // track per-question interaction (sliders, etc.)
+  const [hoverBlocked, setHoverBlocked] = useState(false); // pointer over a not-ready Continue button
 
   // Prefill sensible defaults (esp. slider) without clobbering provided initial values
   useEffect(() => {
@@ -59,6 +60,11 @@ export function QuestionsForm({
     });
 
     for (const q of visibleQuestions) {
+      // Instruction boxes have no answer, so they can never block "Continue".
+      if (q.type === 'instruction') {
+        map[q.id] = true;
+        continue;
+      }
       const v = answers[q.id];
 
       // If requiredAll is true → everything is required.
@@ -143,8 +149,25 @@ export function QuestionsForm({
         // Instruction items: section header, no input or numbering
         if (q.type === 'instruction') {
           return (
-            <div key={q.id} style={{ margin: '1.5rem 0 0.25rem', padding: '0 8px' }}>
-              <p style={{ margin: 0, fontStyle: 'italic', color: '#aaa', fontSize: 13, lineHeight: 1.5 }}>
+            <div
+              key={q.id}
+              style={{
+                margin: '2rem 0 0.75rem',
+                padding: '12px 16px',
+                borderLeft: '4px solid rgba(99,102,241,0.6)',
+                background: 'rgba(99,102,241,0.08)',
+                borderRadius: 6,
+              }}
+            >
+              <p
+                style={{
+                  margin: 0,
+                  color: 'var(--text)',
+                  fontSize: 17,
+                  lineHeight: 1.7,
+                  whiteSpace: 'pre-line',
+                }}
+              >
                 {q.question}
               </p>
             </div>
@@ -292,11 +315,11 @@ export function QuestionsForm({
                             value={n}
                             checked={checked}
                             onChange={() => setAnswer(q.id, n)}
-                            style={{ accentColor: '#6366f1', width: 15, height: 15 }}
+                            style={{ accentColor: '#6366f1', width: 20, height: 20 }}
                           />
-                          <span style={{ fontSize: 14, fontWeight: checked ? 700 : 400 }}>{n}</span>
-                          {idx === 0 && <span style={{ fontSize: 10, color: '#888', textAlign: 'center', lineHeight: 1.2 }}>{leftAnchor}</span>}
-                          {idx === arr.length - 1 && <span style={{ fontSize: 10, color: '#888', textAlign: 'center', lineHeight: 1.2 }}>{rightAnchor}</span>}
+                          <span style={{ fontSize: 17, fontWeight: checked ? 700 : 500 }}>{n}</span>
+                          {idx === 0 && <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)', textAlign: 'center', lineHeight: 1.3 }}>{leftAnchor}</span>}
+                          {idx === arr.length - 1 && <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)', textAlign: 'center', lineHeight: 1.3 }}>{rightAnchor}</span>}
                         </label>
                       );
                     })}
@@ -426,11 +449,19 @@ export function QuestionsForm({
         className={`primary-btn ${allOk ? '' : 'looks-disabled'}`}
         disabled={submitting} /* allow click to show red; only disable while submitting */
         aria-disabled={submitting ? 'true' : 'false'}
+        onMouseEnter={() => setHoverBlocked(true)}
+        onMouseLeave={() => setHoverBlocked(false)}
+        onFocus={() => setHoverBlocked(true)}
+        onBlur={() => setHoverBlocked(false)}
       >
         {submitting ? 'Submitting…' : 'Continue'}
       </button>
       {!allOk && (
-        <div style={{ marginTop: 8, fontSize: 12, color: '#888', textAlign: 'center' }}>
+        <div
+          className={`required-hint${hoverBlocked ? ' flash' : ''}`}
+          role="status"
+          style={{ marginTop: 8, textAlign: 'center' }}
+        >
           All questions are required before continuing.
         </div>
       )}

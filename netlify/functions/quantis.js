@@ -14,9 +14,14 @@
 // Failure response (HTTP 503):
 //   { success: false, error: "quantis_unavailable", detail: "...", server_time }
 //
-// No fallback to another provider: if Quantis fails, the caller (your
-// fetchQRNGBits retry loop) sees a real failure and retries/surfaces it,
+// Default: no fallback to another provider. If Quantis fails, the caller
+// (your fetchQRNGBits retry loop) sees a real failure and retries/surfaces it,
 // rather than silently getting trial data from an unvalidated source.
+//
+// Opt-in fallback: GET ...?n=<bytes>&fallback=lfdr tries LFDR (lfdr.de) if
+// Quantis fails. The response's `source` is then "lfdr" (not "quantis"), so
+// the caller can see, and the data records, which provider produced the bits.
+// Only callers that pass fallback=lfdr are affected (Study 1c does not).
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -30,6 +35,7 @@ const CORS = {
 };
 
 const QUANTIS_TIMEOUT_MS = 3000;
+const LFDR_TIMEOUT_MS = 6000;
 
 exports.handler = async (event) => {
   if (event.httpMethod === 'OPTIONS') {
@@ -45,10 +51,21 @@ exports.handler = async (event) => {
   n = Math.max(1, Math.min(1024, n)); // same clamp as qrng-race
 
   try {
-    const { bytes, source } = await fromQuantis(
-      n,
-      QUANTIS_TIMEOUT_MS,
-    );
+    let result;
+    try {
+      result = await fromQuantis(n, QUANTIS_TIMEOUT_MS);
+    } catch (quantisErr) {
+      if (qs.fallback !== 'lfdr') throw quantisErr;
+      console.error('quantis failed, falling back to lfdr:', quantisErr);
+      try {
+        result = await fromLFDR(n, LFDR_TIMEOUT_MS);
+      } catch (lfdrErr) {
+        throw new Error(
+          `${quantisErr?.message || quantisErr}; ${lfdrErr?.message || lfdrErr}`,
+        );
+      }
+    }
+    const { bytes, source } = result;
     return ok({
       success: true,
       source,
@@ -109,6 +126,21 @@ function hexToBytes(hex) {
     out[i / 2] = b & 255;
   }
   return Array.from(out);
+}
+
+// ---------------- LFDR (lfdr.de), opt-in fallback ----------------
+
+async function fromLFDR(n, timeoutMs) {
+  const url = `https://lfdr.de/qrng_api/qrng?length=${n}&format=HEX`;
+  const res = await fetchWithTimeout(url, {}, timeoutMs);
+  if (!res.ok) throw new Error(`lfdr_http_${res.status}`);
+  const j = await res.json();
+  if (!j || typeof j.qrn !== 'string') throw new Error('lfdr_bad_shape');
+  const bytes = hexToBytes(j.qrn);
+  if (!Array.isArray(bytes)) throw new Error('lfdr_hex_parse');
+  if (bytes.length < n)
+    throw new Error(`lfdr_short_${bytes.length}_need_${n}`);
+  return { source: 'lfdr', bytes: bytes.slice(0, n) };
 }
 
 // ---------------- Quantis (qpsy.de) ----------------

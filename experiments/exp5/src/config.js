@@ -4,10 +4,10 @@ export const config = {
   QA_SECRET: 'WHAT_THE_QUARK_EXP_4',
   APP_VERSION: 'exp5.1',
 
-  // QRNG source: 'qrng-race' (Outshift/LFDR/ANU), 'random-org' (Random.org), or 'crypto-test' (crypto.getRandomValues for testing)
+  // QRNG source: 'quantis' (qpsy.de via netlify/functions/quantis.js), 'qrng-race' (Outshift/LFDR/ANU), 'random-org' (Random.org), or 'crypto-test' (crypto.getRandomValues for testing)
   // Set to 'random-org' for testing to avoid using paid Outshift quota
   // Set to 'crypto-test' when out of bits during development (will still test timing attack mitigations)
-  QRNG_SOURCE: 'qrng-race', // Switch to 'qrng-race' for production, 'random-org' for testing, or 'crypto-test' for local testing
+  QRNG_SOURCE: 'quantis', // 'quantis' (qpsy.de, Study 2 production, same as Study 1c), 'qrng-race', 'random-org' for testing, or 'crypto-test' for local testing
 };
 
 // Experiment constants grouped under experiments.pk
@@ -30,6 +30,8 @@ config.experiments = {
     MAX_SESSIONS_FOR_ANALYSIS: 20, // consent gate blocks further sessions beyond this usable count (hard cap)
     PARTICIPANT_COLLECTION: 'experiment5_participants',
     EMAIL_LOOKUP_COLLECTION: 'experiment5_email_lookup',
+    PROLIFIC_SESSION_COLLECTION: 'experiment5_prolific_sessions', // one doc per Prolific SESSION_ID; blocks reuse of a link
+    PAYMENT_CODE_COLLECTION: 'experiment5_payment_codes', // one doc per personal payment code; binds it to one participant
 
     // Audit configuration (NIST SP 800-22 Randomness Testing)
     AUDIT_EVERY_N_BLOCKS: 10, // Run audit break every N blocks

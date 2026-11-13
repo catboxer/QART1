@@ -58,3 +58,6 @@ qrng-validation-*.json
 experiments/exp6-pilot-1st-order-nonMarkov/notebooks/
 backup.json
 *adminsdk*.json
+
+# Private lists of personal payment codes (who may be paid) -- never commit
+payment-codes*.csv

@@ -136,6 +136,11 @@ button:active {
   .primary-btn:hover {
     background: var(--primary-hover);
   }
+  /* A not-ready button must stay gray on hover too */
+  .primary-btn.looks-disabled:hover,
+  .primary-btn:disabled:hover {
+    background: #ccc;
+  }
 }
 
 .secondary-btn {
@@ -517,4 +522,24 @@ textarea[aria-invalid='true'] {
     padding: 0.8rem 1.2rem;
     margin: 1rem auto 0.75rem;
   }
+}
+/* "All questions are required" hint under a not-ready Continue button:
+   small and quiet normally, larger and flashing while the pointer is on the button. */
+.required-hint {
+  font-size: 12px;
+  color: #888;
+  transition: font-size 150ms ease, color 150ms ease;
+}
+.required-hint.flash {
+  font-size: 20px;
+  font-weight: 700;
+  color: #d33;
+  animation: required-hint-flash 0.7s ease-in-out 2;
+}
+@keyframes required-hint-flash {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .required-hint.flash { animation: none; }
 }

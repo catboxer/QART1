@@ -6,9 +6,9 @@ import React from 'react';
  * Shown at the end of every session. Accrued-balance model: payment is not
  * issued per session -- it's tracked as a running total and only actually
  * paid out when a trigger condition is reached (session 5 complete,
- * participant asks to finish early, 14 days inactive, study closes/
- * withdrawal). Requesting payment early does not end participation --
- * additional sessions completed later accrue toward a second payment.
+ * participant asks to finish early, or two weeks after the study closes).
+ * Requesting payment early ends participation (per the Study 2 consent
+ * text); that rule is NOT enforced in code yet.
  * This screen is pure UI: `onFinishAndRequestPayment` and `onReturnLater`
  * are the only hooks into whatever payout logic exists.
  */
@@ -18,9 +18,35 @@ export default function PaymentCompletionPage({
   amountPerSession = 5,
   onReturnLater,
   onFinishAndRequestPayment,
+  isProlific = false,
 }) {
   const amountEarned = sessionsCompleted * amountPerSession;
   const isLastSession = sessionsCompleted >= totalSessions;
+
+  // Prolific-recruited participants are paid by Prolific after each session,
+  // so there is no balance, payout request, or early-exit choice to show.
+  if (isProlific) {
+    return (
+      <div className="App" style={{ textAlign: 'center', maxWidth: 560 }}>
+        <h1 style={{ marginTop: 0 }}>Session completed</h1>
+        <div className="question-block">
+          <div style={{ fontSize: 17 }}>
+            Sessions completed: {sessionsCompleted} of {totalSessions}
+          </div>
+        </div>
+        <p style={{ fontSize: 15, lineHeight: 1.6 }}>
+          Thank you. Payment for this session is handled through Prolific.
+        </p>
+        <button
+          type="button"
+          className="primary-btn"
+          onClick={() => onReturnLater?.()}
+        >
+          Continue
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="App" style={{ textAlign: 'center', maxWidth: 560 }}>
@@ -40,9 +66,11 @@ export default function PaymentCompletionPage({
 
       <p style={{ fontSize: 15, lineHeight: 1.6 }}>
         Payment will be issued after you complete all {totalSessions}{' '}
-        sessions, request an earlier payout, or have been inactive for 14
-        days. You will not lose
-        compensation earned for completed sessions. Eligible payments will
+        sessions, request an earlier payout, or two weeks after the study
+        has closed. If you request payment before completing all{' '}
+        {totalSessions} sessions, your participation will end and you will
+        not be able to complete additional sessions. You will
+        receive €5 for each session you have already completed. Eligible payments will
         normally be processed within 7–14 days.
       </p>
 
@@ -65,28 +93,28 @@ export default function PaymentCompletionPage({
           marginTop: '1rem',
         }}
       >
-        {!isLastSession && (
-          <button
-            type="button"
-            className="secondary-btn"
-            onClick={() => onReturnLater?.()}
-          >
-            Continue later
-          </button>
-        )}
         <button
           type="button"
-          className="primary-btn"
+          className={isLastSession ? 'primary-btn' : 'secondary-btn'}
           onClick={() => onFinishAndRequestPayment?.()}
         >
           Request payment now
         </button>
+        {!isLastSession && (
+          <button
+            type="button"
+            className="primary-btn"
+            onClick={() => onReturnLater?.()}
+          >
+            Continue
+          </button>
+        )}
       </div>
 
       {!isLastSession && (
         <p style={{ fontSize: 13, color: 'var(--muted)', marginTop: 8 }}>
-          You may still complete additional sessions later. Any additional
-          compensation earned will be paid separately.
+          If you choose "Continue" you can complete additional sessions.
+          Choosing "Request payment now" ends your participation.
         </p>
       )}
     </div>

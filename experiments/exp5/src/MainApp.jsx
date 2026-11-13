@@ -1,6 +1,6 @@
 // src/MainApp.jsx
 import './App.css';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { pkConfig as C } from './config.js';
 import { db } from './firebase.js';
 import {
@@ -15,8 +15,13 @@ import { QuestionsForm } from './Forms.jsx';
 import ConsentInfoPage, {
   FRIENDLY_TITLE,
 } from './ui/ConsentInfoPage.jsx';
-import ParticipantCodeScreen from './ui/ParticipantCodeScreen.jsx';
-import { generateParticipantCode } from './lib/participantCode.js';
+import { getRecruitment } from './lib/recruitment.js';
+import { claimPaymentCode } from './lib/paymentCodeClaim.js';
+import { recordPaymentRequest } from './lib/paymentRequest.js';
+import {
+  claimProlificSession,
+  markProlificSessionCompleted,
+} from './lib/prolificSessionClaim.js';
 import PaymentCompletionPage from './ui/PaymentCompletionPage.jsx';
 import { usePhaseRouter } from './hooks/usePhaseRouter.js';
 import { useParticipantProfile } from './hooks/useParticipantProfile.js';
@@ -72,10 +77,10 @@ export default function MainApp() {
   const {
     loading: profileLoading,
     uid,
-    setPreDone,
     participantHash,
     participantProfile,
     emailPlaintext,
+    prolificId,
     sessionCount,
     setSessionCount,
     usableSessionCount,
@@ -94,11 +99,6 @@ export default function MainApp() {
 
   // ---- consent: email-contact permission (set in ConsentInfoPage.onAgree)
   const emailOptInRef = useRef(false);
-  // ---- participant code: generated once after consent, shown on the
-  // participant_code phase; skipPreQAfterCodeRef holds where to go next
-  // (set by consent's onAgree, read once the code is confirmed)
-  const [participantCode, setParticipantCode] = useState(null);
-  const skipPreQAfterCodeRef = useRef(false);
 
   // ---- target assignment
   const [target, setTarget] = useState(null);
@@ -158,7 +158,6 @@ export default function MainApp() {
   // ---- phase & per-minute state
   const {
     phase,
-    goToParticipantCode,
     goToPreQ,
     goToOnboarding,
     goToTargetAnnounce,
@@ -178,6 +177,20 @@ export default function MainApp() {
   } = usePhaseRouter();
   const [declinedParticipation, setDeclinedParticipation] =
     useState(false);
+  // null | 'already_used' | 'missing_session_id' | 'error' -- set when a Prolific link can't start a session
+  const [prolificBlock, setProlificBlock] = useState(null);
+  // Read once from the URL at startup (stable object, safe in effect deps).
+  const recruitment = useMemo(() => getRecruitment(), []);
+  // Mark the Prolific session as completed when the payment screen is reached,
+  // so the same link cannot be resumed afterwards.
+  useEffect(() => {
+    if (phase !== 'payment') return;
+    const rec = getRecruitment();
+    if (rec.source !== 'prolific') return;
+    markProlificSessionCompleted(db, C.PROLIFIC_SESSION_COLLECTION, rec).catch(
+      (err) => console.error('Prolific completion mark failed:', err),
+    );
+  }, [phase]); // eslint-disable-line react-hooks/exhaustive-deps
   const [blockIdx, setblockIdx] = useState(-1);
   const [isRunning, setIsRunning] = useState(false);
   const [lastBlock, setLastBlock] = useState(null);
@@ -230,7 +243,9 @@ export default function MainApp() {
     pastDemonTrials,
     participantProfile,
     emailPlaintext,
+    prolificId,
     emailOptInRef,
+    recruitment,
     onHistoryUpdated: setCumulativeHistory,
   });
 
@@ -424,6 +439,25 @@ export default function MainApp() {
       return null;
     }
 
+    if (prolificBlock) {
+      return (
+        <div className="App" style={{ textAlign: 'center', padding: 24 }}>
+          <h1>This link cannot be used</h1>
+          <p>
+            {prolificBlock === 'invalid_code'
+              ? 'This study link is not valid. Please use the exact link you were sent, or contact a.campbell@lmu.de.'
+              : prolificBlock === 'code_used'
+                ? 'This study link has already been used by another participant. Please contact a.campbell@lmu.de.'
+                : prolificBlock === 'already_used'
+              ? 'This Prolific link has already been used for a session. Please return to Prolific and start a new session from there.'
+              : prolificBlock === 'missing_session_id'
+                ? 'This link is incomplete. Please return to Prolific and open the study from there.'
+                : 'Something went wrong while checking your link. Please reload the page or return to Prolific and try again.'}
+          </p>
+        </div>
+      );
+    }
+
     if (declinedParticipation) {
       return (
         <div
@@ -442,45 +476,85 @@ export default function MainApp() {
     return (
       <div style={{ position: 'relative' }}>
         <ConsentInfoPage
+          recruitment={getRecruitment()}
           onDecline={() => setDeclinedParticipation(true)}
           onAgree={async ({
             email,
+            prolificId: consentProlificId,
             resultsContact,
             futureContact,
           } = {}) => {
+            // Prolific: one SESSION_ID may start one session. Fail closed.
+            const rec = getRecruitment();
+            if (rec.source === 'prolific') {
+              try {
+                const claim = await claimProlificSession(
+                  db,
+                  C.PROLIFIC_SESSION_COLLECTION,
+                  await requireUid(),
+                  rec,
+                );
+                if (!claim.ok) {
+                  setProlificBlock(claim.reason);
+                  return;
+                }
+              } catch (err) {
+                console.error('Prolific session claim failed:', err);
+                setProlificBlock('error');
+                return;
+              }
+            }
             // Reset completion state so it's recomputed fresh for this session
             resetCompletionFlag();
             // Existing results-contact permission field; future-study contact
             // (futureContact) isn't persisted anywhere yet -- UI-only for now.
-            emailOptInRef.current = resultsContact;
-            const { skipPreQ, usableCount } =
-              await loadParticipant(email);
+            // Without an email there is nothing to contact, so it is always false.
+            emailOptInRef.current = email ? resultsContact : false;
+            let { skipPreQ, usableCount, participantHash: loadedHash } =
+              await loadParticipant(email, consentProlificId);
+            // Personal payment code in the link: must be genuine, and usable by
+            // one participant only. Fail closed. (No code at all is allowed;
+            // such participants simply can't be paid.)
+            if (rec.source === 'direct' && rec.tremendousToken && loadedHash) {
+              try {
+                const codeClaim = await claimPaymentCode(
+                  db,
+                  C.PAYMENT_CODE_COLLECTION,
+                  rec.tremendousToken,
+                  loadedHash,
+                );
+                if (!codeClaim.ok) {
+                  setProlificBlock(codeClaim.reason);
+                  return;
+                }
+              } catch (err) {
+                console.error('Payment code check failed:', err);
+                setProlificBlock('error');
+                return;
+              }
+            }
+            // Prolific WAVE=n in the link is authoritative for the session number:
+            // this is session n, so n-1 are already done, and the pre-questionnaire
+            // is shown only on wave 1. A mismatch with the stored count is logged.
+            if (rec.source === 'prolific' && rec.wave) {
+              const dbCount = usableCount;
+              if (rec.wave - 1 !== dbCount) {
+                console.warn(
+                  `WAVE=${rec.wave} differs from stored session count ${dbCount}; using WAVE.`,
+                );
+              }
+              setSessionCount(rec.wave - 1);
+              usableCount = rec.wave - 1;
+              skipPreQ = rec.wave > 1;
+            }
             if (usableCount >= C.MAX_SESSIONS_FOR_ANALYSIS) {
               goToMaxSessions();
               return;
             }
-            skipPreQAfterCodeRef.current = skipPreQ;
-            setParticipantCode(generateParticipantCode());
-            goToParticipantCode();
-          }}
-        />
-      </div>
-    );
-  }
-
-  // PARTICIPANT CODE - shown once, right after consent, before the pre-questionnaire
-  if (phase === 'participant_code') {
-    if (isAutoMode || isAIMode) {
-      goToOnboarding();
-      return null;
-    }
-
-    return (
-      <div style={{ position: 'relative' }}>
-        <ParticipantCodeScreen
-          code={participantCode}
-          onConfirmed={() => {
-            skipPreQAfterCodeRef.current ? goToOnboarding() : goToPreQ();
+            // Straight on after consent: skip the pre-questionnaire only if this
+            // participant has already submitted it (or WAVE > 1 for Prolific).
+            if (skipPreQ) goToOnboarding();
+            else goToPreQ();
           }}
         />
       </div>
@@ -532,16 +606,30 @@ export default function MainApp() {
               const ref = doc(db, 'participants', uidNow);
               const snap = await getDoc(ref);
               const demographics = { ...answers };
+              // Mark the questionnaire as submitted on THIS participant's profile
+              // (the flag the next visit reads to skip it).
+              if (participantHash) {
+                await setDoc(
+                  doc(db, C.PARTICIPANT_COLLECTION, participantHash),
+                  {
+                    pre_q_completed: true,
+                    pre_q_completed_at: serverTimestamp(),
+                  },
+                  { merge: true },
+                );
+              }
 
               if (snap.exists()) {
                 await updateDoc(ref, {
                   demographics,
+                  participant_hash: participantHash || null,
                   demographics_version: 'v1',
                   updated_at: serverTimestamp(),
                 });
               } else {
                 await setDoc(ref, {
                   demographics,
+                  participant_hash: participantHash || null,
                   demographics_version: 'v1',
                   created_at: serverTimestamp(),
                   updated_at: serverTimestamp(),
@@ -549,17 +637,6 @@ export default function MainApp() {
                 });
               }
 
-              if (typeof localStorage !== 'undefined') {
-                localStorage.setItem(
-                  `pre_done:${C.EXPERIMENT_ID}:${uidNow}`,
-                  '1',
-                );
-                localStorage.setItem(
-                  `pre_done_global:${C.EXPERIMENT_ID}`,
-                  '1',
-                );
-              }
-              setPreDone(true);
             } catch (e) {
               console.warn(
                 'Pre survey save error (non-blocking):',
@@ -1251,8 +1328,18 @@ export default function MainApp() {
           sessionsCompleted={sessionCount}
           totalSessions={C.TARGET_SESSIONS}
           amountPerSession={5}
+          isProlific={getRecruitment().source === 'prolific'}
           onReturnLater={() => goToSummary()}
-          onFinishAndRequestPayment={() => goToSummary()}
+          onFinishAndRequestPayment={async () => {
+            await recordPaymentRequest({
+              db,
+              profileCollection: C.PARTICIPANT_COLLECTION,
+              participantHash,
+              tremendousCode: recruitment.tremendousToken,
+              sessionsCompleted: sessionCount,
+            });
+            goToSummary();
+          }}
         />
       </div>
     );
@@ -1531,8 +1618,9 @@ export default function MainApp() {
 
           <h4>Questions or Concerns</h4>
           <p>
-            If you have any questions about this research, please
-            contact the research team at{' '}
+            If you have any questions about this research, or would
+            like to request a full debrief once the study closes,
+            please contact the research team at{' '}
             <a href="mailto:a.campbell@lmu.de">a.campbell@lmu.de</a>
           </p>
         </div>
@@ -1548,19 +1636,11 @@ export default function MainApp() {
           <ul style={{ textAlign: 'left', marginTop: 0 }}>
             {sessionsRemain && (
               <li>
-                To be included in the study, please complete at least{' '}
-                {C.TARGET_SESSIONS} sessions (up to{' '}
-                {C.MAX_SESSIONS_FOR_ANALYSIS} total). You can spread
-                these out however you like until the study closes.
-              </li>
-            )}
-            {sessionsRemain && (
-              <li>
-                We're especially interested in hearing from people who
-                are neurodivergent or who have had psi-related
-                experiences. If you know someone who fits that
-                description, please pass this study along to them —
-                their data is particularly valuable to this research.
+                Please complete all {C.TARGET_SESSIONS} sessions. You
+                can spread them out however you like until the study
+                closes. You will be paid for every session you
+                complete, even if you do not finish all{' '}
+                {C.TARGET_SESSIONS}.
               </li>
             )}
             <li>
@@ -1581,22 +1661,7 @@ export default function MainApp() {
               participants, we're holding back full details until data
               collection is complete.
             </li>
-            <li>
-              Email{' '}
-              <a href="mailto:a.campbell@lmu.de?subject=Debrief%20Request">
-                a.campbell@lmu.de
-              </a>{' '}
-              to request a full debrief once the study closes.
-            </li>
           </ul>
-
-          <button
-            onClick={() => window.location.reload()}
-            className="primary-btn"
-            style={{ marginTop: '1em' }}
-          >
-            Retake
-          </button>
         </div>
       </div>
     );

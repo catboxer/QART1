@@ -1,14 +1,15 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
-  collection, doc, getDoc, getDocs,
+  collection, doc, getDoc, getDocs, setDoc, serverTimestamp,
   query, where, orderBy, limit,
 } from 'firebase/firestore';
 import { ensureSignedIn } from '../firebase.js';
 import { buildParticipantHistory } from '../lib/sessionHistory.js';
 
-// ── email → truncated SHA-256 hex ────────────────────────────────────────────
-async function hashEmail(email) {
-  const encoded = new TextEncoder().encode(email.toLowerCase().trim());
+// ── identifier → truncated SHA-256 hex ───────────────────────────────────────
+// Emails hash as-is; Prolific IDs get a prefix so the two can never collide.
+async function hashIdentifier(value) {
+  const encoded = new TextEncoder().encode(value.toLowerCase().trim());
   const buf = await crypto.subtle.digest('SHA-256', encoded);
   return Array.from(new Uint8Array(buf))
     .map((b) => b.toString(16).padStart(2, '0'))
@@ -31,21 +32,11 @@ export function useParticipantProfile({ db, C }) {
   const [checkedReturning, setCheckedReturning] = useState(false);
   const [uid, setUid] = useState(null);
 
-  // localStorage-backed flag: skip preQ if they've already done it this device
-  const [preDone, setPreDone] = useState(() => {
-    try {
-      return (
-        localStorage.getItem(`pre_done_global:${C.EXPERIMENT_ID}`) === '1'
-      );
-    } catch {
-      return false;
-    }
-  });
-
   // Multi-session accumulation (populated by loadParticipant)
   const [participantHash, setParticipantHash] = useState(null);
   const [participantProfile, setParticipantProfile] = useState(null);
   const [emailPlaintext, setEmailPlaintext] = useState('');
+  const [prolificId, setProlificId] = useState('');
   const [sessionCount, setSessionCount] = useState(0);
   const [usableSessionCount, setUsableSessionCount] = useState(0);
   const [pastH_s, setPastH_s] = useState([]);
@@ -62,11 +53,6 @@ export function useParticipantProfile({ db, C }) {
       try {
         const u = await ensureSignedIn();
         setUid(u?.uid || null);
-        // Fast local skip for preQ if they've done it on this device
-        try {
-          const globalKey = `pre_done_global:${C.EXPERIMENT_ID}`;
-          if (localStorage.getItem(globalKey) === '1') setPreDone(true);
-        } catch {}
       } finally {
         setUserReady(true);
         setCheckedReturning(true);
@@ -140,55 +126,63 @@ export function useParticipantProfile({ db, C }) {
   // ── loadParticipant — called from ConsentGate.onAgree ───────────────────────
   // Returns { skipPreQ, usableCount } so the caller can navigate (and gate on max sessions).
   const loadParticipant = useCallback(
-    async (email) => {
+    async (email, prolificIdInput) => {
       let profile = null;
       let usableCount = 0;
-      if (email) {
-        setEmailPlaintext(email);
+      let resolvedHash = null;
+      const emailClean = (email || '').trim();
+      const prolificClean = (prolificIdInput || '').trim();
+      if (emailClean || prolificClean) {
+        setEmailPlaintext(emailClean);
+        setProlificId(prolificClean);
         try {
-          const hash = await hashEmail(email);
+          // Candidate keys, in lookup order. The participant's canonical key is
+          // the first candidate that already has a profile (following an
+          // `alias_of` pointer if that candidate is only an alias); if none
+          // exists yet, it is the first candidate (email wins over Prolific ID).
+          const candidates = [];
+          if (emailClean) candidates.push(await hashIdentifier(emailClean));
+          if (prolificClean)
+            candidates.push(await hashIdentifier(`prolific:${prolificClean}`));
+
+          let hash = candidates[0];
+          let foundDoc = null;
+          const existsByCandidate = {};
+          for (const cand of candidates) {
+            const snap = await getDoc(doc(db, C.PARTICIPANT_COLLECTION, cand));
+            existsByCandidate[cand] = snap.exists();
+            if (snap.exists() && !foundDoc) {
+              const data = snap.data();
+              hash = data.alias_of || cand;
+              foundDoc = data.alias_of
+                ? (await getDoc(doc(db, C.PARTICIPANT_COLLECTION, hash)))
+                : snap;
+            }
+          }
           setParticipantHash(hash);
-          const profRef = doc(db, C.PARTICIPANT_COLLECTION, hash);
-          const profSnap = await getDoc(profRef);
-          profile = profSnap.exists() ? profSnap.data() : null;
+          resolvedHash = hash;
+          profile = foundDoc && foundDoc.exists() ? foundDoc.data() : null;
+
+          // Link any other identifier the participant supplied to the same
+          // profile, so a later visit with only that identifier finds it.
+          for (const cand of candidates) {
+            if (cand !== hash && !existsByCandidate[cand]) {
+              setDoc(
+                doc(db, C.PARTICIPANT_COLLECTION, cand),
+                { alias_of: hash, created_at: serverTimestamp() },
+                { merge: true },
+              ).catch((err) => console.error('Alias save failed:', err));
+            }
+          }
           setParticipantProfile(profile);
 
-          // Query past sessions for cumulative reconstruction
-          try {
-            const sessionsQ = query(
-              collection(db, C.PRESCREEN_COLLECTION),
-              where('participant_hash', '==', hash),
-              where('completed', '==', true),
-              orderBy('createdAt', 'asc'),
-              limit(50),
-            );
-            const snap = await getDocs(sessionsQ);
-            const {
-              sessionCount: sc,
-              usableSessionCount: usc,
-              pastH_s: h_s,
-              pastH_d: h_d,
-              pastBits: bits,
-              pastDemonBits: dBits,
-              pastSubjectHits: sHits,
-              pastDemonHits: dHits,
-              pastDemonTrials: dTrials,
-            } = buildParticipantHistory(snap.docs, C);
-            setPastH_s(h_s);
-            setPastH_d(h_d);
-            setPastBits(bits);
-            setPastDemonBits(dBits);
-            setPastSubjectHits(sHits);
-            setPastDemonHits(dHits);
-            setPastDemonTrials(dTrials);
-            usableCount = usc;
-            setSessionCount(sc);           // all human sessions — display + profile write
-            setUsableSessionCount(usc);    // sessions with full data — analysis gate
-          } catch (err) {
-            console.error('Session history query failed (non-blocking):', err);
-            // Fall back to stored profile counter for display; usable stays 0
-            setSessionCount(profile?.session_count ?? 0);
-          }
+          // Session number comes from the counter on the participant profile
+          // (incremented once per completed session), not from listing past
+          // sessions -- the session collection is not publicly listable.
+          const sc = profile?.session_count ?? 0;
+          usableCount = sc;
+          setSessionCount(sc);
+          setUsableSessionCount(sc);
         } catch (err) {
           console.error('Profile load error (non-blocking):', err);
         }
@@ -206,26 +200,22 @@ export function useParticipantProfile({ db, C }) {
         }
       }
 
-      // Determine preQ skip: profile flag OR device localStorage flag
-      let localPreDone = false;
-      try {
-        localPreDone =
-          localStorage.getItem(`pre_done_global:${C.EXPERIMENT_ID}`) === '1';
-      } catch {}
-      const skipPreQ = profile?.pre_q_completed || preDone || localPreDone;
-      return { skipPreQ, usableCount };
+      // preQ is skipped only if THIS participant's profile says it was
+      // submitted (not a device-wide flag, which would leak across people
+      // sharing a browser). A Prolific wave number overrides this.
+      const skipPreQ = !!profile?.pre_q_completed;
+      return { skipPreQ, usableCount, participantHash: resolvedHash, profileSessionCount: profile?.session_count ?? 0 };
     },
-    [db, C, uid, preDone],
+    [db, C, uid],
   );
 
   return {
     loading: !userReady || !checkedReturning,
     uid,
-    preDone,
-    setPreDone,       // for preQ completion handler
     participantHash,
     participantProfile,
     emailPlaintext,
+    prolificId,
     sessionCount,        // all completed human sessions — display + profile write
     setSessionCount,     // for postQ session-count increment
     usableSessionCount,  // sessions with full reconstructable data — analysis gate

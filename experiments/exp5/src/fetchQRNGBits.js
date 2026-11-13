@@ -129,7 +129,12 @@ export async function fetchQRNGBits(nBits, retries = 3, validateGhost = false) {
     };
   }
 
-  const endpoint = source === 'random-org' ? 'random-org-proxy' : 'qrng-race';
+  const endpoint =
+    source === 'random-org'
+      ? 'random-org-proxy'
+      : source === 'quantis'
+        ? 'quantis'
+        : 'qrng-race';
 
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
@@ -143,7 +148,12 @@ export async function fetchQRNGBits(nBits, retries = 3, validateGhost = false) {
       while (remaining > 0) {
         const chunk = Math.min(MAX_CHUNK, remaining);
 
-        const skipParam = outshiftDailyLimited ? '&skipOutshift=1' : '';
+        const skipParam =
+          endpoint === 'quantis'
+            ? '&fallback=lfdr' // Quantis down -> LFDR; source is recorded per block
+            : outshiftDailyLimited
+              ? '&skipOutshift=1'
+              : '';
         const response = await fetch(`/.netlify/functions/${endpoint}?n=${chunk}${skipParam}`);
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);

@@ -1,19 +1,23 @@
 import React, { useId, useState } from 'react';
+import { pkConfig as C } from '../config.js';
 
-export const CONSENT_VERSION = 'STUDY_2_CONSENT_V1_2026-09-12';
+// Base version; the displayed/stored version carries a suffix for the form
+// variant shown (Prolific-recruited vs. directly recruited participants).
+export const CONSENT_VERSION = 'STUDY_2_CONSENT_V1_2026-11-11';
 
 const PI_NAME = 'Prof. Dr. Markus A. Maier';
+const PI_EMAIL = 'markus.maier@psy.lmu.de';
 const RESEARCHER_NAME = 'Andrea Campbell';
 export const CONTACT_EMAIL = 'a.campbell@lmu.de';
-const DATA_PROTECTION_CONTACT =
-  '[DATA PROTECTION CONTACT — TO BE ADDED]';
+const DATA_PROTECTION_NAME = 'Prof. Dr. Nicolae Nistor';
+const DATA_PROTECTION_EMAIL = 'datenschutz.psychologie@psy.lmu.de';
 const ETHICS_REFERENCE = 'Pending assignment';
 const FIRST_SESSION_MINUTES = 25;
 const LATER_SESSION_MINUTES = 5;
 const RETENTION_DEADLINE = 'December 30, 2028';
 export const FRIENDLY_TITLE = 'Study 2 – Mind & Temporal Structure';
 export const FORMAL_TITLE =
-  'Replication of a Paired-Delta Temporal-Structure Signature in a Quantum Random Number Generator Observer Task';
+  'Paired-Delta Protocol: Study 2 - A Preregistered Replication and Extension of the Pilot Study';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -54,26 +58,6 @@ function RequiredTag() {
       }}
     >
       REQUIRED
-    </span>
-  );
-}
-
-function OptionalTag() {
-  return (
-    <span
-      style={{
-        color: 'var(--muted)',
-        fontWeight: 600,
-        fontSize: 12,
-        letterSpacing: '0.04em',
-        marginLeft: 8,
-        verticalAlign: 'middle',
-        border: '1px solid var(--border)',
-        borderRadius: 6,
-        padding: '1px 6px',
-      }}
-    >
-      OPTIONAL
     </span>
   );
 }
@@ -174,18 +158,31 @@ function YesNoQuestion({ legend, name, value, onChange }) {
  * onAgree(payload) is called only once every required item is satisfied:
  *   {
  *     consentVersion: string,
- *     eligibilityConfirmed: true, // 18+ and has had a relevant experience
- *     consents: { participation, dataProcessing, withdrawalAck, anonymizedUse, emailUse, multiSession } // all true
+ *     eligibilityConfirmed: true, // 18+ and understands the English-language study information (separate voluntary-consent checkbox -> consents.participation)
+ *     consents: { participation, dataProcessing, withdrawalAck, anonymizedUse, emailUse, multiSession, dataHandling } // all true
  *     resultsContact: boolean,
  *     futureContact: boolean,
- *     email: string,           // always required, non-empty
+ *     recruitmentSource: 'prolific'|'direct',
+ *     email: string|null,      // direct: required; prolific: null
+ *     prolificId: string|null, // prolific: from URL; direct: null
  *   }
  *
  * onDecline() is called when the participant chooses not to participate.
  * No record of any kind should be created by the caller in that case.
  */
-export default function ConsentInfoPage({ onAgree, onDecline }) {
+export default function ConsentInfoPage({
+  onAgree,
+  onDecline,
+  recruitment,
+}) {
   const idBase = useId();
+  // Prolific-recruited participants arrive with ?PROLIFIC_PID=... in the URL
+  // (see lib/recruitment.js); everyone else sees the direct-recruitment form
+  // (email required, paid via Tremendous). Only the consent page differs.
+  const isProlific =
+    recruitment?.source === 'prolific' && !!recruitment?.prolificId;
+  const prolificId = isProlific ? recruitment.prolificId : '';
+  const consentVersion = `${CONSENT_VERSION}_${isProlific ? 'PROLIFIC' : 'DIRECT'}`;
 
   const [ageConfirmed, setAgeConfirmed] = useState(false);
   const [participationConsent, setParticipationConsent] =
@@ -197,18 +194,21 @@ export default function ConsentInfoPage({ onAgree, onDecline }) {
     useState(false);
   const [emailUseAck, setEmailUseAck] = useState(false);
   const [multiSessionAck, setMultiSessionAck] = useState(false);
+  const [dataHandlingAck, setDataHandlingAck] = useState(false);
 
   const [resultsContact, setResultsContact] = useState(null); // null | true | false
   const [futureContact, setFutureContact] = useState(null); // null | true | false
   const [email, setEmail] = useState('');
   const [submitAttempted, setSubmitAttempted] = useState(false);
 
-  // Email is always collected -- it's used for payment and to help recover
-  // a lost participant code, independent of whether the participant wants
-  // to be contacted about results or future studies (those stay optional).
-  const emailValid = EMAIL_RE.test(email.trim());
+  // Direct participants must give a valid email (used for payment).
+  // Prolific participants are identified by the Prolific ID from the URL and
+  // are not asked for an email, so the two email-contact questions apply
+  // (and are required) only to direct participants.
+  const hasEmail = !isProlific && email.trim() !== '';
+  const emailValid = isProlific || EMAIL_RE.test(email.trim());
   const contactAnswered =
-    resultsContact !== null && futureContact !== null;
+    isProlific || (resultsContact !== null && futureContact !== null);
 
   const ready =
     ageConfirmed &&
@@ -218,6 +218,7 @@ export default function ConsentInfoPage({ onAgree, onDecline }) {
     anonymizedUseConsent &&
     emailUseAck &&
     multiSessionAck &&
+    dataHandlingAck &&
     contactAnswered &&
     emailValid;
 
@@ -229,7 +230,8 @@ export default function ConsentInfoPage({ onAgree, onDecline }) {
     setSubmitAttempted(true);
     if (!ready) return;
     onAgree?.({
-      consentVersion: CONSENT_VERSION,
+      consentVersion,
+      recruitmentSource: isProlific ? 'prolific' : 'direct',
       eligibilityConfirmed: true,
       consents: {
         participation: true,
@@ -238,10 +240,12 @@ export default function ConsentInfoPage({ onAgree, onDecline }) {
         anonymizedUse: true,
         emailUse: true,
         multiSession: true,
+        dataHandling: true,
       },
-      resultsContact: !!resultsContact,
-      futureContact: !!futureContact,
-      email: email.trim(),
+      resultsContact: hasEmail && !!resultsContact,
+      futureContact: hasEmail && !!futureContact,
+      email: hasEmail ? email.trim() : null,
+      prolificId: isProlific ? prolificId : null,
     });
   };
 
@@ -270,17 +274,25 @@ export default function ConsentInfoPage({ onAgree, onDecline }) {
         <p style={{ margin: '0.25rem 0' }}>
           <strong>Principal Investigator:</strong> {PI_NAME},
           Ludwig-Maximilians-Universität München
+          <br />
+          <strong>Contact:</strong>{' '}
+          <a href={`mailto:${PI_EMAIL}`}>{PI_EMAIL}</a>
         </p>
         <p style={{ margin: '0.25rem 0' }}>
           <strong>Researcher:</strong> {RESEARCHER_NAME}
-        </p>
-        <p style={{ margin: '0.25rem 0' }}>
+          <br />
           <strong>Contact:</strong>{' '}
           <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>
         </p>
         <p style={{ margin: '0.25rem 0' }}>
           <strong>Data-protection contact:</strong>{' '}
-          {DATA_PROTECTION_CONTACT}
+          {DATA_PROTECTION_NAME}, Ludwig-Maximilians-Universität
+          München
+          <br />
+          <strong>Contact:</strong>{' '}
+          <a href={`mailto:${DATA_PROTECTION_EMAIL}`}>
+            {DATA_PROTECTION_EMAIL}
+          </a>
         </p>
         <p style={{ margin: '0.25rem 0' }}>
           <strong>Ethics committee reference:</strong>{' '}
@@ -291,12 +303,19 @@ export default function ConsentInfoPage({ onAgree, onDecline }) {
       {/* 2. Purpose of the study */}
       <Section title="Purpose of the study">
         <p>
-          You are invited to participate in a research study examining
-          whether statistical characteristics of quantum
-          random-number-generator output differ under specified
-          observer-task conditions. The study also examines whether
-          individual characteristics, experiences, and task strategies
-          are associated with the recorded outcomes.
+          This study asks whether the pattern of random numbers
+          differs when a person focuses their intention on a target,
+          compared with when no person is involved. We also ask
+          whether people's experiences, personal traits and task
+          strategies, measured by the questionnaires, are related to
+          the results.
+        </p>
+        <p>
+          The random numbers come from a quantum random number
+          generator. This device produces numbers from the random
+          behaviour of particles of light (photons). Nobody, including
+          the researchers, can predict this behaviour in advance, so
+          the numbers work like a perfectly fair coin flip.
         </p>
         <p>
           This is experimental research. The study is not a test of
@@ -310,49 +329,46 @@ export default function ConsentInfoPage({ onAgree, onDecline }) {
         <p>Participation consists of up to five online sessions.</p>
         <p>
           The first session includes study questionnaires followed by
-          the quantum random-number-generator task. The first session
+          the color intent task. The first session
           is expected to take approximately {FIRST_SESSION_MINUTES}{' '}
           minutes.
         </p>
         <p>
           Sessions 2 through 5 contain a shorter set of questions and
-          the quantum random-number-generator task. Each later session
+          the color intent task. Each later session
           is expected to take less than {LATER_SESSION_MINUTES}{' '}
           minutes.
         </p>
         <p>
-          During the task, you will be asked to focus on a displayed
-          target and initiate a series of quantum
-          random-number-generator calls. You will receive experimental
-          feedback based on one part of the generated output.
+          During the task, you will focus on an assigned target color
+          and mentally intend for the target color result to exceed
+          50%. There is no required mental strategy. Each session
+          consists of {C.BLOCKS_TOTAL} blocks, and you will receive
+          experimental feedback after each block.
         </p>
         <p>
-          You may complete fewer than five sessions. Completing all
-          five sessions is not required to retain payment for sessions
-          you have already completed.
+          We ask you to complete all five sessions, as the study
+          depends on it. Taking part is still voluntary: you may stop
+          at any time, and completing all five sessions is not
+          required to retain payment for sessions you have already
+          completed.
         </p>
       </Section>
 
       {/* 4. Questionnaires */}
       <Section title="Questionnaires">
         <p>
-          The first session asks questions about demographic
-          characteristics, meditation experience, beliefs and
-          experiences concerning anomalous phenomena, self-assessed
-          intuitive or extrasensory ability, awareness of bodily
-          sensations, psychological boundaries, and related individual
-          characteristics.
+          The first session includes 77 questionnaire items covering
+          demographic characteristics, meditation experience, beliefs
+          and experiences concerning anomalous phenomena,
+          self-assessed intuitive or extrasensory ability,
+          psychological boundaries, sensory sensitivity,
+          transliminality, and related individual characteristics.
         </p>
         <p>
           Later sessions may ask brief questions about your focus,
-          calmness, confidence, mental strategy, surroundings, and
+          calmness, confidence, self-selected mental approach, surroundings, and
           experience during that session.
-        </p>
-        <p>
-          Some questions may feel personal. You may select "Prefer not
-          to answer" or skip a nonessential question where that option
-          is provided. Choosing not to answer an optional question
-          will not affect your compensation.
         </p>
       </Section>
 
@@ -402,8 +418,9 @@ export default function ConsentInfoPage({ onAgree, onDecline }) {
         </p>
         <p>
           The participant-code linkage file will be deleted no later
-          than {RETENTION_DEADLINE}. After that file is deleted, the
-          research records will be anonymous. The research team will
+          than {RETENTION_DEADLINE}. After that file is deleted and the
+          remaining research records have been anonymized, the
+          research team will
           no longer be able to identify your individual record or
           delete it in response to an individual request.
         </p>
@@ -411,36 +428,52 @@ export default function ConsentInfoPage({ onAgree, onDecline }) {
 
       {/* 7. Compensation */}
       <Section title="Compensation">
-        <p>
-          You will earn €5, or the equivalent amount offered through
-          the applicable recruitment or payment service, for each
-          completed session. Earnings accumulate across sessions, up
-          to a maximum of €25 for all five sessions.
-        </p>
-        <p>
-          Payment will be issued after you complete all five sessions,
-          request an earlier payout, or have been inactive for 14
-          days. You will not lose compensation earned for completed
-          sessions, even if you stop before completing all five.
-          Requesting payment does not end your participation — if you
-          complete additional sessions later, any additional
-          compensation earned will be paid separately. Eligible
-          payments will normally be processed within 7–14 days.
-        </p>
-        <p>
-          Participants recruited through a research-participant
-          platform may be paid through that platform. Participants
-          recruited directly may be paid through an electronic payment
-          service or electronic gift card. Payment information will be
-          handled separately from questionnaire responses and
-          experimental results.
-        </p>
-        <p>
-          The specific payment service may vary by recruitment source.
-          The payment service will receive only the information needed
-          to issue payment and meet applicable financial-record
-          requirements.
-        </p>
+        {isProlific ? (
+          <>
+            <p>
+              You will earn €5 for each completed session, up to a
+              maximum of €25 for all five sessions. Prolific pays you
+              after each completed session, in US dollars, in an
+              amount equal to €5 at the current exchange rate.
+            </p>
+            <p>
+              Payment information will be handled separately from
+              questionnaire responses and experimental results.
+            </p>
+          </>
+        ) : (
+          <>
+            <p>
+              You will earn €5, or the equivalent amount offered
+              through the applicable recruitment or payment service,
+              for each completed session. Earnings accumulate across
+              sessions, up to a maximum of €25 for all five sessions.
+            </p>
+            <p>
+              Payment will be issued after you complete all five
+              sessions, request an earlier payout, or two weeks after
+              the study has closed. If you request payment before
+              completing all five sessions, your participation will
+              end and you will not be able to complete additional
+              sessions. You will receive €5 for each session you have
+              already completed. If you decide not to complete all
+              five sessions, you must use the "Request payment now"
+              option or contact the research team to request payment
+              for your completed sessions. Eligible payments will
+              normally be processed within 7–14 days.
+            </p>
+            <p>
+              You will be paid through Tremendous (USA) in the form of
+              an electronic gift card you choose from those available
+              in your country, for example an Amazon gift card. The
+              amount is €5 per session, or the equivalent in the
+              currency of the option you choose. Payment information
+              will be handled separately from questionnaire responses
+              and experimental results. Tremendous will receive only
+              your email address and the amount to be paid.
+            </p>
+          </>
+        )}
       </Section>
 
       {/* 8. Data collection and pseudonymization */}
@@ -450,19 +483,19 @@ export default function ConsentInfoPage({ onAgree, onDecline }) {
           <li>A randomly generated participant code</li>
           <li>Session number, date, and time</li>
           <li>
-            Age range, gender, and other approved demographic
-            information
+            Age, gender, and other approved demographic information
           </li>
           <li>Questionnaire responses</li>
           <li>
-            Quantum random-number-generator output and derived task
+            Quantum random number generator output and derived task
             scores
           </li>
           <li>Task timing and completion information</li>
           <li>Post-session ratings and strategy responses</li>
           <li>
-            Email address, required for payment administration and
-            recovery of study access if you lose your private code
+            {isProlific
+              ? 'Your Prolific participant ID, used for payment through Prolific'
+              : 'Your email address, required for payment administration, and the payment code contained in your personal study link'}
           </li>
           <li>
             Payment-confirmation information, stored separately from
@@ -470,17 +503,23 @@ export default function ConsentInfoPage({ onAgree, onDecline }) {
           </li>
         </ul>
         <p>
-          Research responses will be stored under a participant code
-          rather than directly under your name or email address.
+          Research responses are stored on a server at
+          Ludwig-Maximilians-Universität München (LMU), under a
+          participant code rather than directly under your name or
+          email address.
         </p>
         <p>
-          Your email address is connected to your participant code in
-          a separate restricted linkage record. This makes the data
-          pseudonymized until the linkage record is destroyed.{' '}
-          {RESEARCHER_NAME} will have routine access to the linkage
-          record.
-          {PI_NAME} may access it when necessary for project
-          oversight.
+          Your {isProlific ? 'Prolific ID' : 'email address'} is
+          connected to your participant code in a separate restricted
+          linkage record. This makes the data pseudonymized until the
+          linkage record is destroyed. {RESEARCHER_NAME} will have routine
+          access to the linkage record. {PI_NAME} may access it when
+          necessary for project oversight.
+        </p>
+        <p>
+          {isProlific
+            ? 'You are paid through Prolific, which receives none of your answers.'
+            : 'You are paid by gift card through Tremendous (USA), which receives your email address and the amount to be paid, but none of your answers.'}
         </p>
       </Section>
 
@@ -490,12 +529,14 @@ export default function ConsentInfoPage({ onAgree, onDecline }) {
           Pseudonymized linkage information will be retained only as
           long as necessary for approved contact, withdrawal, payment
           administration, and data verification, and no later than{' '}
-          {RETENTION_DEADLINE} unless a later date is approved and
-          communicated.
+          {RETENTION_DEADLINE}. A future extension would require
+          appropriate approval and possibly revised participant
+          information; this consent does not give advance permission
+          for an unspecified extension.
         </p>
         <p>
-          After removal of the linkage information, anonymized
-          scientific data may be retained for at least ten years after
+          After removal of the linkage information and review of
+          disclosure risk, anonymized scientific data may be retained for at least ten years after
           analysis or publication in accordance with
           research-integrity requirements.
         </p>
@@ -503,7 +544,7 @@ export default function ConsentInfoPage({ onAgree, onDecline }) {
           Study findings may be published in scientific articles,
           presentations, grant reports, and research repositories.
           Publications will not include names, email addresses,
-          payment information, participant passwords, or other
+          payment information, private participant codes, or other
           information intended to identify individual participants.
         </p>
         <p>
@@ -514,33 +555,78 @@ export default function ConsentInfoPage({ onAgree, onDecline }) {
       </Section>
 
       {/* 10. Email use */}
-      <Section title="Email use">
-        <p>
-          Your email address is required for payment administration
-          and recovery of your study access if you lose your private
-          code. It is stored in a restricted linkage record separate
-          from the primary research dataset. It will not be used for
-          study updates or future-study contact unless you separately
-          opt in below.
-        </p>
-        <p>
-          Whether the research team may email you about study results,
-          or about a future related study, is entirely your choice and
-          answered separately below. Declining both will not prevent
-          participation and will not affect compensation.
-        </p>
-        <p>
-          If you opt in to results contact, the research team may
-          email you a summary of the overall study findings if a
-          participant update is issued. The findings may be positive,
-          negative, mixed, or inconclusive.
-        </p>
+      <Section title={isProlific ? 'Contact and study updates' : 'Email use'}>
+        {isProlific ? (
+          <p>
+            Your Prolific ID is used for payment administration. It is
+            stored in a restricted linkage record separate
+            from the primary research dataset. The research team can
+            only contact you through Prolific.
+          </p>
+        ) : (
+          <>
+            <p>
+              Your email address is required for payment
+              administration. It is stored in a restricted
+              linkage record separate from the primary research
+              dataset. It will not be used for study updates or
+              future-study contact unless you separately opt in
+              below.
+            </p>
+            <p>
+              If you choose to receive the study results, we will
+              email you a copy of the results when they are available.
+              If you are open to taking part in future studies,
+              answer Yes to the second question below. Neither choice
+              affects your participation or compensation.
+            </p>
+          </>
+        )}
         <p>
           Immediate experimental feedback is part of the task but does
           not constitute an individual assessment of psychic,
           anomalous, psychological, or diagnostic ability. The study
           will not provide participants with an individualized
           assessment of such abilities.
+        </p>
+      </Section>
+
+      {/* 10b. How your data are handled */}
+      {/* TODO(DPO): confirm wording and add legal basis / transfer
+          safeguards for the US-based processors (Netlify, Tremendous)
+          before launch. */}
+      <Section title="How your data are handled">
+        <p>
+          <strong>Research responses</strong> (questionnaires, task
+          results, and quantum random number generated data) are
+          stored on a server at Ludwig-Maximilians-Universität München
+          (LMU) under your participant code.
+        </p>
+        <p>
+          <strong>Linkage record.</strong> Your{' '}
+          {isProlific ? 'Prolific ID' : 'email address'} is kept in a
+          separate restricted record that connects it to your
+          participant code. It is not part of
+          the research dataset.
+        </p>
+        <p>
+          <strong>Website hosting (Netlify, USA).</strong> The study
+          website is delivered by Netlify. As with any website, Netlify
+          receives your IP address when your browser connects. The
+          study also uses a Netlify function to request random numbers
+          from the quantum random number generator hosted on LMU
+          servers and pass them on to your browser. The random numbers
+          therefore pass through Netlify in transit; the study does
+          not store them there. Netlify does not receive your
+          questionnaire answers, your{' '}
+          {isProlific ? 'Prolific ID' : 'email address'}, or your
+          participant code.
+        </p>
+        <p>
+          <strong>Payment.</strong>{' '}
+          {isProlific
+            ? 'Prolific pays you after each session. The study never sees your identity, only your Prolific ID, and Prolific never sees your answers.'
+            : 'You are paid by the research team through Tremendous (USA), which receives your email address and the amount to be paid, but none of your answers.'}
         </p>
       </Section>
 
@@ -563,10 +649,9 @@ export default function ConsentInfoPage({ onAgree, onDecline }) {
             checked={ageConfirmed}
             onChange={setAgeConfirmed}
           >
-            I confirm that I am at least 18 years old and have
-            personally had at least one experience that I interpreted
-            as possibly psi-related, anomalous, or difficult to
-            explain through ordinary means.
+            I confirm that I am at least 18 years old and can
+            understand the English-language study information and
+            instructions.
           </RequiredCheckbox>
 
           <RequiredCheckbox
@@ -575,8 +660,8 @@ export default function ConsentInfoPage({ onAgree, onDecline }) {
             onChange={setParticipationConsent}
           >
             I voluntarily consent to participate in this study,
-            including the questionnaires and quantum
-            random-number-generator task described above.
+            including the questionnaires and color intent task
+            described above.
           </RequiredCheckbox>
 
           <RequiredCheckbox
@@ -586,7 +671,7 @@ export default function ConsentInfoPage({ onAgree, onDecline }) {
           >
             I consent to the collection and pseudonymized processing
             of my questionnaire responses, session information,
-            quantum random-number-generator data, and task results for
+            quantum random number generator data, and task results for
             the research purposes described above.
           </RequiredCheckbox>
 
@@ -607,9 +692,9 @@ export default function ConsentInfoPage({ onAgree, onDecline }) {
             checked={anonymizedUseConsent}
             onChange={setAnonymizedUseConsent}
           >
-            I consent to the retention, scientific analysis,
-            publication, and sharing of appropriately anonymized
-            research data as described above.
+            I understand that appropriately anonymized research data
+            may be retained, scientifically analyzed, published, and
+            shared as described above.
           </RequiredCheckbox>
 
           <RequiredCheckbox
@@ -617,8 +702,9 @@ export default function ConsentInfoPage({ onAgree, onDecline }) {
             checked={emailUseAck}
             onChange={setEmailUseAck}
           >
-            I understand that my email address will be used for
-            payment administration and recovery of my study access.
+            {isProlific
+              ? 'I understand that my Prolific ID will be used for payment administration.'
+              : 'I understand that my email address will be used for payment administration.'}
           </RequiredCheckbox>
 
           <RequiredCheckbox
@@ -627,11 +713,25 @@ export default function ConsentInfoPage({ onAgree, onDecline }) {
             onChange={setMultiSessionAck}
           >
             I understand that this consent covers up to five study
-            sessions. When I return, my private participant code will
-            be used to verify my existing consent and study access.
+            sessions, and that I need to use the same personal link
+            each time I return.
+          </RequiredCheckbox>
+
+          <RequiredCheckbox
+            id={`${idBase}-data-handling-ack`}
+            checked={dataHandlingAck}
+            onChange={setDataHandlingAck}
+          >
+            I understand how my data are collected, stored and used,
+            as described in "How your data are handled", including
+            that my IP address goes to Netlify (USA)
+            {isProlific
+              ? ' and that Prolific handles my payment and identity verification.'
+              : ' and that my email address and the amount to be paid go to Tremendous (USA).'}
           </RequiredCheckbox>
         </div>
 
+        {!isProlific && (
         <div style={{ marginTop: '1.5rem' }}>
           <label
             htmlFor={`${idBase}-email`}
@@ -652,7 +752,6 @@ export default function ConsentInfoPage({ onAgree, onDecline }) {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="you@example.com"
-            aria-required="true"
             aria-invalid={
               submitAttempted && !emailValid ? 'true' : 'false'
             }
@@ -666,8 +765,7 @@ export default function ConsentInfoPage({ onAgree, onDecline }) {
               marginTop: 4,
             }}
           >
-            Used only to issue your payment and to help recover your
-            participant code if you lose it. Stored in a restricted
+            Used only to issue your payment. Stored in a restricted
             linkage record separate from the primary research dataset,
             and never included in published or publicly shared
             research data. It is not used to contact you about the
@@ -683,12 +781,44 @@ export default function ConsentInfoPage({ onAgree, onDecline }) {
             </div>
           )}
         </div>
+        )}
 
+        {isProlific && (
+          <div style={{ marginTop: '1.5rem' }}>
+            <div style={{ fontWeight: 600, fontSize: 14.5 }}>
+              Your Prolific ID: <code>{prolificId}</code>
+            </div>
+            <div
+              style={{
+                fontSize: 12.5,
+                color: 'var(--muted)',
+                marginTop: 4,
+              }}
+            >
+              Taken automatically from your Prolific link. Used to pay
+              you through Prolific and stored in a restricted linkage
+              record separate from the primary research dataset.
+            </div>
+          </div>
+        )}
+
+        {!isProlific && (
         <div style={{ marginTop: '1.5rem' }}>
           <h3 style={{ fontSize: 15, margin: '0 0 0.75rem' }}>
             Contact preferences
-            <OptionalTag />
+            <RequiredTag />
           </h3>
+          <p
+            style={{
+              fontSize: 13.5,
+              color: 'var(--muted)',
+              margin: '0 0 0.75rem',
+            }}
+          >
+            You must answer Yes or No to both questions, but either
+            answer is acceptable and will not affect your
+            participation or compensation.
+          </p>
 
           <YesNoQuestion
             legend="Would you like to receive a summary of the overall study findings if a participant update is issued?"
@@ -704,6 +834,7 @@ export default function ConsentInfoPage({ onAgree, onDecline }) {
             onChange={setFutureContact}
           />
         </div>
+        )}
       </Section>
 
       {/* 12. Save or print a copy */}
@@ -733,9 +864,12 @@ export default function ConsentInfoPage({ onAgree, onDecline }) {
             fontSize: 14,
           }}
         >
-          Please confirm your age, accept all required items above,
-          and answer both contact questions before continuing.
-          {!emailValid && ' A valid email address is also required.'}
+          Please accept all required items above
+          {!isProlific && ' and answer both contact questions'} before
+          continuing.
+          {!isProlific &&
+            !emailValid &&
+            ' A valid email address is also required.'}
         </div>
       )}
 
@@ -774,7 +908,7 @@ export default function ConsentInfoPage({ onAgree, onDecline }) {
           textAlign: 'center',
         }}
       >
-        Consent form version {CONSENT_VERSION}
+        Consent form version {consentVersion}
       </div>
     </div>
   );

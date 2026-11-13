@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import {
-  collection, doc, addDoc, setDoc, serverTimestamp,
+  collection, doc, addDoc, setDoc, serverTimestamp, increment,
 } from 'firebase/firestore';
 import { packBitsToBase64, unpackBitsFromBase64 } from '../lib/rawBitsCodec.js';
 import { normalCdf } from '../stats/index.js';
@@ -21,16 +21,17 @@ function linReg(ys) {
   return { slope, pValue: 2 * (1 - normalCdf(Math.abs(t))) };
 }
 
-// Run-length encode an array of strings → [[value, count], ...]
+// Run-length encode an array of strings → [{ provider, count }, ...]
+// (objects, not [value, count] pairs: Firestore rejects nested arrays)
 function rleEncode(arr) {
   if (!arr.length) return [];
   const out = [];
   let cur = arr[0], count = 1;
   for (let i = 1; i < arr.length; i++) {
     if (arr[i] === cur) { count++; }
-    else { out.push([cur, count]); cur = arr[i]; count = 1; }
+    else { out.push({ provider: cur, count }); cur = arr[i]; count = 1; }
   }
-  out.push([cur, count]);
+  out.push({ provider: cur, count });
   return out;
 }
 
@@ -51,7 +52,7 @@ function rleEncode(arr) {
  *   subjectBitsHistory, demonBitsHistory,
  *   pastH_s, pastH_d, pastBits, pastDemonBits,
  *   pastSubjectHits, pastDemonHits, pastDemonTrials,
- *   participantProfile, emailPlaintext, onHistoryUpdated,
+ *   participantProfile, emailPlaintext, prolificId, onHistoryUpdated,
  * }} options
  */
 export function useSessionPersistence({
@@ -65,7 +66,8 @@ export function useSessionPersistence({
   subjectBitsHistory, demonBitsHistory,
   pastH_s, pastH_d, pastBits, pastDemonBits,
   pastSubjectHits = 0, pastDemonHits, pastDemonTrials,
-  participantProfile, emailPlaintext, emailOptInRef, onHistoryUpdated,
+  participantProfile, emailPlaintext, prolificId, emailOptInRef, onHistoryUpdated,
+  recruitment,
 }) {
   const [runRef, setRunRef] = useState(null);
   const ensureRunDocPromiseRef = useRef(null);
@@ -106,6 +108,18 @@ export function useSessionPersistence({
         const docRef = await addDoc(col, {
           participant_id: uidNow,
           participant_hash: participantHash || null,
+          recruitment_source: recruitment?.source === 'prolific' ? 'prolific' : 'direct',
+          // Session number this run was started as (sessionCount = completed before it).
+          // Prolific: taken from the link's wave when given, else from the profile counter.
+          session_number: sessionCount + 1,
+          session_number_source: recruitment?.wave ? 'prolific_wave' : 'profile_count',
+          ...(recruitment?.wave ? { prolific_wave: recruitment.wave } : {}),
+          ...(recruitment?.source === 'prolific'
+            ? {
+                prolific_session_id: recruitment.sessionId || null,
+                prolific_study_id: recruitment.studyId || null,
+              }
+            : {}),
           experimentId: C.EXPERIMENT_ID,
           createdAt: serverTimestamp(),
           blocks_planned: C.BLOCKS_TOTAL,
@@ -131,7 +145,7 @@ export function useSessionPersistence({
 
     ensureRunDocPromiseRef.current = createPromise;
     return await createPromise;
-  }, [runRef, target, uid, requireUid, isAutoMode, isAIMode, participantHash]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [runRef, target, uid, requireUid, isAutoMode, isAIMode, participantHash, recruitment, sessionCount]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── saveSessionAggregates: end-of-session write ──────────────────────────────
   const saveSessionAggregates = useCallback(async () => {
@@ -270,9 +284,9 @@ export function useSessionPersistence({
       setDoc(
         profRef,
         {
-          session_count: newCount,
+          // Prolific wave (when given) is authoritative; otherwise add one.
+          session_count: recruitment?.wave ? recruitment.wave : increment(1),
           last_session_date: todayUTC,
-          pre_q_completed: true,
           participant_type: isAutoMode ? 'baseline' : isAIMode ? 'ai' : 'human',
           updated_at: serverTimestamp(),
           ...(emailPlaintext ? { email_opt_in: !!emailOptInRef?.current } : {}),
@@ -281,14 +295,21 @@ export function useSessionPersistence({
         { merge: true },
       ).catch((err) => console.error('Profile save failed:', err));
 
-      // Private lookup table: plaintext email stored separately from research data
-      if (emailPlaintext) {
+      // Private lookup table: plaintext email and/or Prolific ID stored
+      // separately from research data
+      if (emailPlaintext || prolificId) {
         const emailRef = doc(db, C.EMAIL_LOOKUP_COLLECTION, participantHash);
         setDoc(
           emailRef,
           {
-            email: emailPlaintext,
-            email_opt_in: !!emailOptInRef?.current,
+            ...(emailPlaintext ? { email: emailPlaintext } : {}),
+            ...(prolificId ? { prolific_id: prolificId } : {}),
+            // Personal payment code from the participant's link (?TREMENDOUS=...);
+            // stored only here, in the private linkage record, never in research data.
+            ...(recruitment?.tremendousToken
+              ? { tremendous_token: recruitment.tremendousToken }
+              : {}),
+            email_opt_in: !!emailPlaintext && !!emailOptInRef?.current,
             updated_at: serverTimestamp(),
           },
           { merge: true },
@@ -305,7 +326,7 @@ export function useSessionPersistence({
         count: newCount, usableCount: usableNewCount,
       });
     }
-  }, [phase, sessionCount, usableSessionCount, participantProfile, participantHash, emailPlaintext, runRef, isAutoMode, isAIMode, onHistoryUpdated, hurstSubjectHistory, hurstDemonHistory, subjectBitsHistory, demonBitsHistory, totalGhostHits, totals.n, totals.k, pastH_s, pastH_d, pastBits, pastDemonBits, pastSubjectHits, pastDemonHits, pastDemonTrials, allRawBitsRef, db, C, saveSessionAggregates]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [phase, sessionCount, usableSessionCount, participantProfile, participantHash, emailPlaintext, prolificId, recruitment, runRef, isAutoMode, isAIMode, onHistoryUpdated, hurstSubjectHistory, hurstDemonHistory, subjectBitsHistory, demonBitsHistory, totalGhostHits, totals.n, totals.k, pastH_s, pastH_d, pastBits, pastDemonBits, pastSubjectHits, pastDemonHits, pastDemonTrials, allRawBitsRef, db, C, saveSessionAggregates]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return {
     runRef,
