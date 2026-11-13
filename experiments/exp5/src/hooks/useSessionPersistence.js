@@ -108,7 +108,7 @@ export function useSessionPersistence({
         const docRef = await addDoc(col, {
           participant_id: uidNow,
           participant_hash: participantHash || null,
-          recruitment_source: recruitment?.source === 'prolific' ? 'prolific' : 'direct',
+          recruitment_source: recruitment?.source ?? 'direct', // 'prolific' | 'direct' (paid via Tremendous) | 'volunteer'
           // Session number this run was started as (sessionCount = completed before it).
           // Prolific: taken from the link's wave when given, else from the profile counter.
           session_number: sessionCount + 1,

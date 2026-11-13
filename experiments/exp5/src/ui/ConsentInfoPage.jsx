@@ -181,8 +181,11 @@ export default function ConsentInfoPage({
   // (email required, paid via Tremendous). Only the consent page differs.
   const isProlific =
     recruitment?.source === 'prolific' && !!recruitment?.prolificId;
+  // Volunteers (no Prolific ID, no personal payment code in the link) are not paid:
+  // all payment wording is removed for them. They still give an email to link sessions.
+  const isVolunteer = !isProlific && recruitment?.source === 'volunteer';
   const prolificId = isProlific ? recruitment.prolificId : '';
-  const consentVersion = `${CONSENT_VERSION}_${isProlific ? 'PROLIFIC' : 'DIRECT'}`;
+  const consentVersion = `${CONSENT_VERSION}_${isProlific ? 'PROLIFIC' : isVolunteer ? 'VOLUNTEER' : 'DIRECT'}`;
 
   const [ageConfirmed, setAgeConfirmed] = useState(false);
   const [participationConsent, setParticipationConsent] =
@@ -231,7 +234,7 @@ export default function ConsentInfoPage({
     if (!ready) return;
     onAgree?.({
       consentVersion,
-      recruitmentSource: isProlific ? 'prolific' : 'direct',
+      recruitmentSource: isProlific ? 'prolific' : isVolunteer ? 'volunteer' : 'direct',
       eligibilityConfirmed: true,
       consents: {
         participation: true,
@@ -349,9 +352,10 @@ export default function ConsentInfoPage({
         <p>
           We ask you to complete all five sessions, as the study
           depends on it. Taking part is still voluntary: you may stop
-          at any time, and completing all five sessions is not
-          required to retain payment for sessions you have already
-          completed.
+          at any time
+          {!isVolunteer &&
+            ', and completing all five sessions is not required to retain payment for sessions you have already completed'}
+          .
         </p>
       </Section>
 
@@ -405,10 +409,12 @@ export default function ConsentInfoPage({
           or stop participating at any time without giving a reason
           and without penalty.
         </p>
-        <p>
-          Stopping participation will not affect the payment you have
-          earned for completed sessions.
-        </p>
+        {!isVolunteer && (
+          <p>
+            Stopping participation will not affect the payment you have
+            earned for completed sessions.
+          </p>
+        )}
         <p>
           While the research team can still connect your participant
           code to your contact record, you may request deletion of
@@ -426,7 +432,8 @@ export default function ConsentInfoPage({
         </p>
       </Section>
 
-      {/* 7. Compensation */}
+      {/* 7. Compensation (not shown to volunteers) */}
+      {!isVolunteer && (
       <Section title="Compensation">
         {isProlific ? (
           <>
@@ -475,6 +482,7 @@ export default function ConsentInfoPage({
           </>
         )}
       </Section>
+      )}
 
       {/* 8. Data collection and pseudonymization */}
       <Section title="Data collection and pseudonymization">
@@ -495,12 +503,16 @@ export default function ConsentInfoPage({
           <li>
             {isProlific
               ? 'Your Prolific participant ID, used for payment through Prolific'
-              : 'Your email address, required for payment administration, and the payment code contained in your personal study link'}
+              : isVolunteer
+                ? 'Your email address, used to link your study sessions together'
+                : 'Your email address, required for payment administration, and the payment code contained in your personal study link'}
           </li>
-          <li>
-            Payment-confirmation information, stored separately from
-            research responses
-          </li>
+          {!isVolunteer && (
+            <li>
+              Payment-confirmation information, stored separately from
+              research responses
+            </li>
+          )}
         </ul>
         <p>
           Research responses are stored on a server at
@@ -516,19 +528,22 @@ export default function ConsentInfoPage({
           access to the linkage record. {PI_NAME} may access it when
           necessary for project oversight.
         </p>
-        <p>
-          {isProlific
-            ? 'You are paid through Prolific, which receives none of your answers.'
-            : 'You are paid by gift card through Tremendous (USA), which receives your email address and the amount to be paid, but none of your answers.'}
-        </p>
+        {!isVolunteer && (
+          <p>
+            {isProlific
+              ? 'You are paid through Prolific, which receives none of your answers.'
+              : 'You are paid by gift card through Tremendous (USA), which receives your email address and the amount to be paid, but none of your answers.'}
+          </p>
+        )}
       </Section>
 
       {/* 9. Data retention and sharing */}
       <Section title="Data retention and sharing">
         <p>
           Pseudonymized linkage information will be retained only as
-          long as necessary for approved contact, withdrawal, payment
-          administration, and data verification, and no later than{' '}
+          long as necessary for approved contact, withdrawal,{' '}
+          {isVolunteer ? '' : 'payment administration, '}and data
+          verification, and no later than{' '}
           {RETENTION_DEADLINE}. A future extension would require
           appropriate approval and possibly revised participant
           information; this consent does not give advance permission
@@ -544,7 +559,7 @@ export default function ConsentInfoPage({
           Study findings may be published in scientific articles,
           presentations, grant reports, and research repositories.
           Publications will not include names, email addresses,
-          payment information, private participant codes, or other
+          {isVolunteer ? '' : ' payment information,'} private participant codes, or other
           information intended to identify individual participants.
         </p>
         <p>
@@ -566,8 +581,11 @@ export default function ConsentInfoPage({
         ) : (
           <>
             <p>
-              Your email address is required for payment
-              administration. It is stored in a restricted
+              Your email address is required for{' '}
+              {isVolunteer
+                ? 'linking your study sessions together'
+                : 'payment administration'}
+              . It is stored in a restricted
               linkage record separate from the primary research
               dataset. It will not be used for study updates or
               future-study contact unless you separately opt in
@@ -578,7 +596,9 @@ export default function ConsentInfoPage({
               email you a copy of the results when they are available.
               If you are open to taking part in future studies,
               answer Yes to the second question below. Neither choice
-              affects your participation or compensation.
+              affects your participation{isVolunteer ? '' : ' or compensation'}.
+              If you answer these questions again in a later session,
+              your most recent answers are the ones we use.
             </p>
           </>
         )}
@@ -622,12 +642,14 @@ export default function ConsentInfoPage({
           {isProlific ? 'Prolific ID' : 'email address'}, or your
           participant code.
         </p>
+        {!isVolunteer && (
         <p>
           <strong>Payment.</strong>{' '}
           {isProlific
             ? 'Prolific pays you after each session. The study never sees your identity, only your Prolific ID, and Prolific never sees your answers.'
             : 'You are paid by the research team through Tremendous (USA), which receives your email address and the amount to be paid, but none of your answers.'}
         </p>
+        )}
       </Section>
 
       {/* 11. Required eligibility and consent choices */}
@@ -681,7 +703,7 @@ export default function ConsentInfoPage({
             onChange={setWithdrawalAck}
           >
             I acknowledge that I may stop participating at any time,
-            that I will retain payment earned for completed sessions,
+            {isVolunteer ? ' ' : ' that I will retain payment earned for completed sessions, '}
             and that individual deletion will no longer be possible
             after the participant-code linkage has been destroyed and
             the data have become anonymous.
@@ -704,7 +726,9 @@ export default function ConsentInfoPage({
           >
             {isProlific
               ? 'I understand that my Prolific ID will be used for payment administration.'
-              : 'I understand that my email address will be used for payment administration.'}
+              : isVolunteer
+                ? 'I understand that my email address will be used to link my study sessions together.'
+                : 'I understand that my email address will be used for payment administration.'}
           </RequiredCheckbox>
 
           <RequiredCheckbox
@@ -727,7 +751,9 @@ export default function ConsentInfoPage({
             that my IP address goes to Netlify (USA)
             {isProlific
               ? ' and that Prolific handles my payment and identity verification.'
-              : ' and that my email address and the amount to be paid go to Tremendous (USA).'}
+              : isVolunteer
+                ? '.'
+                : ' and that my email address and the amount to be paid go to Tremendous (USA).'}
           </RequiredCheckbox>
         </div>
 
@@ -765,7 +791,10 @@ export default function ConsentInfoPage({
               marginTop: 4,
             }}
           >
-            Used only to issue your payment. Stored in a restricted
+            {isVolunteer
+              ? 'Used only to link your study sessions together.'
+              : 'Used only to issue your payment.'}{' '}
+            Stored in a restricted
             linkage record separate from the primary research dataset,
             and never included in published or publicly shared
             research data. It is not used to contact you about the
@@ -817,7 +846,7 @@ export default function ConsentInfoPage({
           >
             You must answer Yes or No to both questions, but either
             answer is acceptable and will not affect your
-            participation or compensation.
+            participation{isVolunteer ? '' : ' or compensation'}.
           </p>
 
           <YesNoQuestion

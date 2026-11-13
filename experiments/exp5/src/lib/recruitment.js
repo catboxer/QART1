@@ -32,8 +32,8 @@ export function getRecruitment() {
       sessionStorage.setItem(KEY, JSON.stringify(rec));
       return rec;
     }
-    // Directly recruited participants get a personal link: ?TREMENDOUS=<code>.
-    // The code is only matched against the list of links issued, when paying.
+    // Directly recruited, paid participants get a personal link: ?TREMENDOUS=<code>.
+    // Anyone without a code or a Prolific ID is a volunteer (not paid).
     const token = (params.get('TREMENDOUS') || '').trim();
     if (token) {
       const rec = {
@@ -52,5 +52,15 @@ export function getRecruitment() {
   } catch {
     // sessionStorage / URL unavailable: fall through to direct
   }
-  return { source: 'direct', prolificId: null, studyId: null, sessionId: null, wave: null, tremendousToken: null };
+  return { source: 'volunteer', prolificId: null, studyId: null, sessionId: null, wave: null, tremendousToken: null };
+}
+
+/**
+ * Address Prolific sends the participant to so the submission is marked
+ * complete (and paid). The code is chosen by session number (WAVE), falling
+ * back to a default.
+ */
+export function prolificCompletionUrl(sessionNumber, codes = {}, fallbackCode = '') {
+  const code = codes[sessionNumber] || fallbackCode;
+  return `https://app.prolific.com/submissions/complete?cc=${encodeURIComponent(code)}`;
 }

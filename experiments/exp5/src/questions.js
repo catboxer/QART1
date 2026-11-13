@@ -283,13 +283,6 @@ export const preQuestions = [
   },
   // ── Subtle-attunement items (investigator-developed; 1–7) ──
   {
-    id: 'attune_instruction',
-    type: 'instruction',
-    required: false,
-    question:
-      'Please rate how true each statement is of you, using the same 1 to 7 scale.',
-  },
-  {
     id: 'attune_1',
     type: 'likert',
     scale: [1, 2, 3, 4, 5, 6, 7],
@@ -778,6 +771,43 @@ export const preQuestions = [
 ];
 
 // ——— POST ———
+
+// ── Pre-questionnaire pages ────────────────────────────────────────────────
+// Page 1 (background) is always first and the psi page is always last. The four
+// scale pages in between are shown in a random order per participant (the order is
+// saved with the answers as `pre_q_page_order`). Question numbers follow the order
+// shown. Items inside a scale keep their fixed order.
+const byIds = (ids) => preQuestions.filter((q) => ids.includes(q.id));
+const byPrefix = (prefix) => preQuestions.filter((q) => q.id.startsWith(prefix));
+
+export const preQuestionPages = {
+  first: {
+    id: 'background',
+    questions: byIds(['age', 'gender', 'meditationLevel', 'neurodivergence']),
+  },
+  randomized: [
+    { id: 'sensitivity', questions: byPrefix('hsp_') },
+    {
+      id: 'attunement',
+      questions: [
+        {
+          id: 'attune_instruction',
+          type: 'instruction',
+          required: false,
+          question:
+            'Please rate how true each statement is of you.\n\n1 = Not at all\n2 = Very little\n3 = Slightly\n4 = Moderately\n5 = Quite a bit\n6 = Very much\n7 = Extremely',
+        },
+        ...byPrefix('attune_'),
+      ],
+    },
+    { id: 'transliminality', questions: byPrefix('rts_') },
+    { id: 'boundary', questions: byPrefix('bq18_') },
+  ],
+  last: {
+    id: 'psi',
+    questions: byIds(['experienceTypes', 'psiAbility', 'psiPossibility']),
+  },
+};
 
 export const postQuestions = [
   {

@@ -32,6 +32,10 @@ config.experiments = {
     EMAIL_LOOKUP_COLLECTION: 'experiment5_email_lookup',
     PROLIFIC_SESSION_COLLECTION: 'experiment5_prolific_sessions', // one doc per Prolific SESSION_ID; blocks reuse of a link
     PAYMENT_CODE_COLLECTION: 'experiment5_payment_codes', // one doc per personal payment code; binds it to one participant
+    // Prolific completion codes, one per session (WAVE). PLACEHOLDERS: replace with the real codes
+    // from each Prolific study ("Study completion" > completion code) before real use.
+    PROLIFIC_COMPLETION_CODES: { 1: 'TESTW1A1', 2: 'TESTW2B2', 3: 'TESTW3C3', 4: 'TESTW4D4', 5: 'TESTW5E5' },
+    PROLIFIC_COMPLETION_CODE_DEFAULT: 'TESTDEFAULT',
 
     // Audit configuration (NIST SP 800-22 Randomness Testing)
     AUDIT_EVERY_N_BLOCKS: 3, // TEMP-PREVIEW (was 10): Run audit break every N blocks. REVERT BEFORE REAL USE

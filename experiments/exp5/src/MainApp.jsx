@@ -6,16 +6,16 @@ import { db } from './firebase.js';
 import {
   doc,
   setDoc,
-  getDoc,
-  updateDoc,
   serverTimestamp,
+  arrayUnion,
 } from 'firebase/firestore';
-import { preQuestions, postQuestions } from './questions.js';
+import { preQuestionPages, postQuestions } from './questions.js';
+import PagedQuestionnaire from './PagedQuestionnaire.jsx';
 import { QuestionsForm } from './Forms.jsx';
 import ConsentInfoPage, {
   FRIENDLY_TITLE,
 } from './ui/ConsentInfoPage.jsx';
-import { getRecruitment } from './lib/recruitment.js';
+import { getRecruitment, prolificCompletionUrl } from './lib/recruitment.js';
 import { claimPaymentCode } from './lib/paymentCodeClaim.js';
 import { recordPaymentRequest } from './lib/paymentRequest.js';
 import {
@@ -183,10 +183,10 @@ export default function MainApp() {
   const [paymentRequested, setPaymentRequested] = useState(false);
   // Read once from the URL at startup (stable object, safe in effect deps).
   const recruitment = useMemo(() => getRecruitment(), []);
-  // Mark the Prolific session as completed when the payment screen is reached,
-  // so the same link cannot be resumed afterwards.
+  // Mark the Prolific session as completed when the end of the session is
+  // reached, so the same link cannot be resumed afterwards.
   useEffect(() => {
-    if (phase !== 'payment') return;
+    if (phase !== 'payment' && phase !== 'summary') return;
     const rec = getRecruitment();
     if (rec.source !== 'prolific') return;
     markProlificSessionCompleted(db, C.PROLIFIC_SESSION_COLLECTION, rec).catch(
@@ -510,8 +510,8 @@ export default function MainApp() {
             }
             // Reset completion state so it's recomputed fresh for this session
             resetCompletionFlag();
-            // Existing results-contact permission field; future-study contact
-            // (futureContact) isn't persisted anywhere yet -- UI-only for now.
+            // Results-contact permission (also used when a session completes).
+            // Both answers are saved to the linkage record just below.
             // Without an email there is nothing to contact, so it is always false.
             emailOptInRef.current = email ? resultsContact : false;
             let {
@@ -560,6 +560,28 @@ export default function MainApp() {
               usableCount = rec.wave - 1;
               skipPreQ = rec.wave > 1;
             }
+            // Contact preferences, saved with the private linkage record every time
+            // they consent. The latest answer is the current one; every answer is
+            // also kept in contact_history so changes can be traced.
+            if (email && loadedHash) {
+              setDoc(
+                doc(db, C.EMAIL_LOOKUP_COLLECTION, loadedHash),
+                {
+                  results_contact: !!resultsContact,
+                  future_contact: !!futureContact,
+                  contact_updated_at: serverTimestamp(),
+                  contact_history: arrayUnion({
+                    at: new Date().toISOString(),
+                    session_number: usableCount + 1,
+                    results_contact: !!resultsContact,
+                    future_contact: !!futureContact,
+                  }),
+                },
+                { merge: true },
+              ).catch((e) =>
+                console.error('Contact preferences save failed:', e),
+              );
+            }
             if (usableCount >= C.MAX_SESSIONS_FOR_ANALYSIS) {
               goToMaxSessions();
               return;
@@ -606,64 +628,53 @@ export default function MainApp() {
 
     return (
       <div style={{ position: 'relative' }}>
-        <QuestionsForm
+        <PagedQuestionnaire
           title="Before you begin"
-          questions={preQuestions}
-          requiredAll
-          onSubmit={async (answers, { valid }) => {
-            if (!valid) return;
-            goToOnboarding();
+          pages={preQuestionPages}
+          onPageSaved={async ({ pageIndex, answers, order, isLast }) => {
+            // Save the answers so far (merged) under this browser's private
+            // participants/{uid} document, with the participant key and the
+            // order the pages were shown in.
             try {
               const uidNow = await requireUid();
-              // Save to participants collection like exp1
-              const ref = doc(db, 'participants', uidNow);
-              const snap = await getDoc(ref);
-              const demographics = { ...answers };
-              // Mark the questionnaire as submitted on THIS participant's profile
-              // (the flag the next visit reads to skip it).
-              if (participantHash) {
-                await setDoc(
-                  doc(db, C.PARTICIPANT_COLLECTION, participantHash),
-                  {
-                    pre_q_completed: true,
-                    pre_q_completed_at: serverTimestamp(),
-                  },
-                  { merge: true },
-                );
-              }
-
-              if (snap.exists()) {
-                await updateDoc(ref, {
-                  demographics,
+              await setDoc(
+                doc(db, 'participants', uidNow),
+                {
+                  demographics: answers,
                   participant_hash: participantHash || null,
-                  demographics_version: 'v1',
+                  demographics_version: 'v2',
+                  pre_q_page_order: order,
+                  pre_q_pages_done: pageIndex + 1,
                   updated_at: serverTimestamp(),
-                });
-              } else {
-                await setDoc(ref, {
-                  demographics,
-                  participant_hash: participantHash || null,
-                  demographics_version: 'v1',
-                  created_at: serverTimestamp(),
-                  updated_at: serverTimestamp(),
-                  profile_version: 1,
-                });
-              }
-
-            } catch (e) {
-              console.warn(
-                'Pre survey save error (non-blocking):',
-                e,
+                  ...(pageIndex === 0 ? { created_at: serverTimestamp() } : {}),
+                },
+                { merge: true },
               );
-              console.warn('Debug info:', {
-                uid: uid,
-                runRefId: runRef?.id,
-                profileLoading: profileLoading,
-                errorCode: e?.code,
-                errorMessage: e?.message,
-              });
+            } catch (e) {
+              console.warn('Pre survey save error (non-blocking):', e);
+            }
+            // After the last page: mark the questionnaire as submitted on THIS
+            // participant's profile (the flag the next visit reads to skip it).
+            if (isLast) {
+              if (participantHash) {
+                try {
+                  await setDoc(
+                    doc(db, C.PARTICIPANT_COLLECTION, participantHash),
+                    {
+                      pre_q_completed: true,
+                      pre_q_completed_at: serverTimestamp(),
+                    },
+                    { merge: true },
+                  );
+                } catch (e) {
+                  console.error('Questionnaire flag save failed:', e);
+                }
+              } else {
+                console.warn('Questionnaire flag not saved: no participant key');
+              }
             }
           }}
+          onComplete={() => goToOnboarding()}
         />
       </div>
     );
@@ -1330,7 +1341,15 @@ export default function MainApp() {
 
   // PAYMENT - Provider-neutral session-completion screen (no payment integration yet)
   if (phase === 'payment') {
-    if (isAutoMode || isAIMode) {
+    // Prolific pays per submission and volunteers are not paid, so neither has
+    // a balance or payout choice: go straight to the thank-you page (which
+    // carries the return-to-Prolific link for Prolific participants).
+    if (
+      isAutoMode ||
+      isAIMode ||
+      recruitment.source === 'prolific' ||
+      recruitment.source === 'volunteer'
+    ) {
       goToSummary();
       return null;
     }
@@ -1597,8 +1616,14 @@ export default function MainApp() {
 
   // FINAL SCREEN
   if (phase === 'summary') {
+    const isProlificSummary = recruitment.source === 'prolific';
     const sessionsRemain =
       !paymentRequested && sessionCount < C.TARGET_SESSIONS;
+    const completionUrl = prolificCompletionUrl(
+      recruitment.wave ?? sessionCount,
+      C.PROLIFIC_COMPLETION_CODES,
+      C.PROLIFIC_COMPLETION_CODE_DEFAULT,
+    );
 
     return (
       <div
@@ -1612,6 +1637,27 @@ export default function MainApp() {
       >
         <h1>Thank You!</h1>
 
+        {isProlificSummary && (
+          <div style={{ marginBottom: 24 }}>
+            <p style={{ fontSize: 17, lineHeight: 1.6 }}>
+              Please click the button below to return to Prolific, so
+              that your session is recorded and you can be paid.
+            </p>
+            <a
+              href={completionUrl}
+              className="primary-btn"
+              style={{
+                display: 'inline-block',
+                textDecoration: 'none',
+                fontSize: '1.15rem',
+                padding: '0.9rem 1.6rem',
+              }}
+            >
+              Return to Prolific
+            </a>
+          </div>
+        )}
+
         <div
           style={{
             textAlign: 'left',
@@ -1624,7 +1670,9 @@ export default function MainApp() {
           <h3>
             {paymentRequested
               ? 'Payment requested'
-              : sessionsRemain
+              : isProlificSummary
+                ? `Session ${sessionCount} of ${C.TARGET_SESSIONS} complete`
+                : sessionsRemain
                 ? `${sessionCount} Session${sessionCount !== 1 ? 's' : ''} Complete — ${C.TARGET_SESSIONS - sessionCount} more to go`
                 : `All ${C.TARGET_SESSIONS} Sessions Complete`}
           </h3>
@@ -1653,13 +1701,10 @@ export default function MainApp() {
           }}
         >
           <ul style={{ textAlign: 'left', marginTop: 0 }}>
-            {sessionsRemain && (
+            {sessionsRemain && !isProlificSummary && (
               <li>
-                Please complete all {C.TARGET_SESSIONS} sessions. You
-                can spread them out however you like until the study
-                closes. You will be paid for every session you
-                complete, even if you do not finish all{' '}
-                {C.TARGET_SESSIONS}.
+                When you are ready for your next session, use the same
+                link you used today.
               </li>
             )}
             <li>
@@ -1674,11 +1719,6 @@ export default function MainApp() {
               >
                 Read about the methodology behind Study 2.
               </a>
-            </li>
-            <li>
-              To keep the study fair and unbiased for future
-              participants, we're holding back full details until data
-              collection is complete.
             </li>
           </ul>
         </div>

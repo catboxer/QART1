@@ -7,6 +7,7 @@ export function QuestionsForm({
   initial = {},
   onSubmit,
   requiredAll = false, // ← new prop to force all required
+  numberOffset = 0, // first question number minus one (for multi-page questionnaires)
 }) {
   const [answers, setAnswers] = useState(() => ({ ...initial }));
   const [touchedSubmit, setTouchedSubmit] = useState(false);
@@ -107,14 +108,14 @@ export function QuestionsForm({
   // Sequential numbers for displayed questions (skips non-answer types like 'instruction')
   const questionNumbers = useMemo(() => {
     const map = {};
-    let n = 0;
+    let n = numberOffset;
     for (const q of questions) {
       if (q.type !== 'instruction') {
         map[q.id] = ++n;
       }
     }
     return map;
-  }, [questions]);
+  }, [questions, numberOffset]);
 
   async function handleSubmit(e) {
     e.preventDefault();
