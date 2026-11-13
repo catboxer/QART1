@@ -61,3 +61,7 @@ backup.json
 
 # Private lists of personal payment codes (who may be paid) -- never commit
 payment-codes*.csv
+
+# Private planning/security notes -- never commit (repo is public)
+experiments/exp5/LMU_MIGRATION_SECURITY_PLAN.md
+experiments/*/*SECURITY*.md
