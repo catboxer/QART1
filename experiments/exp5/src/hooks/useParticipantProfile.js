@@ -204,7 +204,13 @@ export function useParticipantProfile({ db, C }) {
       // submitted (not a device-wide flag, which would leak across people
       // sharing a browser). A Prolific wave number overrides this.
       const skipPreQ = !!profile?.pre_q_completed;
-      return { skipPreQ, usableCount, participantHash: resolvedHash, profileSessionCount: profile?.session_count ?? 0 };
+      return {
+        skipPreQ,
+        usableCount,
+        participantHash: resolvedHash,
+        profileSessionCount: profile?.session_count ?? 0,
+        paymentRequested: !!profile?.payment_requested,
+      };
     },
     [db, C, uid],
   );

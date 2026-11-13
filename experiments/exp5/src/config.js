@@ -16,7 +16,7 @@ config.experiments = {
     EXPERIMENT_ID: 'hurst_exp5_v1',
     VISUAL_HZ: 5, // 5 Hz pulse frequency for loading screen
     REST_MS: 2500, // 2.5 s breather
-    BLOCKS_TOTAL: 80, // 80 blocks of focus → fetch → results
+    BLOCKS_TOTAL: 5, // TEMP-PREVIEW (was 80): 80 blocks of focus → fetch → results. REVERT BEFORE REAL USE
 
     // ── Bit stream size ───────────────────────────────────────────────────────
     // Change TRIALS_PER_BLOCK here — BITS_PER_BLOCK is derived automatically below.
@@ -34,7 +34,7 @@ config.experiments = {
     PAYMENT_CODE_COLLECTION: 'experiment5_payment_codes', // one doc per personal payment code; binds it to one participant
 
     // Audit configuration (NIST SP 800-22 Randomness Testing)
-    AUDIT_EVERY_N_BLOCKS: 10, // Run audit break every N blocks
+    AUDIT_EVERY_N_BLOCKS: 3, // TEMP-PREVIEW (was 10): Run audit break every N blocks. REVERT BEFORE REAL USE
     AUDIT_BITS_PER_BREAK: 1000, // Fetch 1000 bits for RNG quality test during audit
     // NIST tests run during audit:
     // 1. Frequency (Monobit) Test - checks proportion of 0s vs 1s (p ≥ 0.01 to pass)

@@ -179,6 +179,8 @@ export default function MainApp() {
     useState(false);
   // null | 'already_used' | 'missing_session_id' | 'error' -- set when a Prolific link can't start a session
   const [prolificBlock, setProlificBlock] = useState(null);
+  // true once this participant has clicked "Request payment now" (ends participation)
+  const [paymentRequested, setPaymentRequested] = useState(false);
   // Read once from the URL at startup (stable object, safe in effect deps).
   const recruitment = useMemo(() => getRecruitment(), []);
   // Mark the Prolific session as completed when the payment screen is reached,
@@ -444,7 +446,9 @@ export default function MainApp() {
         <div className="App" style={{ textAlign: 'center', padding: 24 }}>
           <h1>This link cannot be used</h1>
           <p>
-            {prolificBlock === 'invalid_code'
+            {prolificBlock === 'payment_requested'
+              ? 'You have already requested payment, so your participation in the study has ended. Thank you for taking part!'
+              : prolificBlock === 'invalid_code'
               ? 'This study link is not valid. Please use the exact link you were sent, or contact a.campbell@lmu.de.'
               : prolificBlock === 'code_used'
                 ? 'This study link has already been used by another participant. Please contact a.campbell@lmu.de.'
@@ -510,8 +514,17 @@ export default function MainApp() {
             // (futureContact) isn't persisted anywhere yet -- UI-only for now.
             // Without an email there is nothing to contact, so it is always false.
             emailOptInRef.current = email ? resultsContact : false;
-            let { skipPreQ, usableCount, participantHash: loadedHash } =
-              await loadParticipant(email, consentProlificId);
+            let {
+              skipPreQ,
+              usableCount,
+              participantHash: loadedHash,
+              paymentRequested: alreadyRequested,
+            } = await loadParticipant(email, consentProlificId);
+            // Payment already requested: participation has ended.
+            if (alreadyRequested) {
+              setProlificBlock('payment_requested');
+              return;
+            }
             // Personal payment code in the link: must be genuine, and usable by
             // one participant only. Fail closed. (No code at all is allowed;
             // such participants simply can't be paid.)
@@ -1338,6 +1351,7 @@ export default function MainApp() {
               tremendousCode: recruitment.tremendousToken,
               sessionsCompleted: sessionCount,
             });
+            setPaymentRequested(true);
             goToSummary();
           }}
         />
@@ -1583,7 +1597,8 @@ export default function MainApp() {
 
   // FINAL SCREEN
   if (phase === 'summary') {
-    const sessionsRemain = sessionCount < C.TARGET_SESSIONS;
+    const sessionsRemain =
+      !paymentRequested && sessionCount < C.TARGET_SESSIONS;
 
     return (
       <div
@@ -1607,13 +1622,17 @@ export default function MainApp() {
           }}
         >
           <h3>
-            {sessionsRemain
-              ? `${sessionCount} Session${sessionCount !== 1 ? 's' : ''} Complete — ${C.TARGET_SESSIONS - sessionCount} more to go`
-              : `All ${C.TARGET_SESSIONS} Sessions Complete`}
+            {paymentRequested
+              ? 'Payment requested'
+              : sessionsRemain
+                ? `${sessionCount} Session${sessionCount !== 1 ? 's' : ''} Complete — ${C.TARGET_SESSIONS - sessionCount} more to go`
+                : `All ${C.TARGET_SESSIONS} Sessions Complete`}
           </h3>
           <p>
             Thank you for participating in this research on temporal
             pattern influence.
+            {paymentRequested &&
+              ' Your payment request has been received. Your participation is now complete, and you will be paid for the sessions you completed.'}
           </p>
 
           <h4>Questions or Concerns</h4>
