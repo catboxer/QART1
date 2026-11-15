@@ -2,21 +2,28 @@
 import './App.css';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { pkConfig as C } from './config.js';
-import { db } from './firebase.js';
 import {
-  doc,
-  setDoc,
-  serverTimestamp,
-  arrayUnion,
-} from 'firebase/firestore';
-import { preQuestionPages, postQuestions } from './questions.js';
+  markSessionCompleted,
+  savePostSurvey,
+  savePreQuestionnairePage,
+  markQuestionnaireDone,
+  saveContactPreferences,
+  saveConsentRecord,
+  setUidSessionCount,
+} from './lib/database.js';
+import { preQuestionPages, postQuestions, attentionCheckSummary } from './questions.js';
 import PagedQuestionnaire from './PagedQuestionnaire.jsx';
 import { QuestionsForm } from './Forms.jsx';
 import ConsentInfoPage, {
   FRIENDLY_TITLE,
+  consentVersionFor,
 } from './ui/ConsentInfoPage.jsx';
+import ReturningParticipantGate from './ui/ReturningParticipantGate.jsx';
+import WelcomeBackPage from './ui/WelcomeBackPage.jsx';
+import UserIdScreen from './ui/UserIdScreen.jsx';
+import { generateUserId, normalizeUserId } from './lib/userId.js';
 import { getRecruitment, prolificCompletionUrl } from './lib/recruitment.js';
-import { claimPaymentCode } from './lib/paymentCodeClaim.js';
+import { claimPaymentCode, lookupPaymentCodeOwner } from './lib/paymentCodeClaim.js';
 import { recordPaymentRequest } from './lib/paymentRequest.js';
 import {
   claimProlificSession,
@@ -93,12 +100,16 @@ export default function MainApp() {
     pastDemonTrials,
     requireUid,
     loadParticipant,
+    loadParticipantByKey,
+    peekParticipant,
     loadAutoParticipant,
     setCumulativeHistory,
-  } = useParticipantProfile({ db, C });
+  } = useParticipantProfile({ C });
 
   // ---- consent: email-contact permission (set in ConsentInfoPage.onAgree)
-  const emailOptInRef = useRef(false);
+  // null until a consent page gives an answer this visit (returning participants skip consent,
+  // so their earlier answer must not be overwritten)
+  const emailOptInRef = useRef(null);
 
   // ---- target assignment
   const [target, setTarget] = useState(null);
@@ -179,6 +190,18 @@ export default function MainApp() {
     useState(false);
   // null | 'already_used' | 'missing_session_id' | 'error' -- set when a Prolific link can't start a session
   const [prolificBlock, setProlificBlock] = useState(null);
+  // Entry before consent: 'ask' (volunteers: "have you taken part before?"), 'checking'
+  // (Prolific / paid-link users: a quick read-only look-up), 'welcome_back' (already consented
+  // to the current text, so skip consent), or 'consent'.
+  const [entryStep, setEntryStep] = useState(() =>
+    getRecruitment().source === 'volunteer' ? 'ask' : 'checking',
+  );
+  const [returning, setReturning] = useState(null); // { key } | { email } | { prolificId }
+  const [prefillEmail, setPrefillEmail] = useState('');
+  // Volunteer who chose a generated user ID: the new ID, and the consent details to finish with
+  const [newUserId, setNewUserId] = useState(null);
+  const [pendingConsent, setPendingConsent] = useState(null);
+  const [entryBusy, setEntryBusy] = useState(false);
   // true once this participant has clicked "Request payment now" (ends participation)
   const [paymentRequested, setPaymentRequested] = useState(false);
   // Read once from the URL at startup (stable object, safe in effect deps).
@@ -189,10 +212,56 @@ export default function MainApp() {
     if (phase !== 'payment' && phase !== 'summary') return;
     const rec = getRecruitment();
     if (rec.source !== 'prolific') return;
-    markProlificSessionCompleted(db, C.PROLIFIC_SESSION_COLLECTION, rec).catch(
-      (err) => console.error('Prolific completion mark failed:', err),
+    markProlificSessionCompleted(rec).catch((err) =>
+      console.error('Prolific completion mark failed:', err),
     );
   }, [phase]); // eslint-disable-line react-hooks/exhaustive-deps
+  // People arriving through a Prolific link or a personal payment-code link are identified by
+  // the link itself. If they have already consented to the current text, skip consent.
+  // Read-only; any failure just falls back to showing the consent page.
+  useEffect(() => {
+    if (phase !== 'consent' || entryStep !== 'checking' || !uid) return;
+    if (isAutoMode || isAIMode) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const wanted = consentVersionFor(recruitment.source);
+        let found = null;
+        if (recruitment.source === 'prolific') {
+          const r = await peekParticipant({ prolificId: recruitment.prolificId });
+          if (r.profile?.consent_version === wanted) {
+            found = { prolificId: recruitment.prolificId };
+          }
+        } else if (recruitment.tremendousToken) {
+          const { valid, owner } = await lookupPaymentCodeOwner(recruitment.tremendousToken);
+          if (valid && owner) {
+            const r = await peekParticipant({ key: owner });
+            if (r.profile?.consent_version === wanted) found = { key: owner };
+          }
+        }
+        if (cancelled) return;
+        if (found) {
+          setReturning(found);
+          setEntryStep('welcome_back');
+        } else {
+          setEntryStep('consent');
+        }
+      } catch (err) {
+        console.error('Returning-participant check failed (showing consent):', err);
+        if (!cancelled) setEntryStep('consent');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [phase, entryStep, uid]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Never leave someone on "Loading" if sign-in or the check hangs: fall back to consent.
+  useEffect(() => {
+    if (entryStep !== 'checking') return undefined;
+    const t = setTimeout(() => setEntryStep('consent'), 8000);
+    return () => clearTimeout(t);
+  }, [entryStep]);
   const [blockIdx, setblockIdx] = useState(-1);
   const [isRunning, setIsRunning] = useState(false);
   const [lastBlock, setLastBlock] = useState(null);
@@ -215,7 +284,6 @@ export default function MainApp() {
     saveSessionAggregates,
     resetCompletionFlag,
   } = useSessionPersistence({
-    db,
     C,
     target,
     uid,
@@ -342,9 +410,7 @@ export default function MainApp() {
           ),
         );
         if (isFullSession) {
-          setDoc(runRef, { completed: true }, { merge: true }).catch(
-            console.error,
-          );
+          markSessionCompleted(runRef).catch(console.error);
         }
       }
       isAIMode ? goToDone() : goToNext();
@@ -434,6 +500,93 @@ export default function MainApp() {
   }
 
   // CONSENT - Skip for auto/AI modes
+  // ---- Starting a session, after either the consent page or the welcome-back page.
+  // Every guard lives here so a returning participant who skips consent goes through exactly the
+  // same checks as one who consents: Prolific link reuse, payment already requested, personal
+  // payment code, Prolific WAVE, the session limit.
+  const startEntry = async ({ load, contact, consentVersion }) => {
+    const rec = getRecruitment();
+    // Prolific: one SESSION_ID may start one session. Fail closed.
+    if (rec.source === 'prolific') {
+      try {
+        const claim = await claimProlificSession(await requireUid(), rec);
+        if (!claim.ok) {
+          setProlificBlock(claim.reason);
+          return;
+        }
+      } catch (err) {
+        console.error('Prolific session claim failed:', err);
+        setProlificBlock('error');
+        return;
+      }
+    }
+    // Reset completion state so it's recomputed fresh for this session
+    resetCompletionFlag();
+    // Results-contact permission (also used when a session completes). Only set when a consent
+    // page gave an answer this visit. Without an email there is nothing to contact: false.
+    if (contact) {
+      emailOptInRef.current = contact.email ? contact.resultsContact : false;
+    }
+    const loaded = await load();
+    let { skipPreQ, usableCount } = loaded;
+    const { participantHash: loadedHash, paymentRequested: alreadyRequested } = loaded;
+    // Payment already requested: participation has ended.
+    if (alreadyRequested) {
+      setProlificBlock('payment_requested');
+      return;
+    }
+    // Remember which consent text this participant agreed to, so returning visits can skip it.
+    if (consentVersion && loadedHash) {
+      saveConsentRecord(loadedHash, { version: consentVersion }).catch((e) =>
+        console.error('Consent record save failed:', e),
+      );
+    }
+    // Personal payment code in the link: must be genuine, and usable by one participant only.
+    // Fail closed. (No code at all is allowed; such participants simply can't be paid.)
+    if (rec.source === 'direct' && rec.tremendousToken && loadedHash) {
+      try {
+        const codeClaim = await claimPaymentCode(rec.tremendousToken, loadedHash);
+        if (!codeClaim.ok) {
+          setProlificBlock(codeClaim.reason);
+          return;
+        }
+      } catch (err) {
+        console.error('Payment code check failed:', err);
+        setProlificBlock('error');
+        return;
+      }
+    }
+    // Prolific WAVE=n in the link is authoritative for the session number: this is session n,
+    // so n-1 are already done, and the pre-questionnaire is shown only on wave 1.
+    if (rec.source === 'prolific' && rec.wave) {
+      if (rec.wave - 1 !== usableCount) {
+        console.warn(
+          `WAVE=${rec.wave} differs from stored session count ${usableCount}; using WAVE.`,
+        );
+      }
+      setSessionCount(rec.wave - 1);
+      usableCount = rec.wave - 1;
+      skipPreQ = rec.wave > 1;
+    }
+    // Contact preferences, saved with the private linkage record each time a consent page is
+    // answered. The latest answer is current; every answer is kept in contact_history.
+    if (contact?.email && loadedHash) {
+      saveContactPreferences(loadedHash, {
+        resultsContact: contact.resultsContact,
+        futureContact: contact.futureContact,
+        sessionNumber: usableCount + 1,
+      }).catch((e) => console.error('Contact preferences save failed:', e));
+    }
+    if (usableCount >= C.MAX_SESSIONS_FOR_ANALYSIS) {
+      goToMaxSessions();
+      return;
+    }
+    // Straight on: skip the pre-questionnaire only if this participant has already submitted it
+    // (or WAVE > 1 for Prolific).
+    if (skipPreQ) goToOnboarding();
+    else goToPreQ();
+  };
+
   if (phase === 'consent') {
     // Auto and AI modes skip consent and questions
     if (isAutoMode || isAIMode) {
@@ -477,119 +630,117 @@ export default function MainApp() {
       );
     }
 
+    if (entryStep === 'checking') {
+      return (
+        <div className="App" style={{ textAlign: 'center', padding: 24 }}>
+          <p>Loading…</p>
+        </div>
+      );
+    }
+
+    if (entryStep === 'ask') {
+      return (
+        <ReturningParticipantGate
+          onNew={() => setEntryStep('consent')}
+          onLookup={async (typed) => {
+            // An "@" means an email address; otherwise it is a four-word user ID.
+            const isEmail = typed.includes('@');
+            const who = isEmail
+              ? { email: typed }
+              : { userId: normalizeUserId(typed) };
+            const r = await peekParticipant(who);
+            if (r.profile?.consent_version === consentVersionFor('volunteer')) {
+              setReturning(who);
+              setEntryStep('welcome_back');
+              return { found: true };
+            }
+            if (r.profile) {
+              // Known, but they have not agreed to the current consent text.
+              if (isEmail) setPrefillEmail(typed);
+              setEntryStep('consent');
+              return { found: true };
+            }
+            return { found: false };
+          }}
+        />
+      );
+    }
+
+    if (entryStep === 'welcome_back') {
+      return (
+        <WelcomeBackPage
+          busy={entryBusy}
+          onContinue={async () => {
+            setEntryBusy(true);
+            try {
+              await startEntry({
+                load: () =>
+                  returning?.key
+                    ? loadParticipantByKey(returning.key)
+                    : loadParticipant(
+                        returning?.email || null,
+                        returning?.prolificId || null,
+                        returning?.userId || null,
+                      ),
+                contact: null,
+                consentVersion: null,
+              });
+            } finally {
+              setEntryBusy(false);
+            }
+          }}
+        />
+      );
+    }
+
+    if (entryStep === 'show_user_id' && newUserId) {
+      return (
+        <UserIdScreen
+          userId={newUserId}
+          onConfirmed={() =>
+            startEntry({
+              load: () => loadParticipant(null, null, newUserId),
+              contact: { email: null, resultsContact: false, futureContact: false },
+              consentVersion: pendingConsent?.consentVersion || null,
+            })
+          }
+        />
+      );
+    }
+
     return (
       <div style={{ position: 'relative' }}>
         <ConsentInfoPage
           recruitment={getRecruitment()}
+          initialEmail={prefillEmail}
           onDecline={() => setDeclinedParticipation(true)}
           onAgree={async ({
             email,
             prolificId: consentProlificId,
             resultsContact,
             futureContact,
+            consentVersion,
+            wantsUserId,
           } = {}) => {
-            // Prolific: one SESSION_ID may start one session. Fail closed.
-            const rec = getRecruitment();
-            if (rec.source === 'prolific') {
-              try {
-                const claim = await claimProlificSession(
-                  db,
-                  C.PROLIFIC_SESSION_COLLECTION,
-                  await requireUid(),
-                  rec,
-                );
-                if (!claim.ok) {
-                  setProlificBlock(claim.reason);
-                  return;
-                }
-              } catch (err) {
-                console.error('Prolific session claim failed:', err);
-                setProlificBlock('error');
-                return;
+            if (wantsUserId) {
+              // Make a new, unused four-word ID, show it, and only continue once they have
+              // typed it back. Nothing is saved until then.
+              let id = generateUserId();
+              for (let i = 0; i < 5; i++) {
+                const taken = await peekParticipant({ userId: id });
+                if (!taken.profile) break;
+                id = generateUserId();
               }
-            }
-            // Reset completion state so it's recomputed fresh for this session
-            resetCompletionFlag();
-            // Results-contact permission (also used when a session completes).
-            // Both answers are saved to the linkage record just below.
-            // Without an email there is nothing to contact, so it is always false.
-            emailOptInRef.current = email ? resultsContact : false;
-            let {
-              skipPreQ,
-              usableCount,
-              participantHash: loadedHash,
-              paymentRequested: alreadyRequested,
-            } = await loadParticipant(email, consentProlificId);
-            // Payment already requested: participation has ended.
-            if (alreadyRequested) {
-              setProlificBlock('payment_requested');
+              setNewUserId(id);
+              setPendingConsent({ consentVersion });
+              setEntryStep('show_user_id');
               return;
             }
-            // Personal payment code in the link: must be genuine, and usable by
-            // one participant only. Fail closed. (No code at all is allowed;
-            // such participants simply can't be paid.)
-            if (rec.source === 'direct' && rec.tremendousToken && loadedHash) {
-              try {
-                const codeClaim = await claimPaymentCode(
-                  db,
-                  C.PAYMENT_CODE_COLLECTION,
-                  rec.tremendousToken,
-                  loadedHash,
-                );
-                if (!codeClaim.ok) {
-                  setProlificBlock(codeClaim.reason);
-                  return;
-                }
-              } catch (err) {
-                console.error('Payment code check failed:', err);
-                setProlificBlock('error');
-                return;
-              }
-            }
-            // Prolific WAVE=n in the link is authoritative for the session number:
-            // this is session n, so n-1 are already done, and the pre-questionnaire
-            // is shown only on wave 1. A mismatch with the stored count is logged.
-            if (rec.source === 'prolific' && rec.wave) {
-              const dbCount = usableCount;
-              if (rec.wave - 1 !== dbCount) {
-                console.warn(
-                  `WAVE=${rec.wave} differs from stored session count ${dbCount}; using WAVE.`,
-                );
-              }
-              setSessionCount(rec.wave - 1);
-              usableCount = rec.wave - 1;
-              skipPreQ = rec.wave > 1;
-            }
-            // Contact preferences, saved with the private linkage record every time
-            // they consent. The latest answer is the current one; every answer is
-            // also kept in contact_history so changes can be traced.
-            if (email && loadedHash) {
-              setDoc(
-                doc(db, C.EMAIL_LOOKUP_COLLECTION, loadedHash),
-                {
-                  results_contact: !!resultsContact,
-                  future_contact: !!futureContact,
-                  contact_updated_at: serverTimestamp(),
-                  contact_history: arrayUnion({
-                    at: new Date().toISOString(),
-                    session_number: usableCount + 1,
-                    results_contact: !!resultsContact,
-                    future_contact: !!futureContact,
-                  }),
-                },
-                { merge: true },
-              ).catch((e) =>
-                console.error('Contact preferences save failed:', e),
-              );
-            }
-            if (usableCount >= C.MAX_SESSIONS_FOR_ANALYSIS) {
-              goToMaxSessions();
-              return;
-            }
-            // Straight on after consent: skip the pre-questionnaire only if this
-            // participant has already submitted it (or WAVE > 1 for Prolific).
-            if (skipPreQ) goToOnboarding();
-            else goToPreQ();
+            return startEntry({
+              load: () => loadParticipant(email, consentProlificId),
+              contact: { email, resultsContact, futureContact },
+              consentVersion,
+            });
           }}
         />
       </div>
@@ -637,19 +788,17 @@ export default function MainApp() {
             // order the pages were shown in.
             try {
               const uidNow = await requireUid();
-              await setDoc(
-                doc(db, 'participants', uidNow),
-                {
-                  demographics: answers,
-                  participant_hash: participantHash || null,
-                  demographics_version: 'v2',
-                  pre_q_page_order: order,
-                  pre_q_pages_done: pageIndex + 1,
-                  updated_at: serverTimestamp(),
-                  ...(pageIndex === 0 ? { created_at: serverTimestamp() } : {}),
-                },
-                { merge: true },
-              );
+              await savePreQuestionnairePage(uidNow, {
+                answers,
+                participantKey: participantHash,
+                pageOrder: order,
+                pageIndex,
+                // Attention-check result so far (recorded only; never blocks anyone)
+                extra: (() => {
+                  const a = attentionCheckSummary(answers);
+                  return { attention_checks_passed: a.passed, attention_checks_total: a.total };
+                })(),
+              });
             } catch (e) {
               console.warn('Pre survey save error (non-blocking):', e);
             }
@@ -658,14 +807,7 @@ export default function MainApp() {
             if (isLast) {
               if (participantHash) {
                 try {
-                  await setDoc(
-                    doc(db, C.PARTICIPANT_COLLECTION, participantHash),
-                    {
-                      pre_q_completed: true,
-                      pre_q_completed_at: serverTimestamp(),
-                    },
-                    { merge: true },
-                  );
+                  await markQuestionnaireDone(participantHash);
                 } catch (e) {
                   console.error('Questionnaire flag save failed:', e);
                 }
@@ -1297,11 +1439,7 @@ export default function MainApp() {
             try {
               if (runRef) {
                 await saveSessionAggregates();
-                await setDoc(
-                  runRef,
-                  { post_survey: answers, completed: true },
-                  { merge: true },
-                );
+                await savePostSurvey(runRef, answers);
               }
 
               // No email — use UID-based counter in participants/{uid} (same-device only)
@@ -1309,11 +1447,7 @@ export default function MainApp() {
                 const newCount = sessionCount + 1;
                 if (uid) {
                   try {
-                    await setDoc(
-                      doc(db, 'participants', uid),
-                      { exp5_sessions: newCount },
-                      { merge: true },
-                    );
+                    await setUidSessionCount(uid, newCount);
                   } catch (e) {
                     console.error(
                       'UID count update failed (non-blocking):',
@@ -1364,8 +1498,6 @@ export default function MainApp() {
           onReturnLater={() => goToSummary()}
           onFinishAndRequestPayment={async () => {
             await recordPaymentRequest({
-              db,
-              profileCollection: C.PARTICIPANT_COLLECTION,
               participantHash,
               tremendousCode: recruitment.tremendousToken,
               sessionsCompleted: sessionCount,

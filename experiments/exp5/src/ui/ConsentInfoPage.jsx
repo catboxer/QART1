@@ -22,6 +22,15 @@ export const FORMAL_TITLE =
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
+ * The consent version stored with a participant's record for a given recruitment source:
+ * 'prolific' | 'volunteer' | anything else (paid direct). A returning participant can skip the
+ * consent page only if their stored version equals this one.
+ */
+export function consentVersionFor(source) {
+  return `${CONSENT_VERSION}_${source === 'prolific' ? 'PROLIFIC' : source === 'volunteer' ? 'VOLUNTEER' : 'DIRECT'}`;
+}
+
+/**
  * Section wrapper matching the app's existing .question-block card styling.
  */
 function Section({ title, children }) {
@@ -159,11 +168,12 @@ function YesNoQuestion({ legend, name, value, onChange }) {
  *   {
  *     consentVersion: string,
  *     eligibilityConfirmed: true, // 18+ and understands the English-language study information (separate voluntary-consent checkbox -> consents.participation)
- *     consents: { participation, dataProcessing, withdrawalAck, anonymizedUse, emailUse, multiSession, dataHandling } // all true
+ *     consents: { participation, dataProcessing, withdrawalAck, deletion, anonymizedUse, emailUse, multiSession, dataHandling } // all true
  *     resultsContact: boolean,
  *     futureContact: boolean,
  *     recruitmentSource: 'prolific'|'direct',
- *     email: string|null,      // direct: required; prolific: null
+ *     email: string|null,      // direct: required; prolific: null; volunteer: null if wantsUserId
+ *     wantsUserId: boolean,    // volunteer chose a generated user ID instead of an email
  *     prolificId: string|null, // prolific: from URL; direct: null
  *   }
  *
@@ -174,6 +184,7 @@ export default function ConsentInfoPage({
   onAgree,
   onDecline,
   recruitment,
+  initialEmail = '',
 }) {
   const idBase = useId();
   // Prolific-recruited participants arrive with ?PROLIFIC_PID=... in the URL
@@ -185,7 +196,9 @@ export default function ConsentInfoPage({
   // all payment wording is removed for them. They still give an email to link sessions.
   const isVolunteer = !isProlific && recruitment?.source === 'volunteer';
   const prolificId = isProlific ? recruitment.prolificId : '';
-  const consentVersion = `${CONSENT_VERSION}_${isProlific ? 'PROLIFIC' : isVolunteer ? 'VOLUNTEER' : 'DIRECT'}`;
+  const consentVersion = consentVersionFor(
+    isProlific ? 'prolific' : isVolunteer ? 'volunteer' : 'direct',
+  );
 
   const [ageConfirmed, setAgeConfirmed] = useState(false);
   const [participationConsent, setParticipationConsent] =
@@ -193,6 +206,7 @@ export default function ConsentInfoPage({
   const [dataProcessingConsent, setDataProcessingConsent] =
     useState(false);
   const [withdrawalAck, setWithdrawalAck] = useState(false);
+  const [deletionAck, setDeletionAck] = useState(false);
   const [anonymizedUseConsent, setAnonymizedUseConsent] =
     useState(false);
   const [emailUseAck, setEmailUseAck] = useState(false);
@@ -201,23 +215,30 @@ export default function ConsentInfoPage({
 
   const [resultsContact, setResultsContact] = useState(null); // null | true | false
   const [futureContact, setFutureContact] = useState(null); // null | true | false
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(initialEmail);
+  // Volunteers may give an email, or choose a user ID that the app creates for them.
+  const [idMode, setIdMode] = useState('email'); // 'email' | 'generated'
+  const wantsUserId = isVolunteer && idMode === 'generated';
   const [submitAttempted, setSubmitAttempted] = useState(false);
 
   // Direct participants must give a valid email (used for payment).
   // Prolific participants are identified by the Prolific ID from the URL and
   // are not asked for an email, so the two email-contact questions apply
   // (and are required) only to direct participants.
-  const hasEmail = !isProlific && email.trim() !== '';
-  const emailValid = isProlific || EMAIL_RE.test(email.trim());
+  const hasEmail = !isProlific && !wantsUserId && email.trim() !== '';
+  const emailValid = isProlific || wantsUserId || EMAIL_RE.test(email.trim());
+  // The two contact questions are about emailing the participant, so they only
+  // apply when an email is given.
+  const needsContactAnswers = !isProlific && !wantsUserId;
   const contactAnswered =
-    isProlific || (resultsContact !== null && futureContact !== null);
+    !needsContactAnswers || (resultsContact !== null && futureContact !== null);
 
   const ready =
     ageConfirmed &&
     participationConsent &&
     dataProcessingConsent &&
     withdrawalAck &&
+    deletionAck &&
     anonymizedUseConsent &&
     emailUseAck &&
     multiSessionAck &&
@@ -240,6 +261,7 @@ export default function ConsentInfoPage({
         participation: true,
         dataProcessing: true,
         withdrawalAck: true,
+        deletion: true,
         anonymizedUse: true,
         emailUse: true,
         multiSession: true,
@@ -248,6 +270,7 @@ export default function ConsentInfoPage({
       resultsContact: hasEmail && !!resultsContact,
       futureContact: hasEmail && !!futureContact,
       email: hasEmail ? email.trim() : null,
+      wantsUserId,
       prolificId: isProlific ? prolificId : null,
     });
   };
@@ -334,7 +357,8 @@ export default function ConsentInfoPage({
           The first session includes study questionnaires followed by
           the color intent task. The first session
           is expected to take approximately {FIRST_SESSION_MINUTES}{' '}
-          minutes.
+          minutes. A few questions simply ask you to select a specific
+          answer, to check that you are reading carefully.
         </p>
         <p>
           Sessions 2 through 5 contain a shorter set of questions and
@@ -502,9 +526,9 @@ export default function ConsentInfoPage({
           <li>Post-session ratings and strategy responses</li>
           <li>
             {isProlific
-              ? 'Your Prolific participant ID, used for payment through Prolific'
+              ? 'Your Prolific participant ID, used to link your study sessions together, for payment through Prolific, and to contact you through Prolific'
               : isVolunteer
-                ? 'Your email address, used to link your study sessions together'
+                ? 'Your email address, or a user ID created for you if you prefer not to give an email, used to link your study sessions together'
                 : 'Your email address, required for payment administration, and the payment code contained in your personal study link'}
           </li>
           {!isVolunteer && (
@@ -520,14 +544,27 @@ export default function ConsentInfoPage({
           participant code rather than directly under your name or
           email address.
         </p>
-        <p>
-          Your {isProlific ? 'Prolific ID' : 'email address'} is
-          connected to your participant code in a separate restricted
-          linkage record. This makes the data pseudonymized until the
-          linkage record is destroyed. {RESEARCHER_NAME} will have routine
-          access to the linkage record. {PI_NAME} may access it when
-          necessary for project oversight.
-        </p>
+        {isVolunteer ? (
+          <p>
+            If you give your email address, it is connected to your
+            participant code in a separate restricted linkage record.
+            This makes the data pseudonymized until the linkage record is
+            destroyed. {RESEARCHER_NAME} will have routine access to the
+            linkage record. {PI_NAME} may access it when necessary for
+            project oversight. If you choose a user ID instead, no email
+            address is stored, and your ID is kept only in scrambled
+            (one-way) form.
+          </p>
+        ) : (
+          <p>
+            Your {isProlific ? 'Prolific ID' : 'email address'} is
+            connected to your participant code in a separate restricted
+            linkage record. This makes the data pseudonymized until the
+            linkage record is destroyed. {RESEARCHER_NAME} will have routine
+            access to the linkage record. {PI_NAME} may access it when
+            necessary for project oversight.
+          </p>
+        )}
         {!isVolunteer && (
           <p>
             {isProlific
@@ -573,24 +610,36 @@ export default function ConsentInfoPage({
       <Section title={isProlific ? 'Contact and study updates' : 'Email use'}>
         {isProlific ? (
           <p>
-            Your Prolific ID is used for payment administration. It is
+            Your Prolific ID is used to link your study sessions together,
+            for payment through Prolific, and to contact you through
+            Prolific. It is
             stored in a restricted linkage record separate
             from the primary research dataset. The research team can
             only contact you through Prolific.
           </p>
         ) : (
           <>
-            <p>
-              Your email address is required for{' '}
-              {isVolunteer
-                ? 'linking your study sessions together'
-                : 'payment administration'}
-              . It is stored in a restricted
-              linkage record separate from the primary research
-              dataset. It will not be used for study updates or
-              future-study contact unless you separately opt in
-              below.
-            </p>
+            {isVolunteer ? (
+              <p>
+                To link your study sessions together, you can either give
+                your email address or, if you prefer not to, use a user ID
+                created for you. If you choose a user ID, we cannot contact
+                you or help you if you lose it. An email address is stored
+                in a restricted linkage record separate from the primary
+                research dataset, and will not be used for study updates or
+                future-study contact unless you separately opt in below. If
+                you ask for your data to be deleted, you will need to give
+                us the email address or user ID you used.
+              </p>
+            ) : (
+              <p>
+                Your email address is required for payment administration.
+                It is stored in a restricted linkage record separate from
+                the primary research dataset. It will not be used for study
+                updates or future-study contact unless you separately opt in
+                below.
+              </p>
+            )}
             <p>
               If you choose to receive the study results, we will
               email you a copy of the results when they are available.
@@ -624,7 +673,12 @@ export default function ConsentInfoPage({
         </p>
         <p>
           <strong>Linkage record.</strong> Your{' '}
-          {isProlific ? 'Prolific ID' : 'email address'} is kept in a
+          {isProlific
+            ? 'Prolific ID'
+            : isVolunteer
+              ? 'email address, if you give one,'
+              : 'email address'}{' '}
+          is kept in a
           separate restricted record that connects it to your
           participant code. It is not part of
           the research dataset.
@@ -702,11 +756,23 @@ export default function ConsentInfoPage({
             checked={withdrawalAck}
             onChange={setWithdrawalAck}
           >
-            I acknowledge that I may stop participating at any time,
-            {isVolunteer ? ' ' : ' that I will retain payment earned for completed sessions, '}
-            and that individual deletion will no longer be possible
-            after the participant-code linkage has been destroyed and
-            the data have become anonymous.
+            I acknowledge that I may stop participating at any time
+            {isVolunteer
+              ? ''
+              : ', and that I will retain payment earned for completed sessions'}
+            .
+          </RequiredCheckbox>
+
+          <RequiredCheckbox
+            id={`${idBase}-deletion-ack`}
+            checked={deletionAck}
+            onChange={setDeletionAck}
+          >
+            I understand that I can only request that my data be deleted
+            before the linkage file is deleted on {RETENTION_DEADLINE}.
+            Individual deletion will no longer be possible after the
+            linkage file has been destroyed and the data have become
+            anonymous.
           </RequiredCheckbox>
 
           <RequiredCheckbox
@@ -725,9 +791,9 @@ export default function ConsentInfoPage({
             onChange={setEmailUseAck}
           >
             {isProlific
-              ? 'I understand that my Prolific ID will be used for payment administration.'
+              ? 'I understand that my Prolific ID will be used to link my study sessions together, for payment through Prolific, and to contact me through Prolific.'
               : isVolunteer
-                ? 'I understand that my email address will be used to link my study sessions together.'
+                ? 'I understand that my email address (or the user ID created for me, if I give no email) will be used to link my study sessions together.'
                 : 'I understand that my email address will be used for payment administration.'}
           </RequiredCheckbox>
 
@@ -737,8 +803,12 @@ export default function ConsentInfoPage({
             onChange={setMultiSessionAck}
           >
             I understand that this consent covers up to five study
-            sessions, and that I need to use the same personal link
-            each time I return.
+            sessions, so I will not be asked to consent again
+            {isProlific
+              ? ' when I return through Prolific.'
+              : isVolunteer
+                ? ' when I return, as long as I use the same email address or user ID.'
+                : ' when I return, as long as I use the same personal link.'}
           </RequiredCheckbox>
 
           <RequiredCheckbox
@@ -757,7 +827,59 @@ export default function ConsentInfoPage({
           </RequiredCheckbox>
         </div>
 
-        {!isProlific && (
+        {isVolunteer && (
+          <fieldset
+            style={{
+              border: '1px solid var(--border)',
+              borderRadius: 'var(--radius-sm)',
+              padding: '12px 14px',
+              margin: '1.5rem 0 0',
+            }}
+          >
+            <legend style={{ fontWeight: 600, padding: '0 6px', fontSize: 14.5 }}>
+              How should we link your sessions together?
+              <RequiredTag />
+            </legend>
+            <label
+              style={{ display: 'flex', gap: 10, alignItems: 'flex-start', cursor: 'pointer', marginBottom: 8 }}
+            >
+              <input
+                type="radio"
+                name={`${idBase}-id-mode`}
+                checked={idMode === 'email'}
+                onChange={() => setIdMode('email')}
+                style={{ marginTop: 4 }}
+              />
+              <span>Use my email address</span>
+            </label>
+            <label
+              style={{ display: 'flex', gap: 10, alignItems: 'flex-start', cursor: 'pointer' }}
+            >
+              <input
+                type="radio"
+                name={`${idBase}-id-mode`}
+                checked={idMode === 'generated'}
+                onChange={() => setIdMode('generated')}
+                style={{ marginTop: 4 }}
+              />
+              <span>
+                I would rather not give my email address: create a user ID
+                for me
+              </span>
+            </label>
+            {wantsUserId && (
+              <div style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 10 }}>
+                After you agree, you will be shown a user ID made of four
+                words. Write it down: it is the only way to link your later
+                sessions, and nobody can recover it for you. Without an
+                email, we cannot contact you with results or about future
+                studies.
+              </div>
+            )}
+          </fieldset>
+        )}
+
+        {!isProlific && !wantsUserId && (
         <div style={{ marginTop: '1.5rem' }}>
           <label
             htmlFor={`${idBase}-email`}
@@ -831,7 +953,7 @@ export default function ConsentInfoPage({
           </div>
         )}
 
-        {!isProlific && (
+        {needsContactAnswers && (
         <div style={{ marginTop: '1.5rem' }}>
           <h3 style={{ fontSize: 15, margin: '0 0 0.75rem' }}>
             Contact preferences
@@ -894,9 +1016,9 @@ export default function ConsentInfoPage({
           }}
         >
           Please accept all required items above
-          {!isProlific && ' and answer both contact questions'} before
+          {needsContactAnswers && ' and answer both contact questions'} before
           continuing.
-          {!isProlific &&
+          {needsContactAnswers &&
             !emailValid &&
             ' A valid email address is also required.'}
         </div>

@@ -1,4 +1,4 @@
-import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { markPaymentRequested } from './database.js';
 
 /**
  * "Request payment now": records the request on the participant's profile
@@ -10,8 +10,6 @@ import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
  * The Netlify form only exists on the deployed site (not under `netlify dev`).
  */
 export async function recordPaymentRequest({
-  db,
-  profileCollection,
   participantHash,
   tremendousCode,
   sessionsCompleted,
@@ -19,13 +17,7 @@ export async function recordPaymentRequest({
   const tasks = [];
 
   if (participantHash) {
-    tasks.push(
-      setDoc(
-        doc(db, profileCollection, participantHash),
-        { payment_requested: true, payment_requested_at: serverTimestamp() },
-        { merge: true },
-      ),
-    );
+    tasks.push(markPaymentRequested(participantHash));
   }
 
   const body = new URLSearchParams({

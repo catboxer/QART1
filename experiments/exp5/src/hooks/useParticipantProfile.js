@@ -1,10 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
-  collection, doc, getDoc, getDocs, setDoc, serverTimestamp,
-  query, where, orderBy, limit,
-} from 'firebase/firestore';
-import { ensureSignedIn } from '../firebase.js';
+  ensureSignedIn,
+  getParticipantProfile,
+  createProfileAlias,
+  getUidSessionCount,
+  listCompletedSessionsForUid,
+} from '../lib/database.js';
 import { buildParticipantHistory } from '../lib/sessionHistory.js';
+import { normalizeUserId } from '../lib/userId.js';
 
 // ── identifier → truncated SHA-256 hex ───────────────────────────────────────
 // Emails hash as-is; Prolific IDs get a prefix so the two can never collide.
@@ -18,6 +21,42 @@ async function hashIdentifier(value) {
 }
 
 /**
+ * Find a participant's profile from the identifiers they supplied (read-only).
+ * Candidate keys are tried in order (email first, then Prolific ID); the canonical key is the
+ * first candidate that already has a profile, following an `alias_of` pointer if that
+ * candidate is only an alias. If none exists yet, it is the first candidate.
+ * -> { hash, profile (data or null), candidates, existsByCandidate }
+ */
+async function resolveProfile(emailClean, prolificClean, userIdClean = '') {
+  const candidates = [];
+  if (emailClean) candidates.push(await hashIdentifier(emailClean));
+  if (prolificClean)
+    candidates.push(await hashIdentifier(`prolific:${prolificClean}`));
+  // Volunteers who give no email use a generated four-word user ID; only a one-way
+  // code made from it is ever stored.
+  if (userIdClean)
+    candidates.push(await hashIdentifier(`volunteer-id:${userIdClean}`));
+
+  let hash = candidates[0];
+  let foundDoc = null;
+  const existsByCandidate = {};
+  for (const cand of candidates) {
+    const found = await getParticipantProfile(cand);
+    existsByCandidate[cand] = found.exists;
+    if (found.exists && !foundDoc) {
+      hash = found.data.alias_of || cand;
+      foundDoc = found.data.alias_of ? await getParticipantProfile(hash) : found;
+    }
+  }
+  return {
+    hash,
+    profile: foundDoc && foundDoc.exists ? foundDoc.data : null,
+    candidates,
+    existsByCandidate,
+  };
+}
+
+/**
  * Owns Firebase sign-in, participant profile load, and session history.
  *
  * loadParticipant(email) — call from ConsentGate.onAgree.
@@ -25,9 +64,9 @@ async function hashIdentifier(value) {
  *
  * requireUid() — async; throws if auth fails (use before Firestore writes).
  *
- * @param {{ db, C }} options
+ * @param {{ C }} options
  */
-export function useParticipantProfile({ db, C }) {
+export function useParticipantProfile({ C }) {
   const [userReady, setUserReady] = useState(false);
   const [checkedReturning, setCheckedReturning] = useState(false);
   const [uid, setUid] = useState(null);
@@ -88,14 +127,7 @@ export function useParticipantProfile({ db, C }) {
     if (!uid) return { usableCount: 0 };
     setParticipantHash(uid);
     try {
-      const sessionsQ = query(
-        collection(db, C.PRESCREEN_COLLECTION),
-        where('participant_id', '==', uid),
-        where('completed', '==', true),
-        orderBy('createdAt', 'asc'),
-        limit(50),
-      );
-      const snap = await getDocs(sessionsQ);
+      const sessionDocs = await listCompletedSessionsForUid(uid);
       const {
         sessionCount: sc,
         usableSessionCount: usc,
@@ -106,7 +138,7 @@ export function useParticipantProfile({ db, C }) {
         pastSubjectHits: sHits,
         pastDemonHits: dHits,
         pastDemonTrials: dTrials,
-      } = buildParticipantHistory(snap.docs, C, { includeAllTypes: true });
+      } = buildParticipantHistory(sessionDocs, C, { includeAllTypes: true });
       setPastH_s(h_s);
       setPastH_d(h_d);
       setPastBits(bits);
@@ -121,57 +153,35 @@ export function useParticipantProfile({ db, C }) {
       console.error('Auto participant history load failed (non-blocking):', err);
       return { usableCount: 0 };
     }
-  }, [db, C, uid]);
+  }, [C, uid]);
 
   // ── loadParticipant — called from ConsentGate.onAgree ───────────────────────
   // Returns { skipPreQ, usableCount } so the caller can navigate (and gate on max sessions).
   const loadParticipant = useCallback(
-    async (email, prolificIdInput) => {
+    async (email, prolificIdInput, userIdInput) => {
       let profile = null;
       let usableCount = 0;
       let resolvedHash = null;
       const emailClean = (email || '').trim();
       const prolificClean = (prolificIdInput || '').trim();
-      if (emailClean || prolificClean) {
+      const userIdClean = normalizeUserId(userIdInput);
+      if (emailClean || prolificClean || userIdClean) {
         setEmailPlaintext(emailClean);
         setProlificId(prolificClean);
         try {
-          // Candidate keys, in lookup order. The participant's canonical key is
-          // the first candidate that already has a profile (following an
-          // `alias_of` pointer if that candidate is only an alias); if none
-          // exists yet, it is the first candidate (email wins over Prolific ID).
-          const candidates = [];
-          if (emailClean) candidates.push(await hashIdentifier(emailClean));
-          if (prolificClean)
-            candidates.push(await hashIdentifier(`prolific:${prolificClean}`));
-
-          let hash = candidates[0];
-          let foundDoc = null;
-          const existsByCandidate = {};
-          for (const cand of candidates) {
-            const snap = await getDoc(doc(db, C.PARTICIPANT_COLLECTION, cand));
-            existsByCandidate[cand] = snap.exists();
-            if (snap.exists() && !foundDoc) {
-              const data = snap.data();
-              hash = data.alias_of || cand;
-              foundDoc = data.alias_of
-                ? (await getDoc(doc(db, C.PARTICIPANT_COLLECTION, hash)))
-                : snap;
-            }
-          }
+          const { hash, profile: foundProfile, candidates, existsByCandidate } =
+            await resolveProfile(emailClean, prolificClean, userIdClean);
           setParticipantHash(hash);
           resolvedHash = hash;
-          profile = foundDoc && foundDoc.exists() ? foundDoc.data() : null;
+          profile = foundProfile;
 
           // Link any other identifier the participant supplied to the same
           // profile, so a later visit with only that identifier finds it.
           for (const cand of candidates) {
             if (cand !== hash && !existsByCandidate[cand]) {
-              setDoc(
-                doc(db, C.PARTICIPANT_COLLECTION, cand),
-                { alias_of: hash, created_at: serverTimestamp() },
-                { merge: true },
-              ).catch((err) => console.error('Alias save failed:', err));
+              createProfileAlias(cand, hash).catch((err) =>
+                console.error('Alias save failed:', err),
+              );
             }
           }
           setParticipantProfile(profile);
@@ -183,6 +193,9 @@ export function useParticipantProfile({ db, C }) {
           usableCount = sc;
           setSessionCount(sc);
           setUsableSessionCount(sc);
+          // Running totals for the cumulative average shown on the results screen.
+          setPastSubjectHits(profile?.total_hits ?? 0);
+          setPastDemonTrials(profile?.total_trials ?? 0);
         } catch (err) {
           console.error('Profile load error (non-blocking):', err);
         }
@@ -190,11 +203,8 @@ export function useParticipantProfile({ db, C }) {
         // Fallback: UID → exp5-specific counter on participants/{uid}
         // (scoped to this experiment so it doesn't collide with other studies)
         try {
-          const uidRef = doc(db, 'participants', uid);
-          const uidSnap = await getDoc(uidRef);
-          if (uidSnap.exists()) {
-            setSessionCount(uidSnap.data().exp5_sessions ?? 0);
-          }
+          const uidCount = await getUidSessionCount(uid);
+          if (uidCount !== null) setSessionCount(uidCount);
         } catch (err) {
           console.error('UID session count load failed (non-blocking):', err);
         }
@@ -212,8 +222,53 @@ export function useParticipantProfile({ db, C }) {
         paymentRequested: !!profile?.payment_requested,
       };
     },
-    [db, C, uid],
+    [uid],
   );
+
+  // ── peekParticipant — read-only lookup used BEFORE consent to see whether a
+  // returning participant can skip it. Sets no state and writes nothing.
+  // Give an email, Prolific ID and/or user ID, or an already-known participant `key`.
+  // -> { hash, profile (data or null) }
+  const peekParticipant = useCallback(async ({ email, prolificId: pid, userId, key } = {}) => {
+    if (key) {
+      const found = await getParticipantProfile(key);
+      return { hash: key, profile: found.exists ? found.data : null };
+    }
+    const { hash, profile } = await resolveProfile(
+      (email || '').trim(),
+      (pid || '').trim(),
+      normalizeUserId(userId),
+    );
+    return { hash, profile };
+  }, []);
+
+  // ── loadParticipantByKey — like loadParticipant, for a returning participant
+  // identified by a known key (their payment-code claim) instead of an email.
+  const loadParticipantByKey = useCallback(async (key) => {
+    let profile = null;
+    let usableCount = 0;
+    try {
+      setParticipantHash(key);
+      const found = await getParticipantProfile(key);
+      profile = found.exists ? found.data : null;
+      setParticipantProfile(profile);
+      const sc = profile?.session_count ?? 0;
+      usableCount = sc;
+      setSessionCount(sc);
+      setUsableSessionCount(sc);
+      setPastSubjectHits(profile?.total_hits ?? 0);
+      setPastDemonTrials(profile?.total_trials ?? 0);
+    } catch (err) {
+      console.error('Profile load error (non-blocking):', err);
+    }
+    return {
+      skipPreQ: !!profile?.pre_q_completed,
+      usableCount,
+      participantHash: key,
+      profileSessionCount: profile?.session_count ?? 0,
+      paymentRequested: !!profile?.payment_requested,
+    };
+  }, []);
 
   return {
     loading: !userReady || !checkedReturning,
@@ -234,6 +289,8 @@ export function useParticipantProfile({ db, C }) {
     pastDemonTrials,
     requireUid,
     loadParticipant,
+    loadParticipantByKey,
+    peekParticipant,
     loadAutoParticipant,
     setCumulativeHistory,
   };

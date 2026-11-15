@@ -1,7 +1,11 @@
 import { useRef, useCallback, useEffect } from 'react';
 import {
-  doc, setDoc, updateDoc, serverTimestamp, increment, arrayUnion,
-} from 'firebase/firestore';
+  saveBlockResult,
+  saveBlockCommit,
+  saveAudit,
+  recordAuditFailure,
+  markSessionExitedEarly,
+} from '../lib/database.js';
 import { fetchQRNGBits } from '../fetchQRNGBits.js';
 import { runNISTAudit } from '../nistTests.js';
 import { splitBlockBits, computeBlockStats } from '../lib/trialBlock.js';
@@ -162,16 +166,15 @@ export function useTrialRunner({
       shannonEntropy(demonBitsRef.current.slice(2 * third)),
     ];
 
-    const mdoc      = doc(runRef, 'minutes', String(saveBlockIdx));
     const targetBit = target === 'BLUE' ? 1 : 0;
 
-    await setDoc(
-      mdoc,
+    await saveBlockResult(
+      runRef,
+      saveBlockIdx,
       {
         idx:       saveBlockIdx,
         kind:      'instant',
         ended_by:  'instant_process',
-        startedAt: serverTimestamp(),
         fetch_triggered_at: fetchTriggeredAtRef.current,
 
         // Subject
@@ -224,7 +227,6 @@ export function useTrialRunner({
             }
           : null,
       },
-      { merge: true },
     );
   }, [runRef, target]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -281,8 +283,7 @@ export function useTrialRunner({
 
         // ANTI-TIMING-ATTACK: commit bits to Firestore before processing
         if (runRef) {
-          const blockCommitDoc = doc(runRef, 'block_commits', String(blockIdx));
-          await setDoc(blockCommitDoc, {
+          await saveBlockCommit(runRef, blockIdx, {
             blockIdx,
             bits: quantumData.bits,
             auth: {
@@ -291,7 +292,6 @@ export function useTrialRunner({
               source:    quantumData.source,
               bitCount:  quantumData.bits.length,
             },
-            committedAt:      serverTimestamp(),
             clientCommitTime: new Date().toISOString(),
             target,
           });
@@ -312,8 +312,7 @@ export function useTrialRunner({
 
         if (!isCancelled) {
           if (runRef) {
-            await updateDoc(runRef, {
-              exitedEarly:         true,
+            await markSessionExitedEarly(runRef, {
               exit_reason:         'qrng_unavailable',
               exit_error_details:  errorDetails,
               exit_block_index:    blockIdx,
@@ -380,8 +379,7 @@ export function useTrialRunner({
         const auditEntropy  = shannonEntropy(auditBitArray);
 
         if (runRef) {
-          const auditDoc = doc(runRef, 'audits', `after_block_${blockIdx}`);
-          await setDoc(auditDoc, {
+          await saveAudit(runRef, blockIdx, {
             blockAfter:   blockIdx,
             totalBits:    C.AUDIT_BITS_PER_BREAK,
             auditBits:    auditData.bits,
@@ -399,10 +397,7 @@ export function useTrialRunner({
           });
 
           if (!isRandom) {
-            await setDoc(runRef, {
-              audit_failure_count:  increment(1),
-              audit_failed_blocks:  arrayUnion(blockIdx),
-            }, { merge: true });
+            await recordAuditFailure(runRef, blockIdx);
           }
         }
 

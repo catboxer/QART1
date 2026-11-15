@@ -1,7 +1,12 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import {
-  collection, doc, addDoc, setDoc, serverTimestamp, increment,
-} from 'firebase/firestore';
+  createSession,
+  sessionId,
+  saveSessionSummary,
+  markSessionCompleted,
+  recordSessionCompletedOnProfile,
+  saveLinkageRecord,
+} from '../lib/database.js';
 import { packBitsToBase64, unpackBitsFromBase64 } from '../lib/rawBitsCodec.js';
 import { normalCdf } from '../stats/index.js';
 
@@ -42,7 +47,7 @@ function rleEncode(arr) {
  * lastPersistedBlockRef lives here (persistence concern, not trial concern).
  *
  * @param {{
- *   db, C,
+ *   C,
  *   target, uid, requireUid,
  *   participantHash, isAutoMode, isAIMode,
  *   totals, totalGhostHits,
@@ -56,7 +61,7 @@ function rleEncode(arr) {
  * }} options
  */
 export function useSessionPersistence({
-  db, C,
+  C,
   target, uid, requireUid,
   participantHash, isAutoMode, isAIMode,
   totals, totalGhostHits,
@@ -96,7 +101,6 @@ export function useSessionPersistence({
           throw new Error('logic/order: target must be set before creating run');
         const uidNow = uid || (await requireUid());
 
-        const col = collection(db, C.PRESCREEN_COLLECTION);
         const now = new Date();
         const day_bucket = now.toISOString().slice(0, 10);
 
@@ -104,8 +108,8 @@ export function useSessionPersistence({
         const user_agent = typeof navigator !== 'undefined' ? navigator.userAgent : null;
         const connection_type = typeof navigator !== 'undefined' ? (navigator.connection?.effectiveType ?? null) : null;
 
-        console.log('[ensureRunDoc] calling addDoc — uid:', uidNow.substring(0, 8), 'collection:', C.PRESCREEN_COLLECTION);
-        const docRef = await addDoc(col, {
+        console.log('[ensureRunDoc] creating session — uid:', uidNow.substring(0, 8), 'collection:', C.PRESCREEN_COLLECTION);
+        const docRef = await createSession({
           participant_id: uidNow,
           participant_hash: participantHash || null,
           recruitment_source: recruitment?.source ?? 'direct', // 'prolific' | 'direct' (paid via Tremendous) | 'volunteer'
@@ -121,7 +125,6 @@ export function useSessionPersistence({
               }
             : {}),
           experimentId: C.EXPERIMENT_ID,
-          createdAt: serverTimestamp(),
           blocks_planned: C.BLOCKS_TOTAL,
           timestamp: now.toISOString(),
           session_type: isAutoMode ? 'baseline' : isAIMode ? 'ai_agent' : 'human',
@@ -131,7 +134,7 @@ export function useSessionPersistence({
           connection_type,
           exitedEarly: false,
         });
-        console.log('[ensureRunDoc] addDoc success:', docRef.id);
+        console.log('[ensureRunDoc] session created:', sessionId(docRef));
         setRunRef(docRef);
         return docRef;
       } catch (error) {
@@ -193,7 +196,7 @@ export function useSessionPersistence({
         else console.log(`✅ raw_bits_b64 round-trip OK (${orig.length} blocks × ${C.BITS_PER_BLOCK} bits)`);
       }
 
-      await setDoc(
+      await saveSessionSummary(
         runRef,
         {
           block_count_actual: deltaHurstHistory.length,
@@ -229,7 +232,6 @@ export function useSessionPersistence({
             reg_pValue,
           },
         },
-        { merge: true },
       );
 
       console.log('✅ Session aggregates saved:', runRef.id, {
@@ -275,45 +277,36 @@ export function useSessionPersistence({
         // session is "usable" for the next session's cumulative history even
         // if the participant never completes the post-survey.
         saveSessionAggregates().catch(console.error);
-        setDoc(runRef, { completed: true }, { merge: true }).catch(console.error);
+        markSessionCompleted(runRef).catch(console.error);
       }
 
-      // Participant doc: scalars only — no growing arrays
-      const profRef = doc(db, C.PARTICIPANT_COLLECTION, participantHash);
-      const todayUTC = new Date().toISOString().slice(0, 10);
-      setDoc(
-        profRef,
-        {
-          // Prolific wave (when given) is authoritative; otherwise add one.
-          session_count: recruitment?.wave ? recruitment.wave : increment(1),
-          last_session_date: todayUTC,
-          participant_type: isAutoMode ? 'baseline' : isAIMode ? 'ai' : 'human',
-          updated_at: serverTimestamp(),
-          ...(emailPlaintext ? { email_opt_in: !!emailOptInRef?.current } : {}),
-          ...(!participantProfile ? { created_at: serverTimestamp() } : {}),
-        },
-        { merge: true },
-      ).catch((err) => console.error('Profile save failed:', err));
+      // Participant profile: scalars only — no growing arrays
+      recordSessionCompletedOnProfile(participantHash, {
+        wave: recruitment?.wave,
+        sessionType: isAutoMode ? 'baseline' : isAIMode ? 'ai' : 'human',
+        // Only written when this session's consent gave an answer (returning
+        // participants skip consent, so their earlier answer must not be overwritten).
+        emailOptIn:
+          emailPlaintext && typeof emailOptInRef?.current === 'boolean'
+            ? emailOptInRef.current
+            : undefined,
+        isNewProfile: !participantProfile,
+        hits: totals.k,
+        trials: totals.n,
+      }).catch((err) => console.error('Profile save failed:', err));
 
-      // Private lookup table: plaintext email and/or Prolific ID stored
-      // separately from research data
+      // Private linkage record: plaintext email and/or Prolific ID (and the
+      // personal payment code from the link), stored separately from research data
       if (emailPlaintext || prolificId) {
-        const emailRef = doc(db, C.EMAIL_LOOKUP_COLLECTION, participantHash);
-        setDoc(
-          emailRef,
-          {
-            ...(emailPlaintext ? { email: emailPlaintext } : {}),
-            ...(prolificId ? { prolific_id: prolificId } : {}),
-            // Personal payment code from the participant's link (?TREMENDOUS=...);
-            // stored only here, in the private linkage record, never in research data.
-            ...(recruitment?.tremendousToken
-              ? { tremendous_token: recruitment.tremendousToken }
-              : {}),
-            email_opt_in: !!emailPlaintext && !!emailOptInRef?.current,
-            updated_at: serverTimestamp(),
-          },
-          { merge: true },
-        ).catch((err) => console.error('Email lookup save failed:', err));
+        saveLinkageRecord(participantHash, {
+          email: emailPlaintext,
+          prolificId,
+          tremendousToken: recruitment?.tremendousToken,
+          emailOptIn:
+            emailPlaintext && typeof emailOptInRef?.current === 'boolean'
+              ? emailOptInRef.current
+              : undefined,
+        }).catch((err) => console.error('Email lookup save failed:', err));
       }
     }
 
@@ -326,7 +319,7 @@ export function useSessionPersistence({
         count: newCount, usableCount: usableNewCount,
       });
     }
-  }, [phase, sessionCount, usableSessionCount, participantProfile, participantHash, emailPlaintext, prolificId, recruitment, runRef, isAutoMode, isAIMode, onHistoryUpdated, hurstSubjectHistory, hurstDemonHistory, subjectBitsHistory, demonBitsHistory, totalGhostHits, totals.n, totals.k, pastH_s, pastH_d, pastBits, pastDemonBits, pastSubjectHits, pastDemonHits, pastDemonTrials, allRawBitsRef, db, C, saveSessionAggregates]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [phase, sessionCount, usableSessionCount, participantProfile, participantHash, emailPlaintext, prolificId, recruitment, runRef, isAutoMode, isAIMode, onHistoryUpdated, hurstSubjectHistory, hurstDemonHistory, subjectBitsHistory, demonBitsHistory, totalGhostHits, totals.n, totals.k, pastH_s, pastH_d, pastBits, pastDemonBits, pastSubjectHits, pastDemonHits, pastDemonTrials, allRawBitsRef, C, saveSessionAggregates]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return {
     runRef,

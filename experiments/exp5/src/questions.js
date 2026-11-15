@@ -250,6 +250,17 @@ export const preQuestions = [
     question: "Do you seem to notice changes in the weather more than others do?",
   },
   {
+    id: 'attn_check_1',
+    page: 'sensitivity',
+    isAttentionCheck: true,
+    expected: 4,
+    type: 'likert',
+    scale: [1, 2, 3, 4, 5, 6, 7],
+    leftAnchor: 'Not at all',
+    rightAnchor: 'Extremely',
+    question: 'To show that you are reading, please select 4 for this item.',
+  },
+  {
     id: 'hsp_15',
     type: 'likert',
     scale: [1, 2, 3, 4, 5, 6, 7],
@@ -549,6 +560,18 @@ export const preQuestions = [
     question: "I am convinced that it is possible to gain information about the thoughts, feelings, or circumstances of another person in a way that does not depend on rational prediction or normal sensory channels.",
   },
   {
+    id: 'attn_check_2',
+    page: 'transliminality',
+    isAttentionCheck: true,
+    expected: 'true',
+    type: 'radio',
+    options: [
+      { label: 'True', value: 'true' },
+      { label: 'False', value: 'false' },
+    ],
+    question: 'To show that you are reading, please select True for this item.',
+  },
+  {
     id: 'rts_25',
     type: 'radio',
     options: [
@@ -741,6 +764,17 @@ export const preQuestions = [
       'I like stories that have a definite beginning, middle, and end.',
   },
   {
+    id: 'attn_check_3',
+    page: 'boundary',
+    isAttentionCheck: true,
+    expected: 3,
+    type: 'likert',
+    scale: [0, 1, 2, 3, 4],
+    leftAnchor: 'Not at all',
+    rightAnchor: 'Very true',
+    question: 'To show that you are reading, please select 3 for this item.',
+  },
+  {
     id: 'bq18_16',
     type: 'likert',
     scale: [0, 1, 2, 3, 4],
@@ -772,13 +806,25 @@ export const preQuestions = [
 
 // ——— POST ———
 
+/**
+ * Attention checks: three instructed-response items spread across the long scales.
+ * -> { passed, total }. They are recorded only; nothing is blocked or rejected on this.
+ */
+export function attentionCheckSummary(answers) {
+  const checks = preQuestions.filter((q) => q.isAttentionCheck);
+  const passed = checks.filter((q) => answers?.[q.id] === q.expected).length;
+  return { passed, total: checks.length };
+}
+
 // ── Pre-questionnaire pages ────────────────────────────────────────────────
 // Page 1 (background) is always first and the psi page is always last. The four
 // scale pages in between are shown in a random order per participant (the order is
 // saved with the answers as `pre_q_page_order`). Question numbers follow the order
 // shown. Items inside a scale keep their fixed order.
 const byIds = (ids) => preQuestions.filter((q) => ids.includes(q.id));
-const byPrefix = (prefix) => preQuestions.filter((q) => q.id.startsWith(prefix));
+// Keeps file order, so an attention check placed inside a scale stays where it was put.
+const byPrefix = (prefix, pageId) =>
+  preQuestions.filter((q) => q.id.startsWith(prefix) || (pageId && q.page === pageId));
 
 export const preQuestionPages = {
   first: {
@@ -786,7 +832,7 @@ export const preQuestionPages = {
     questions: byIds(['age', 'gender', 'meditationLevel', 'neurodivergence']),
   },
   randomized: [
-    { id: 'sensitivity', questions: byPrefix('hsp_') },
+    { id: 'sensitivity', questions: byPrefix('hsp_', 'sensitivity') },
     {
       id: 'attunement',
       questions: [
@@ -800,8 +846,8 @@ export const preQuestionPages = {
         ...byPrefix('attune_'),
       ],
     },
-    { id: 'transliminality', questions: byPrefix('rts_') },
-    { id: 'boundary', questions: byPrefix('bq18_') },
+    { id: 'transliminality', questions: byPrefix('rts_', 'transliminality') },
+    { id: 'boundary', questions: byPrefix('bq18_', 'boundary') },
   ],
   last: {
     id: 'psi',
