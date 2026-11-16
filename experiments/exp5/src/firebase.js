@@ -101,8 +101,8 @@ export async function ensureSignedIn() {
 export const auth = authInstance;
 export const db = dbInstance;
 
-// 7) Debug helpers (handy in DevTools)
-if (typeof window !== 'undefined') {
+// 7) Debug helpers (handy in DevTools; development builds only, not shipped to participants)
+if (typeof window !== 'undefined' && process.env.NODE_ENV !== 'production') {
   window._auth = authInstance;
   window.__FBDEBUG__ = {
     get projectId() {

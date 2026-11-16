@@ -5,7 +5,7 @@
 //   PAYMENT_CODE_SECRET='<same secret as in Netlify>' \
 //     node scripts/make-payment-codes.js <count> [base-url] > payment-codes.csv
 //
-// Output (CSV): code,param   e.g.  H6M5DR7Z44,TREMENDOUS=H6M5DR7Z44
+// Output (CSV): code,param   e.g.  H6M5DR7Z4K3PQ,TREMENDOUS=H6M5DR7Z4K3PQ
 //   (param = everything after the "?" in the link). With a base-url, a third
 //   column "link" holds the full link. Keep the output private: it is your list
 //   of who may be paid. Never commit it, and never put the secret in the repo.

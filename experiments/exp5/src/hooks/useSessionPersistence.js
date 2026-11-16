@@ -1,7 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import {
   createSession,
-  sessionId,
   saveSessionSummary,
   markSessionCompleted,
   recordSessionCompletedOnProfile,
@@ -84,7 +83,6 @@ export function useSessionPersistence({
 
   // ── ensureRunDoc: idempotent run-doc creation ────────────────────────────────
   const ensureRunDoc = useCallback(async () => {
-    console.log('[ensureRunDoc] called — runRef:', !!runRef, 'isCreating:', isCreatingDocRef.current, 'hasPending:', !!ensureRunDocPromiseRef.current, 'target:', !!target, 'uid:', uid ? uid.substring(0, 8) : null);
     if (runRef) return runRef;
 
     // If already creating, wait for the existing promise
@@ -108,7 +106,6 @@ export function useSessionPersistence({
         const user_agent = typeof navigator !== 'undefined' ? navigator.userAgent : null;
         const connection_type = typeof navigator !== 'undefined' ? (navigator.connection?.effectiveType ?? null) : null;
 
-        console.log('[ensureRunDoc] creating session — uid:', uidNow.substring(0, 8), 'collection:', C.PRESCREEN_COLLECTION);
         const docRef = await createSession({
           participant_id: uidNow,
           participant_hash: participantHash || null,
@@ -134,7 +131,6 @@ export function useSessionPersistence({
           connection_type,
           exitedEarly: false,
         });
-        console.log('[ensureRunDoc] session created:', sessionId(docRef));
         setRunRef(docRef);
         return docRef;
       } catch (error) {

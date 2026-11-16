@@ -1,6 +1,8 @@
 // netlify/functions/qrng-race.js
 // Requires: QRNG_OUTSHIFT_API_KEY, ANU_API_KEY in env (Netlify or root .env for `netlify dev`)
 
+const { guard } = require('../lib/guard.js');
+
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers':
@@ -35,6 +37,10 @@ exports.handler = async (event) => {
   if (event.httpMethod === 'OPTIONS') {
     return { statusCode: 204, headers: CORS };
   }
+
+  // Only pages on this site may call this, and not too often (protects the paid API quota).
+  const blocked = guard(event, 'qrng-race', { max: 240, windowMs: 60 * 1000 });
+  if (blocked) return { ...blocked, headers: CORS };
 
   const qs = event.queryStringParameters || {};
 

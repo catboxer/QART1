@@ -23,6 +23,8 @@
 // the caller can see, and the data records, which provider produced the bits.
 // Only callers that pass fallback=lfdr are affected (Study 1c does not).
 
+const { guard } = require('../lib/guard.js');
+
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers':
@@ -41,6 +43,10 @@ exports.handler = async (event) => {
   if (event.httpMethod === 'OPTIONS') {
     return { statusCode: 204, headers: CORS };
   }
+
+  // Only pages on this site may call this, and not too often (protects the paid API quota).
+  const blocked = guard(event, 'quantis', { max: 240, windowMs: 60 * 1000 });
+  if (blocked) return { ...blocked, headers: CORS };
 
   const qs = event.queryStringParameters || {};
   let n = 2;

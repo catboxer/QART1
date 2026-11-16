@@ -70,11 +70,11 @@ validateConfig();
 // ===== main =====
 export default function MainApp() {
   // Auto-mode for baseline data collection (activated via URL hash #auto)
-  const isAutoMode = window.location.hash.includes('auto');
+  const isAutoMode = window.location.hash === '#auto';
   // AI-mode for AI agent sessions (activated via URL hash #ai)
-  const isAIMode = window.location.hash.includes('ai');
+  const isAIMode = window.location.hash === '#ai';
   // Preview mode: jump straight to the invite/summary screen for UI review (activated via URL hash #preview)
-  const isPreviewMode = window.location.hash.includes('preview');
+  const isPreviewMode = window.location.hash === '#preview';
   const [autoSessionCount, setAutoSessionCount] = useState(0);
   const [autoSessionTarget, setAutoSessionTarget] = useState(
     isAIMode ? C.AI_MODE_SESSIONS : C.AUTO_MODE_SESSIONS,

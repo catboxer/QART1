@@ -1,5 +1,6 @@
 // netlify/functions/random-org-proxy.js
 const crypto = require('crypto');
+const { guard } = require('../lib/guard.js');
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -13,6 +14,10 @@ exports.handler = async (event) => {
   if (event.httpMethod === 'OPTIONS') {
     return { statusCode: 204, headers: CORS };
   }
+
+  // Only pages on this site may call this, and not too often (protects the paid API quota).
+  const blocked = guard(event, 'random-org-proxy', { max: 120, windowMs: 60 * 1000 });
+  if (blocked) return { ...blocked, headers: CORS };
 
   const API_KEY = process.env.RANDOM_ORG_API_KEY;
   if (!API_KEY) {
